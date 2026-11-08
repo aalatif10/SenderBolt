@@ -1,0 +1,17 @@
+{
+  "name": "senderbolt",
+  "version": "0.2.0",
+  "private": true,
+  "description": "SenderBolt - B2B email outreach and campaign management platform",
+  "main": "src/server.js",
+  "engines": { "node": ">=12.22.0" },
+  "scripts": {
+    "init": "node scripts/init.js",
+    "start": "node src/server.js",
+    "test": "node test/run.js && node test/integration.js && node test/leads.js && node test/e2e.js"
+  },
+  "dependencies": {
+    "sqlite3": "5.0.2"
+  },
+  "license": "UNLICENSED"
+}
