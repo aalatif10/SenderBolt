@@ -72,7 +72,53 @@ function previewSizes(total, batchSize) {
   return sizes;
 }
 
+// Smart Split: distribute leads into batches of batchSize (last batch = remainder) so that
+// contacts of the same company domain land in DIFFERENT batches whenever possible.
+// Largest company groups are placed first; each lead goes to the batch that currently holds
+// the fewest contacts of its domain (ties: most free room, then seeded random). Deterministic
+// for a given seed. Order inside each batch is shuffled again so send order looks natural.
+function splitSpread(items, batchSize, seed) {
+  var sizes = previewSizes(items.length, batchSize);
+  var rnd = mulberry32(seed >>> 0);
+  var batches = sizes.map(function () { return []; });
+  var room = sizes.slice();
+  var groups = {}, order = [];
+  shuffle(items, seed).forEach(function (l) {
+    var d = email.domainOf(l.email) || ('_' + l.id);
+    if (!groups[d]) { groups[d] = []; order.push(d); }
+    groups[d].push(l);
+  });
+  order.sort(function (a, b) { return groups[b].length - groups[a].length; });   // stable for ties (shuffled order kept)
+  order.forEach(function (d) {
+    var counts = batches.map(function () { return 0; });
+    groups[d].forEach(function (lead) {
+      var best = [], bestCount = Infinity, bestRoom = -1, i;
+      for (i = 0; i < batches.length; i++) {
+        if (room[i] <= 0) continue;
+        if (counts[i] < bestCount || (counts[i] === bestCount && room[i] > bestRoom)) {
+          bestCount = counts[i]; bestRoom = room[i]; best = [i];
+        } else if (counts[i] === bestCount && room[i] === bestRoom) best.push(i);
+      }
+      var pick = best[Math.floor(rnd() * best.length)];
+      batches[pick].push(lead); counts[pick]++; room[pick]--;
+    });
+  });
+  return batches.map(function (b, i) { return shuffle(b, (seed >>> 0) + i + 1); });
+}
+
+// Number of leads that share a company domain with another lead in the same batch.
+function countConflicts(batches) {
+  var total = 0;
+  batches.forEach(function (b) {
+    var seen = {};
+    b.forEach(function (l) { var d = email.domainOf(l.email); seen[d] = (seen[d] || 0) + 1; });
+    Object.keys(seen).forEach(function (d) { if (seen[d] > 1) total += seen[d] - 1; });
+  });
+  return total;
+}
+
 module.exports = {
   mulberry32: mulberry32, newSeed: newSeed, shuffle: shuffle,
-  domainAwareShuffle: domainAwareShuffle, splitBatches: splitBatches, previewSizes: previewSizes
+  domainAwareShuffle: domainAwareShuffle, splitBatches: splitBatches, previewSizes: previewSizes,
+  splitSpread: splitSpread, countConflicts: countConflicts
 };

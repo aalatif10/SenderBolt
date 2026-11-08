@@ -7,5 +7,6 @@ module.exports = function buildRoutes(deps) {
   require('./auth')(router, deps);
   require('./senders')(router, deps);
   require('./leads')(router, deps);
+  require('./campaigns')(router, deps);
   return router.routes;
 };

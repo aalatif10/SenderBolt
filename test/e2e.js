@@ -199,6 +199,50 @@ h.test('verify endpoint is rate limited per user', function () {
   return p.then(function () { assert.strictEqual(last.status, 429); assert.ok(last.headers['retry-after']); });
 });
 
+h.group('e2e: campaigns over HTTP');
+h.test('wizard flow: preview split, create split campaign, start, list, pause, delete', function () {
+  var folderId, senderId, campId, emails = [];
+  for (var i = 0; i < 30; i++) emails.push('p' + i + '@c' + (i % 10) + '.com');         // 10 companies x 3 contacts
+  return request('POST', '/api/senders', { json: { label: 'Camp', email: 'camp@gmail.com', provider: 'gmail', password: 'abcdefghijklmnop' } }).then(function (r) {
+    senderId = r.body.sender.id; return request('POST', '/api/folders', { json: { name: 'Campaign leads' } });
+  }).then(function (r) {
+    folderId = r.body.folder.id; return request('POST', '/api/folders/' + folderId + '/import', { json: { format: 'paste', data: emails.join('\n') } });
+  }).then(function (r) {
+    assert.strictEqual(r.body.result.imported, 30);
+    return request('POST', '/api/campaigns/split-preview', { json: { folder_id: folderId, batch_size: 10, seed: 7 } });
+  }).then(function (r) {
+    assert.strictEqual(r.status, 200); assert.deepStrictEqual(r.body.sizes, [10, 10, 10]); assert.strictEqual(r.body.same_company_in_one_batch, 0);
+    return request('POST', '/api/templates/preview', { json: { subject: 'Hi {{nickname|there}} from {{company}}', body_html: '<p>{{first_name}}</p>' } });
+  }).then(function (r) {
+    assert.strictEqual(r.body.subject, 'Hi there from Acme Domains');
+    var body = { name: 'HTTP campaign', folder_id: folderId, sender_ids: [senderId], split: { batch_size: 10, seed: 7 },
+      steps: [{ subject: 'Hello', body_html: '<p>Hi</p>' }, { subject: '', body_html: '<p>Bump</p>', delay_days: 2 }] };
+    return request('POST', '/api/campaigns', { json: body, csrf: false }).then(function (nr) {
+      assert.strictEqual(nr.status, 403);                                                  // CSRF enforced on the new routes too
+      return request('POST', '/api/campaigns', { json: body });
+    });
+  }).then(function (r) {
+    assert.strictEqual(r.status, 201); campId = r.body.campaign.id; assert.strictEqual(r.body.campaign.parts.length, 3);
+    return request('POST', '/api/campaigns/' + campId + '/start', { json: {} });
+  }).then(function (r) {
+    assert.strictEqual(r.status, 200); assert.strictEqual(r.body.campaign.status, 'active'); assert.strictEqual(r.body.campaign.estimate.emails_total_max, 60);
+    return request('GET', '/api/campaigns?status=active&q=http');
+  }).then(function (r) {
+    assert.strictEqual(r.body.total, 1); assert.strictEqual(r.body.counts.active, 1); assert.strictEqual(r.body.items[0].stats.total, 30);
+    return request('DELETE', '/api/campaigns/' + campId);
+  }).then(function (r) {
+    assert.strictEqual(r.status, 409);
+    return request('POST', '/api/campaigns/' + campId + '/pause', { json: {} });
+  }).then(function (r) { assert.strictEqual(r.body.campaign.status, 'paused'); return request('GET', '/api/campaigns/' + campId + '/leads?pageSize=5'); })
+    .then(function (r) { assert.strictEqual(r.body.total, 30); assert.strictEqual(r.body.items.length, 5); return request('DELETE', '/api/campaigns/' + campId); })
+    .then(function (r) { assert.strictEqual(r.status, 200); return request('GET', '/api/campaigns/' + campId); })
+    .then(function (r) {
+      assert.strictEqual(r.status, 404);
+      return request('DELETE', '/api/folders/' + folderId);                               // tidy up so later tests see a clean account
+    }).then(function () { return request('DELETE', '/api/senders/' + senderId); })
+    .then(function (r) { assert.strictEqual(r.status, 200); });
+});
+
 h.group('e2e: isolation, password change, logout');
 h.test('a second user cannot see or touch the first user\'s data', function () {
   var owner = { cookie: state.cookie, csrf: state.csrf }, folderId;

@@ -8,6 +8,7 @@ var Sessions = require('./services/sessions').Sessions;
 var Auth = require('./services/auth').Auth;
 var Senders = require('./services/senders').Senders;
 var Leads = require('./services/leads').Leads;
+var CampaignsService = require('./services/campaigns').CampaignsService;
 var RateLimiter = require('./security/rateLimiter').RateLimiter;
 var createDispatcher = require('./http/router').createDispatcher;
 var buildRoutes = require('./routes');
@@ -26,7 +27,8 @@ function createApp(config) {
       var deps = {
         config: config, db: db, cookieName: cookieName, sessions: sessions, auth: auth,
         senders: new Senders(db, config.masterKey),
-        leads: new Leads(db, { resolver: config.resolver })
+        leads: new Leads(db, { resolver: config.resolver }),
+        campaigns: new CampaignsService(db)
       };
       var dispatch = createDispatcher({
         routes: buildRoutes(deps), sessions: sessions, cookieName: cookieName,
