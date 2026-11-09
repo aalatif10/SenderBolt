@@ -16,6 +16,7 @@ var tpl = require('../lib/template');
 var v = require('../lib/validate');
 var AppError = require('../lib/errors').AppError;
 var audit = require('./audit');
+var state = require('./campaignState');
 
 var MAX_LEADS = 50000, MAX_PARTS = 500, MAX_STEPS = 6, MAX_SENDERS = 20;
 var DEFAULT_LEAD_STATUSES = ['valid', 'unverified', 'risky', 'catch_all'];
@@ -245,17 +246,7 @@ function finishStats(s) {
   s.progress_pct = s.total ? Math.round(s.done / s.total * 1000) / 10 : 0;
   return s;
 }
-function deriveStatus(own, kids) {
-  if (!kids.length) return own;
-  var set = {};
-  kids.forEach(function (k) { set[k.status] = true; });
-  if (set.error) return 'error';
-  if (set.active) return 'active';
-  if (set.paused) return 'paused';
-  if (set.preparing) return 'preparing';
-  if (set.draft) return 'draft';
-  return 'completed';
-}
+var deriveStatus = state.deriveStatus;
 
 // Per-campaign stats for the user. (Single-user scale; add pagination before SaaS scale.)
 C._statsByCampaign = function (userId, onlyIds) {
@@ -383,12 +374,7 @@ function leavesOf(db, userId, camp) {
   return db.all('SELECT * FROM campaigns WHERE parent_id = ? AND user_id = ? ORDER BY id', [camp.id, userId]).then(function (kids) { return kids.length ? kids : [camp]; });
 }
 
-function syncMain(tx, mainId, t) {
-  return tx.all('SELECT status FROM campaigns WHERE parent_id = ?', [mainId]).then(function (kids) {
-    if (!kids.length) return null;
-    return tx.run('UPDATE campaigns SET status = ?, updated_at = ? WHERE id = ?', [deriveStatus('draft', kids), t, mainId]);
-  });
-}
+var syncMain = state.syncMain;
 
 C.start = function (userId, id, ip) {
   var self = this, camp, leaves, estimate = null;
@@ -437,8 +423,36 @@ C.start = function (userId, id, ip) {
           });
         });
     });
-  }).then(function () { return self.get(userId, id); }).then(function (c) { c.estimate = estimate; return c; });
+  }).then(function () { return Promise.all([self.get(userId, id), startWarnings(self, userId, leaves)]); }).then(function (r) {
+    r[0].estimate = estimate; r[0].warnings = r[1]; return r[0];
+  });
 };
+
+// Non-blocking heads-up shown right after launch: things that will not stop the campaign but the user should know.
+function startWarnings(self, userId, leaves) {
+  var warnings = [], ids = leaves.map(function (l) { return l.id; });
+  return self.db.all('SELECT DISTINCT s.id, s.email FROM campaign_senders cs JOIN senders s ON s.id = cs.sender_id WHERE cs.campaign_id IN (' + v.placeholders(ids.length) + ') AND s.user_id = ? AND s.imap_host IS NULL', ids.concat([userId])).then(function (rows) {
+    if (rows.length) warnings.push({ code: 'no_reply_tracking', message: rows.length + ' sender(s) have no IMAP settings, so replies and bounces to them cannot be detected (' + rows.map(function (r) { return r.email; }).join(', ') + '). Leads may keep getting follow-ups after they reply.' });
+    return seq(leaves, function (leaf) {
+      return Promise.all([
+        self.db.all('SELECT subject, body_html FROM campaign_steps WHERE campaign_id = ?', [leaf.id]),
+        self.db.all("SELECT l.email, l.first_name, l.last_name, l.company, l.custom FROM campaign_leads cl JOIN leads l ON l.id = cl.lead_id WHERE cl.campaign_id = ? AND cl.status = 'active' LIMIT 20000", [leaf.id])
+      ]).then(function (r) {
+        var bad = 0;
+        r[1].forEach(function (lead) {
+          var vars = tpl.leadVars(lead), missing = false;
+          r[0].forEach(function (st) { if (tpl.render(st.subject || '', vars, { html: false }).missing.length || tpl.render(st.body_html || '', vars, { html: true }).missing.length) missing = true; });
+          if (missing) bad++;
+        });
+        leaf.__missing = bad;
+      });
+    });
+  }).then(function () {
+    var n = leaves.reduce(function (a, l) { return a + (l.__missing || 0); }, 0);
+    if (n) warnings.push({ code: 'missing_variables', message: n + ' lead(s) lack a value for a {{variable}} used in your emails (and the variable has no fallback). They will be skipped and marked as errors instead of receiving a broken email.' });
+    return warnings;
+  });
+}
 
 function changeState(self, userId, id, from, to, action, ip) {
   var camp;
@@ -448,6 +462,8 @@ function changeState(self, userId, id, from, to, action, ip) {
     var t = self.now();
     return self.db.transaction(function (tx) {
       return seq(eligible, function (l) { return tx.run('UPDATE campaigns SET status = ?, updated_at = ? WHERE id = ?', [to, t, l.id]); })
+        // A paused campaign whose leads all finished (replied / bounced) meanwhile completes on resume instead of idling.
+        .then(function () { return to === 'active' ? seq(eligible, function (l) { return state.completeIfDone(tx, l.id, t); }) : null; })
         .then(function () { return camp.parent_id === null && leaves[0].id !== camp.id ? syncMain(tx, camp.id, t) : (camp.parent_id ? syncMain(tx, camp.parent_id, t) : null); })
         .then(function () { return audit.log(tx, { userId: userId, action: 'campaign.' + action, entity: 'campaign', entityId: id, ip: ip }, self.now); });
     });

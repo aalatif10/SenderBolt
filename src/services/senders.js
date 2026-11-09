@@ -139,8 +139,9 @@ Senders.prototype._create = function (userId, input, ip) {
   return this.db.transaction(function (tx) {
     return tx.get('SELECT id FROM senders WHERE user_id = ? AND email = ?', [userId, v.email]).then(function (dup) {
       if (dup) throw new AppError('validation', 'Sender already exists', 409, { email: 'This sender email is already added' });
-      var sql = 'INSERT INTO senders (user_id, password_enc, warmup_started_at, created_at, updated_at, ' + cols.join(', ') + ') VALUES (?,?,?,?,?,' + cols.map(function () { return '?'; }).join(',') + ')';
-      var params = [userId, 'pending', t, t, t].concat(cols.map(function (c) { return v[c]; }));
+      // warmup_started_at stays NULL until the first email is really sent (the engine sets it).
+      var sql = 'INSERT INTO senders (user_id, password_enc, created_at, updated_at, ' + cols.join(', ') + ') VALUES (?,?,?,?,' + cols.map(function () { return '?'; }).join(',') + ')';
+      var params = [userId, 'pending', t, t].concat(cols.map(function (c) { return v[c]; }));
       return tx.run(sql, params);
     }).then(function (ins) {
       var enc = vault.encrypt(parsed.password, self.key, 'sender:' + ins.lastID);
@@ -197,9 +198,10 @@ Senders.prototype.setStatus = function (userId, id, status, ip) {
 Senders.prototype.remove = function (userId, id, ip) {
   var self = this;
   return this._find(userId, id).then(function () {
-    return self.db.get("SELECT COUNT(*) AS c FROM campaign_senders cs JOIN campaigns c ON c.id = cs.campaign_id WHERE cs.sender_id = ? AND c.status IN ('active','preparing')", [id]);
+    // Paused / error campaigns still have unsent leads tied to this sender: deleting it would strand them.
+    return self.db.get("SELECT COUNT(*) AS c FROM campaign_senders cs JOIN campaigns c ON c.id = cs.campaign_id WHERE cs.sender_id = ? AND c.status IN ('active','paused','preparing','error')", [id]);
   }).then(function (r) {
-    if (r.c > 0) throw new AppError('conflict', 'Sender is used by an active campaign. Pause or finish it first.', 409);
+    if (r.c > 0) throw new AppError('conflict', 'This sender is used by a running or paused campaign. Finish or delete that campaign first.', 409);
     return self.db.run('DELETE FROM campaign_senders WHERE sender_id = ?', [id]);
   }).then(function () {
     return self.db.run('DELETE FROM senders WHERE id = ? AND user_id = ?', [id, userId]);
@@ -221,7 +223,8 @@ function capacityToday(sender, dateStr, nowMs) {
   var sent = sender.sent_today_date === dateStr ? sender.sent_today : 0;
   var limit = sender.daily_limit;
   if (sender.warmup_enabled) {
-    var days = Math.max(0, Math.floor((nowMs - sender.warmup_started_at) / 86400000));
+    var started = sender.warmup_started_at === null || sender.warmup_started_at === undefined ? nowMs : sender.warmup_started_at;
+    var days = Math.max(0, Math.floor((nowMs - started) / 86400000));
     limit = throttle.warmupLimit(days, sender.daily_limit);
   }
   return Math.max(0, limit - sent);

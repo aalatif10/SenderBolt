@@ -8,5 +8,7 @@ module.exports = function buildRoutes(deps) {
   require('./senders')(router, deps);
   require('./leads')(router, deps);
   require('./campaigns')(router, deps);
+  require('./inbox')(router, deps);
+  require('./public')(router, deps);
   return router.routes;
 };

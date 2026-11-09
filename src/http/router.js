@@ -41,7 +41,7 @@ function Router() { this.routes = []; }
     var c = compile(pattern);
     this.routes.push({
       method: m.toUpperCase(), re: c.re, names: c.names, handler: handler,
-      auth: opts.auth !== false, csrf: opts.csrf !== false, maxBody: opts.maxBody || 262144, limit: opts.limit || null
+      external: !!opts.external, auth: opts.auth !== false && !opts.external, csrf: opts.csrf !== false, maxBody: opts.maxBody || 262144, limit: opts.limit || null
     });
     return this;
   };
@@ -143,7 +143,7 @@ function createDispatcher(o) {
       throw new AppError('not_found', 'Not found', 404);
     }
 
-    var unsafe = !!UNSAFE[req.method];
+    var unsafe = !!UNSAFE[req.method] && !route.external;   // external (public, token-authorised) routes: no session, no CSRF header, body ignored
     if (unsafe) {
       if (req.headers['x-sb-client'] !== '1') throw new AppError('csrf_header', 'Missing client header', 403);
       var origin = req.headers.origin;

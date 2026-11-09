@@ -18,6 +18,8 @@ var lines = [
   'SENDERBOLT_SESSION_SECRET=' + crypto.randomBytes(32).toString('hex'),
   '# Optional: required when creating the first account (recommended if not on localhost).',
   'SENDERBOLT_SETUP_TOKEN=' + crypto.randomBytes(16).toString('hex'),
+  '# Sending engine: off | dry-run (nothing real is sent) | live (real SMTP + IMAP).',
+  'SENDERBOLT_SENDING=dry-run',
   'HOST=127.0.0.1',
   'PORT=3000',
   ''

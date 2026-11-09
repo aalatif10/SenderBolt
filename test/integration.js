@@ -43,7 +43,7 @@ group('migrations and schema');
 test('applies once, is idempotent, detects tampering', function () {
   return database.open(':memory:').then(function (db) {
     return migrate(db).then(function (a) {
-      assert.deepStrictEqual(a, ['001_init.sql', '002_campaign_settings.sql']);
+      assert.deepStrictEqual(a, ['001_init.sql', '002_campaign_settings.sql', '003_engine.sql']);
       return migrate(db);
     }).then(function (b) {
       assert.deepStrictEqual(b, []);

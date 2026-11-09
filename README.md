@@ -15,8 +15,8 @@ npm start
 ```
 
 1. `node -v` should print `v12.22.x`.
-2. `npm install` installs `sqlite3` (prebuilt binary, no compiler needed).
-3. `npm test` should end with four "passed, 0 failed" lines. **If anything fails, copy the output to me.**
+2. `npm install` installs `sqlite3` (prebuilt binary), plus `nodemailer` (and the optional `imap` + `mailparser`, needed only for reply tracking in live mode; if they fail to install the app still runs).
+3. `npm test` should end with eight "passed, 0 failed" lines. **If anything fails, copy the output to me.**
 4. `npm run init` creates `.env` with random secrets. Open it, **back up `SENDERBOLT_MASTER_KEY`**, and note `SENDERBOLT_SETUP_TOKEN`.
 5. `npm start` serves the API on http://127.0.0.1:3000 (there is no web UI yet).
 
@@ -29,3 +29,13 @@ curl -X POST http://127.0.0.1:3000/api/auth/setup -H "Content-Type: application/
 ```
 
 Login returns a `csrfToken` and sets a session cookie. Send both on later POST/PATCH/DELETE calls.
+
+## Sending modes
+
+`SENDERBOLT_SENDING` in `.env`:
+
+- `dry-run` (default): the engine runs the whole flow (throttling, follow-ups, replies tables) but **no email is sent and no mailbox is read**. Safe for testing; the console prints what it would send.
+- `live`: real SMTP/IMAP. First test with ONE sender and a lead that is your own address. Use `POST /api/senders/:id/test` first.
+- `off`: engine stopped.
+
+Set `SENDERBOLT_PUBLIC_ORIGIN=https://your-domain` to get one-click unsubscribe links in emails.

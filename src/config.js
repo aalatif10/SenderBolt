@@ -4,6 +4,7 @@
 var fs = require('fs');
 var path = require('path');
 var vault = require('./lib/vault');
+var tokens = require('./lib/tokens');
 
 function loadEnvFile(file, env) {
   env = env || process.env;
@@ -32,7 +33,18 @@ function build(env) {
     origins.push(o);
     hosts.push(o.replace(/^https?:\/\//, ''));
   }
+  var sending = (env.SENDERBOLT_SENDING || 'dry-run').toLowerCase();
+  if (['off', 'dry-run', 'live'].indexOf(sending) === -1) throw new Error('SENDERBOLT_SENDING must be off, dry-run or live');
+  var publicOrigin = '';
+  if (env.SENDERBOLT_PUBLIC_ORIGIN) {
+    var pu;
+    try { pu = new URL(env.SENDERBOLT_PUBLIC_ORIGIN); } catch (e) { throw new Error('SENDERBOLT_PUBLIC_ORIGIN must be a full URL such as https://app.example.com'); }
+    if (pu.protocol !== 'https:' && pu.protocol !== 'http:') throw new Error('SENDERBOLT_PUBLIC_ORIGIN must be http(s)');
+    publicOrigin = pu.origin;
+  }
   return {
+    sending: sending, publicOrigin: publicOrigin,
+    unsubSecret: tokens.hmac(secret, 'senderbolt:unsub:v1'),
     host: host, port: port,
     masterKey: vault.loadKey(env.SENDERBOLT_MASTER_KEY),
     sessionSecret: secret,
