@@ -59,7 +59,7 @@ senderbolt/
 ### Database (`src/db/`)
 - `index.js` - every query goes through one serialized queue on a single connection, so a transaction can never interleave with other queries. PRAGMAs: `journal_mode=WAL`, `foreign_keys=ON`, `busy_timeout=5000`, `synchronous=NORMAL`, `secure_delete=ON`. Use `db.transaction(fn)` and only the `tx` object inside it.
 - `migrate.js` - applies `NNN_name.sql` files in order, each in a transaction, storing a SHA-256; editing an applied migration is refused.
-- `001_init.sql` - tables: users, sessions, audit_log, senders, folders, leads, suppression, campaigns (main + sub via `parent_id`), campaign_steps (0 to 5), campaign_senders, campaign_leads, messages. CHECK constraints enforce limits even if app code is bypassed (e.g. `daily_limit BETWEEN 1 AND 500`). Every owned table has `user_id` (SaaS-ready).
+- `001_init.sql` - tables: users, sessions, audit_log, senders, folders, leads, suppression, campaigns (main + sub via `parent_id`), campaign_steps (0 to 5), campaign_senders, campaign_leads, messages. CHECK constraints enforce limits even if app code is bypassed (e.g. `daily_limit BETWEEN 1 AND 500`, tightened to 400 by triggers in 004). Every owned table has `user_id` (SaaS-ready).
 
 ### HTTP pipeline (`src/http/router.js`)
 Order per request: security headers (CSP, nosniff, DENY framing, no-referrer, COOP/CORP, optional HSTS) -> Host allowlist (DNS-rebinding guard) -> global rate limit (600/min/IP) -> route match (404/405) -> for POST/PUT/PATCH/DELETE: required `X-SB-Client: 1` header, Origin check, `Sec-Fetch-Site` check -> session cookie auth -> per-session HMAC CSRF token -> JSON body parse with size limit and content-type check -> per-route rate limit -> handler. Errors never leak internals (only `AppError` messages are returned).
@@ -67,7 +67,7 @@ Order per request: security headers (CSP, nosniff, DENY framing, no-referrer, CO
 ### Services (`src/services/`)
 - `auth.js` - first-user setup (optional `SENDERBOLT_SETUP_TOKEN`), login with per-IP and per-account limits, escalating lockout (5 failures: 15 min, doubling, max 24 h), identical errors for unknown users, timing-equalized dummy hash, fresh session per login, password change revokes other sessions.
 - `sessions.js` - random 256-bit token in an HttpOnly cookie; only its SHA-256 is stored. 2 h idle, 12 h absolute, max 10 per user. CSRF token = HMAC of the session hash.
-- `senders.js` - validation and CRUD. App passwords encrypted with AES-256-GCM (random IV, AAD bound to `sender:<id>`), never returned or logged. Gmail host/port preset; custom SMTP hosts must be public FQDNs on ports 25/465/587/2525 (IMAP 143/993). `daily_limit` 1 to 500 in code and DB. `capacityToday()` combines limit, warm-up ramp, health and status. `getCredentials()` is internal-only for the future sending engine.
+- `senders.js` - validation and CRUD. App passwords encrypted with AES-256-GCM (random IV, AAD bound to `sender:<id>`), never returned or logged. Gmail host/port preset; custom SMTP hosts must be public FQDNs on ports 25/465/587/2525 (IMAP 143/993). `daily_limit` 1 to 400 in code and DB triggers. `capacityToday()` combines limit, warm-up ramp, health and status. `getCredentials()` is internal-only for the future sending engine.
 - `leads.js` - folders; import from CSV (header aliases, custom columns, BOM, `,` `;` tab) or pasted text; duplicates and suppressed emails skipped; role-address flag; list/search/sort (whitelisted columns, escaped LIKE); stats incl. valid rate; CSV export with formula-injection neutralization; suppression list; **manual verifier** (syntax + DNS MX, 8 parallel lookups, per-domain cache, 5 s timeout). Transient DNS failures never mark a lead invalid.
 - `audit.js` - append-only log with automatic redaction of keys like password/token/secret.
 
@@ -108,7 +108,7 @@ Metric definitions: `emailed` = leads that got an email (or were rejected while 
 
 ### Pure libraries (`src/lib/`)
 `template.js` (`{{var|fallback}}`, `{a|b}` spintax; values HTML-escaped and never re-scanned; subject mode strips line breaks), `validate.js` (integer / id-list coercion).
-`vault.js` (AES-256-GCM), `password.js` (scrypt N=32768, async variants), `tokens.js`, `cookies.js` (strict serializer), `email.js` (syntax, role, CRLF guard), `csv.js` (parser + formula-injection guard), `split.js` (seeded shuffle, domain spreading, batch split, preview sizes), `throttle.js` (500 cap, warm-up, delays), `health.js` (0 to 100 score, auto-pause below 50), `net.js` (public-hostname / SSRF guard), `text.js`, `http.js`, `errors.js`.
+`vault.js` (AES-256-GCM), `password.js` (scrypt N=32768, async variants), `tokens.js`, `cookies.js` (strict serializer), `email.js` (syntax, role, CRLF guard), `csv.js` (parser + formula-injection guard), `split.js` (seeded shuffle, domain spreading, batch split, preview sizes), `throttle.js` (400 cap, warm-up, delays), `health.js` (0 to 100 score, auto-pause below 50), `net.js` (public-hostname / SSRF guard), `text.js`, `http.js`, `errors.js`.
 
 ## 4. HTTP API (all JSON, all `/api`, all need a session unless noted)
 
