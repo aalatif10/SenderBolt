@@ -116,6 +116,26 @@ h.test('public unsubscribe: no session/CSRF needed, GET is read-only, POST acts,
       .then(function (r) { assert.strictEqual(r.status, 404); S.cookie = saved; });
   });
 });
+h.test('project routes: CRUD over HTTP, CSRF enforced, unknown ids 404, campaign analytics 404 for unknown', function () {
+  var token = S.csrf;
+  S.csrf = 'wrong';
+  return request('POST', '/api/projects', { json: { name: 'P1' } }).then(function (r) {
+    assert.strictEqual(r.status, 403); S.csrf = token;
+    return request('POST', '/api/projects', { json: { name: 'P1', description: 'd' } });
+  }).then(function (r) {
+    assert.strictEqual(r.status, 201); assert.strictEqual(r.body.project.status, 'empty'); S.pid = r.body.project.id;
+    return request('PATCH', '/api/projects/' + S.pid, { json: { name: 'P1b' } });
+  }).then(function (r) {
+    assert.strictEqual(r.body.project.name, 'P1b'); return request('GET', '/api/projects');
+  }).then(function (r) {
+    assert.strictEqual(r.body.items.length, 1); assert.strictEqual(r.body.items[0].totals.opens_tracked, false);
+    return request('GET', '/api/projects/9999');
+  }).then(function (r) { assert.strictEqual(r.status, 404); return request('GET', '/api/campaigns/9999/analytics'); })
+    .then(function (r) { assert.strictEqual(r.status, 404); return request('POST', '/api/projects', { json: { name: '' } }); })
+    .then(function (r) { assert.strictEqual(r.status, 400); return request('DELETE', '/api/projects/' + S.pid); })
+    .then(function (r) { assert.strictEqual(r.status, 200); return request('GET', '/api/projects/' + S.pid); })
+    .then(function (r) { assert.strictEqual(r.status, 404); });
+});
 h.test('shutdown', function () { return new Promise(function (r) { S.server.close(r); }).then(function () { return S.app.close(); }); });
 
 h.run();

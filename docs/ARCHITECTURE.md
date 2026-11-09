@@ -1,4 +1,4 @@
-# SenderBolt - Architecture Report (v0.4.0)
+# SenderBolt - Architecture Report (v0.5.0)
 
 Target runtime: **Node.js 12.22.x on Windows 7 (64-bit)**. Code is written in ES2018-style JavaScript
 (no `?.`, `??`, or other post-Node-12 syntax) with promise chains.
@@ -12,6 +12,7 @@ Target runtime: **Node.js 12.22.x on Windows 7 (64-bit)**. Code is written in ES
 | Senders (backend + API) | Done |
 | Leads and lists, importer, on-demand verifier (backend + API) | Done |
 | Campaigns: wizard data, sequences (up to 5 follow-ups), Smart Split into sub-campaigns, lifecycle, dashboard data (backend + API) | Done |
+| Projects: Project > Campaign > Batch hierarchy with roll-up analytics (backend + API) | Done |
 | Email templates (variables, fallbacks, spintax, safe escaping) | Done |
 | Sending engine + scheduler (dry-run / live modes) | Done (live SMTP adapter not yet run against a real server) |
 | Reply + bounce sync (IMAP), unified inbox, sentiment, manual reply, unsubscribe | Done (live IMAP adapter not yet run against a real mailbox) |
@@ -96,6 +97,15 @@ Order per request: security headers (CSP, nosniff, DENY framing, no-referrer, CO
 
 **Sending modes** (`SENDERBOLT_SENDING` in `.env`): `off` (engine stopped), `dry-run` (default: the whole flow runs, the mailer only logs; mailbox returns nothing), `live` (real SMTP + IMAP; sending is blocked for a sender until its mailbox is armed and synced in the last 15 minutes, because replies must be detectable).
 
+### Projects (v0.5)
+| File | Role |
+|---|---|
+| `src/db/migrations/004_projects.sql` | `projects` table; `campaigns.project_id` (main campaigns only; batches belong through their main campaign); every pre-existing campaign gets its own project; **daily cap lowered to 400** (existing senders clamped, DB triggers enforce it) |
+| `src/services/projects.js`, `routes/projects.js` | project CRUD (archive/delete refused while anything is sending; delete removes its campaigns and batches); roll-up analytics `batch -> campaign -> project`; campaign drill-down with batches and a per-step funnel |
+
+Hierarchy: **Project** (container, e.g. "Q4 domain push") > **Campaign** (a variant: own sequence, leads, senders, settings) > **Batch** (a Smart Split part, mostly invisible to the user). Creating a campaign without `project_id` creates a project of the same name automatically.
+Metric definitions: `emailed` = leads that got an email (or were rejected while sending); `replied` = real replies only (not out-of-office/bounces); rates are % of `emailed`. **Opens are not tracked yet** and are returned as `opens: null, opens_tracked: false`; the UI must say "not tracked", never show 0.
+
 ### Pure libraries (`src/lib/`)
 `template.js` (`{{var|fallback}}`, `{a|b}` spintax; values HTML-escaped and never re-scanned; subject mode strips line breaks), `validate.js` (integer / id-list coercion).
 `vault.js` (AES-256-GCM), `password.js` (scrypt N=32768, async variants), `tokens.js`, `cookies.js` (strict serializer), `email.js` (syntax, role, CRLF guard), `csv.js` (parser + formula-injection guard), `split.js` (seeded shuffle, domain spreading, batch split, preview sizes), `throttle.js` (500 cap, warm-up, delays), `health.js` (0 to 100 score, auto-pause below 50), `net.js` (public-hostname / SSRF guard), `text.js`, `http.js`, `errors.js`.
@@ -116,6 +126,8 @@ Order per request: security headers (CSP, nosniff, DENY framing, no-referrer, CO
 | GET `/campaigns?status=&q=&sender_id=&page=` | dashboard list with filter counts, progress, next send |
 | POST `/campaigns`, GET/PATCH/DELETE `/campaigns/:id`, GET `/campaigns/:id/leads` | create (optionally split), detail, edit, delete, per-lead status |
 | POST `/campaigns/split-preview`, POST `/templates/preview` | wizard: split sizes + conflicts; rendered email preview |
+| GET/POST `/projects`, GET/PATCH/DELETE `/projects/:id` | projects with roll-up totals (`?archived=1`, `?q=`); detail includes each campaign |
+| GET `/campaigns/:id/analytics` | drill-down: campaign totals, batches, per-step funnel |
 | POST `/campaigns/:id/start`, `/pause`, `/resume` | lifecycle (main campaign or a single part); start also returns non-blocking `warnings` |
 | GET `/inbox?sentiment=&unread=1&campaign_id=&sender_id=&q=&limit=&offset=` | conversations, counts per sentiment, unread |
 | GET `/inbox/threads/:id`, POST `/inbox/threads/:id/read`, POST `/inbox/threads/:id/reply` | thread (text only), read state, manual reply |

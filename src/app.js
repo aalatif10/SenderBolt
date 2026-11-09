@@ -10,6 +10,7 @@ var Senders = require('./services/senders').Senders;
 var Leads = require('./services/leads').Leads;
 var CampaignsService = require('./services/campaigns').CampaignsService;
 var RateLimiter = require('./security/rateLimiter').RateLimiter;
+var ProjectsService = require('./services/projects').ProjectsService;
 var InboxService = require('./services/inbox').InboxService;
 var UnsubscribeService = require('./services/unsubscribe').UnsubscribeService;
 var SenderTest = require('./services/senderTest').SenderTest;
@@ -45,12 +46,13 @@ function createApp(config) {
         config: config, db: db, cookieName: cookieName, sessions: sessions, auth: auth,
         senders: new Senders(db, config.masterKey),
         leads: new Leads(db, { resolver: config.resolver }),
-        campaigns: new CampaignsService(db),
+        campaigns: new CampaignsService(db, { now: config.now }),
         inbox: new InboxService(db, { engine: mode === 'off' ? null : engine, now: config.now }),
         unsubscribe: new UnsubscribeService(db, { unsubSecret: config.unsubSecret, now: config.now }),
         inboxSync: mode === 'off' ? null : inboxSync,
         senderTest: new SenderTest(db, { key: config.masterKey, mailer: mailer, mailbox: mailbox, inboxSync: inboxSync, now: config.now })
       };
+      deps.projects = new ProjectsService(db, { campaigns: deps.campaigns, now: config.now });
       deps.engineStatus = function (userId) {
         var t = (config.now || Date.now)();
         return db.all('SELECT id, email, status, health_score, next_send_at, last_error, imap_host, imap_last_uid, last_sync_at, sync_error FROM senders WHERE user_id = ? ORDER BY id', [userId]).then(function (rows) {

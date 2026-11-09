@@ -109,8 +109,8 @@ test('domain-aware shuffle keeps same-domain leads apart', function () {
 });
 
 console.log('throttle');
-test('daily limit hard-capped at 500', function () {
-  assert.strictEqual(throttle.clampDailyLimit(9999), 500);
+test('daily limit hard-capped at 400', function () {
+  assert.strictEqual(throttle.clampDailyLimit(9999), 400);
   assert.strictEqual(throttle.clampDailyLimit(120), 120);
   assert.strictEqual(throttle.clampDailyLimit(-5), 1);
   assert.strictEqual(throttle.clampDailyLimit('abc'), 1);

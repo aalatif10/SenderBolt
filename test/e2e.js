@@ -147,12 +147,12 @@ h.test('bad path ids are 404, never reach the database', function () {
 });
 
 h.group('e2e: senders over HTTP');
-h.test('create sender: 201, password never in any response, 500 cap enforced', function () {
-  return request('POST', '/api/senders', { json: { label: 'Main', email: 'me@gmail.com', provider: 'gmail', password: 'abcd efgh ijkl mnop', daily_limit: 501 } }).then(function (r) {
+h.test('create sender: 201, password never in any response, 400 cap enforced', function () {
+  return request('POST', '/api/senders', { json: { label: 'Main', email: 'me@gmail.com', provider: 'gmail', password: 'abcd efgh ijkl mnop', daily_limit: 401 } }).then(function (r) {
     assert.strictEqual(r.status, 400); assert.ok(r.body.details.daily_limit);
-    return request('POST', '/api/senders', { json: { label: 'Main', email: 'me@gmail.com', provider: 'gmail', password: 'abcd efgh ijkl mnop', daily_limit: 500 } });
+    return request('POST', '/api/senders', { json: { label: 'Main', email: 'me@gmail.com', provider: 'gmail', password: 'abcd efgh ijkl mnop', daily_limit: 400 } });
   }).then(function (r) {
-    assert.strictEqual(r.status, 201); assert.strictEqual(r.body.sender.daily_limit, 500);
+    assert.strictEqual(r.status, 201); assert.strictEqual(r.body.sender.daily_limit, 400);
     assert.ok(r.text.indexOf('abcdefghijklmnop') === -1 && r.text.indexOf('password_enc') === -1);
     state.senderId = r.body.sender.id;
     return request('GET', '/api/senders');

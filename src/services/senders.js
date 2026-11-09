@@ -4,7 +4,7 @@
 //  - every query is scoped by user_id (no IDOR); foreign ids look identical to missing ids
 //  - column names in UPDATE come from a fixed whitelist, never from user input
 //  - hosts must be public hostnames (SSRF guard), ports restricted to mail ports
-//  - daily limit hard-capped at 500 in validation AND by a database CHECK constraint
+//  - daily limit hard-capped at 400 in validation AND by database triggers (migration 004)
 var email = require('../lib/email');
 var vault = require('../lib/vault');
 var throttle = require('../lib/throttle');

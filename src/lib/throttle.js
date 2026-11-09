@@ -1,7 +1,7 @@
 'use strict';
-// Sender limits and delay logic. The 500/day cap is a hard ceiling.
+// Sender limits and delay logic. The 400/day cap is a hard ceiling (leaves a 100-email buffer for manual mail on a personal Gmail account).
 
-var HARD_DAILY_CAP = 500;
+var HARD_DAILY_CAP = 400;
 
 function clampDailyLimit(value) {
   var n = Math.floor(Number(value));
@@ -10,7 +10,7 @@ function clampDailyLimit(value) {
 }
 
 // Warm-up ramp: starts at 5/day and grows ~25% per day, never above the
-// sender's configured limit (itself capped at 500).
+// sender's configured limit (itself capped at 400).
 function warmupLimit(dayIndex, configuredLimit) {
   var cap = clampDailyLimit(configuredLimit);
   var d = Math.max(0, Math.floor(Number(dayIndex)) || 0);

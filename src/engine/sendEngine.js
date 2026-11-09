@@ -10,7 +10,7 @@
 //    addresses bounce and suppress the LEAD; network errors retry with backoff.
 //  * Never mail someone who opted out, replied, bounced, or whose campaign was paused: all of that is
 //    re-checked immediately before every send, inside the same transaction that claims the send.
-//  * Never exceed a sender's daily limit (hard cap 500, warm-up ramp), send window, or health floor.
+//  * Never exceed a sender's daily limit (hard cap 400, warm-up ramp), send window, or health floor.
 //  * Replies must be monitorable: a sender whose mailbox cannot be read is not allowed to send.
 var crypto = require('crypto');
 var vault = require('../lib/vault');

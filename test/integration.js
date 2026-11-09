@@ -43,7 +43,7 @@ group('migrations and schema');
 test('applies once, is idempotent, detects tampering', function () {
   return database.open(':memory:').then(function (db) {
     return migrate(db).then(function (a) {
-      assert.deepStrictEqual(a, ['001_init.sql', '002_campaign_settings.sql', '003_engine.sql']);
+      assert.deepStrictEqual(a, ['001_init.sql', '002_campaign_settings.sql', '003_engine.sql', '004_projects.sql']);
       return migrate(db);
     }).then(function (b) {
       assert.deepStrictEqual(b, []);
@@ -53,12 +53,12 @@ test('applies once, is idempotent, detects tampering', function () {
     });
   });
 });
-test('database constraints reject bad data (limit > 500, orphan FK)', function () {
+test('database constraints reject bad data (limit > 400, orphan FK)', function () {
   return freshDb().then(function (db) {
     return mkUser(db, 'a@x.com').then(function (uid) {
       var ins = "INSERT INTO senders (user_id,label,email,provider,username,password_enc,smtp_host,smtp_port,daily_limit,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)";
-      return expectReject(db.run(ins, [uid, 'l', 'e@x.com', 'smtp', 'u', 'p', 'h.com', 587, 501, 1, 1]))
-        .then(function () { return db.run(ins, [uid, 'l', 'e@x.com', 'smtp', 'u', 'p', 'h.com', 587, 500, 1, 1]); })
+      return expectReject(db.run(ins, [uid, 'l', 'e@x.com', 'smtp', 'u', 'p', 'h.com', 587, 401, 1, 1]))
+        .then(function () { return db.run(ins, [uid, 'l', 'e@x.com', 'smtp', 'u', 'p', 'h.com', 587, 400, 1, 1]); })
         .then(function () { return expectReject(db.run('INSERT INTO sessions (user_id,token_hash,created_at,last_seen_at,expires_at) VALUES (999,?,1,1,2)', ['h'])); });
     });
   });
@@ -273,15 +273,15 @@ test('ciphertext is bound to its row (swapping rows breaks decryption)', functio
     });
   });
 });
-test('daily limit hard cap 500 (validation), invalid values rejected', function () {
+test('daily limit hard cap 400 (validation), invalid values rejected', function () {
   return sendersSetup().then(function (c) {
-    return expectReject(c.svc.create(c.a, Object.assign({}, GOOD, { daily_limit: 501 })), 'validation').then(function (e) {
+    return expectReject(c.svc.create(c.a, Object.assign({}, GOOD, { daily_limit: 401 })), 'validation').then(function (e) {
       assert.ok(e.details.daily_limit);
       return expectReject(c.svc.create(c.a, Object.assign({}, GOOD, { daily_limit: -1 })), 'validation');
     }).then(function () { return expectReject(c.svc.create(c.a, Object.assign({}, GOOD, { daily_limit: '1e3' })), 'validation'); })
-      .then(function () { return c.svc.create(c.a, Object.assign({}, GOOD, { daily_limit: 500 })); })
-      .then(function (s) { assert.strictEqual(s.daily_limit, 500); return expectReject(c.svc.update(c.a, s.id, { daily_limit: 9999 }), 'validation'); })
-      .then(function () { return c.svc.list(c.a); }).then(function (l) { assert.strictEqual(l[0].daily_limit, 500); });
+      .then(function () { return c.svc.create(c.a, Object.assign({}, GOOD, { daily_limit: 400 })); })
+      .then(function (s) { assert.strictEqual(s.daily_limit, 400); return expectReject(c.svc.update(c.a, s.id, { daily_limit: 9999 }), 'validation'); })
+      .then(function () { return c.svc.list(c.a); }).then(function (l) { assert.strictEqual(l[0].daily_limit, 400); });
   });
 });
 test('input validation: gmail password, hosts (SSRF), ports, delays, header injection', function () {

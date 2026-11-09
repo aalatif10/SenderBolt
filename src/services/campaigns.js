@@ -196,16 +196,30 @@ C.create = function (userId, input, ip) {
     var name = validateName(input.name), steps = validateSteps(input.steps), settings = validateSettings(input, null);
     var senderIds = v.idArray(input.sender_ids, 1, MAX_SENDERS);
     if (!senderIds) throw bad('sender_ids', 'Choose 1 to ' + MAX_SENDERS + ' sending accounts');
+    var projectId = null;
+    if (input.project_id !== undefined && input.project_id !== null) {
+      projectId = v.intIn(input.project_id, 1, 9007199254740991);
+      if (projectId === null) throw bad('project_id', 'Invalid project');
+    }
     return self._checkSenders(userId, senderIds).then(function () {
+      if (projectId === null) return null;
+      return self.db.get('SELECT id, archived FROM projects WHERE id = ? AND user_id = ?', [projectId, userId]).then(function (p) {
+        if (!p) throw bad('project_id', 'Project not found');
+        if (p.archived) throw bad('project_id', 'This project is archived. Unarchive it first.');
+      });
+    }).then(function () {
       return self._plan(userId, input, input.split || null);
     }).then(function (plan) {
       var t = self.now();
       return self.db.transaction(function (tx) {
         var mainId;
-        return insertCampaign(tx, userId, null, name, 'draft', plan.seed, plan.batchSize, settings, t).then(function (id) {
+        // No project given: the campaign gets a project of its own (keeps one-step creation for simple cases).
+        var pj = projectId !== null ? Promise.resolve(projectId)
+          : tx.run('INSERT INTO projects (user_id, name, created_at, updated_at) VALUES (?,?,?,?)', [userId, name, t, t]).then(function (r) { return r.lastID; });
+        return pj.then(function (pid) { projectId = pid; return insertCampaign(tx, userId, null, name, 'draft', plan.seed, plan.batchSize, settings, t); }).then(function (id) {
           mainId = id;
-          return insertSteps(tx, mainId, steps);
-        }).then(function () { return linkSenders(tx, mainId, senderIds); }).then(function () {
+          return tx.run('UPDATE campaigns SET project_id = ? WHERE id = ?', [projectId, mainId]);
+        }).then(function () { return insertSteps(tx, mainId, steps); }).then(function () { return linkSenders(tx, mainId, senderIds); }).then(function () {
           if (!plan.isSplit) return insertLeads(tx, mainId, plan.batches[0]);
           return seq(plan.batches, function (batch, i) {
             var partName = name + ' - Part ' + (i + 1) + '/' + plan.batches.length, pid;
@@ -216,7 +230,7 @@ C.create = function (userId, input, ip) {
           });
         }).then(function () {
           return audit.log(tx, { userId: userId, action: 'campaign.create', entity: 'campaign', entityId: mainId, ip: ip,
-            meta: { name: name, leads: plan.leads.length, parts: plan.isSplit ? plan.batches.length : 0, steps: steps.length } }, self.now);
+            meta: { name: name, project_id: projectId, leads: plan.leads.length, parts: plan.isSplit ? plan.batches.length : 0, steps: steps.length } }, self.now);
         }).then(function () { return mainId; });
       });
     });
@@ -271,7 +285,7 @@ C._statsByCampaign = function (userId, onlyIds) {
 };
 
 function summarize(c, stats, senderIds) {
-  return { id: c.id, parent_id: c.parent_id, name: c.name, status: c.status, created_at: c.created_at, updated_at: c.updated_at,
+  return { id: c.id, parent_id: c.parent_id, project_id: c.project_id === undefined ? null : c.project_id, name: c.name, status: c.status, created_at: c.created_at, updated_at: c.updated_at,
     stats: stats || finishStats(emptyStats()), sender_ids: senderIds || [] };
 }
 
@@ -283,6 +297,8 @@ C.list = function (userId, q) {
     if (!Object.prototype.hasOwnProperty.call(FILTERS, filter)) throw bad('status', 'Invalid status filter');
     var senderFilter = null;
     if (q.sender_id !== undefined && q.sender_id !== '') { senderFilter = v.intIn(q.sender_id, 1, 9007199254740991); if (senderFilter === null) throw bad('sender_id', 'Invalid sender'); }
+    var projectFilter = null;
+    if (q.project_id !== undefined && q.project_id !== '') { projectFilter = v.intIn(q.project_id, 1, 9007199254740991); if (projectFilter === null) throw bad('project_id', 'Invalid project'); }
     var search = q.q ? String(q.q).trim().slice(0, 100) : '';
     return Promise.all([
       self.db.all('SELECT * FROM campaigns WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT 5000', [userId]),
@@ -307,6 +323,7 @@ C.list = function (userId, q) {
       });
       if (search) { var needle = search.toLowerCase(); rows = rows.filter(function (r) { return r.name.toLowerCase().indexOf(needle) !== -1; }); }
       if (senderFilter) rows = rows.filter(function (r) { return r.sender_ids.indexOf(senderFilter) !== -1; });
+      if (projectFilter) rows = rows.filter(function (r) { return r.project_id === projectFilter; });
       var counts = { all: rows.length };
       Object.keys(FILTERS).forEach(function (k) {
         if (k !== 'all') counts[k] = rows.filter(function (r) { return FILTERS[k].indexOf(r.status) !== -1; }).length;
@@ -335,7 +352,7 @@ C.get = function (userId, id) {
       finishStats(agg);
       var senders = res[2];
       var out = {
-        id: camp.id, parent_id: camp.parent_id, name: camp.name, status: deriveStatus(camp.status, parts),
+        id: camp.id, parent_id: camp.parent_id, project_id: camp.project_id === undefined ? null : camp.project_id, name: camp.name, status: deriveStatus(camp.status, parts),
         created_at: camp.created_at, updated_at: camp.updated_at, split_seed: camp.split_seed, batch_size: camp.batch_size,
         settings: { window_start_hour: camp.window_start_hour, window_end_hour: camp.window_end_hour, utc_offset_min: camp.utc_offset_min,
           weekdays_only: camp.weekdays_only, stop_on_reply: camp.stop_on_reply, track_opens: camp.track_opens },
