@@ -71,6 +71,14 @@ Close the window and start normally (without the `set` line) to go back to your 
 - **Start / Pause / Resume** buttons are on each campaign row and always ask first. **Edit**, **Archive** and **Delete** are at the top of a project (running campaigns must be paused first).
 - **Opens** show "Not tracked" on purpose: open tracking is unreliable, so replies are the number to trust.
 
-**Coming next:** Leads, Senders, Inbox and Settings screens, and the campaign builder. Until they exist, those menu items show a short notice; the features already work through the API.
+**Senders** (menu: Senders)
+1. Click **Add sender**. Choose **Gmail**, type the address and a Google **App Password** (the box explains how to create one: turn on 2-Step Verification, then Security -> App passwords). Your normal Gmail password does not work and is never needed.
+2. Set the name recipients will see and **Emails per day**. The maximum is **400** (a 100-email safety buffer under Gmail's limit); the screen refuses anything higher. New accounts keep **warm-up** on: they start at a handful per day and grow automatically.
+3. **Add and test connection** saves the account (the password is encrypted and never shown again) and immediately checks that sending and reply detection work, in plain words.
+4. Each card shows status (Active / Warming up / Paused / Needs attention), health, **Sent today / today's limit**, whether replies are detected, and the next email time. Hover anything with a dotted outline or an **i** for an explanation.
+5. **Settings** opens a side panel: daily limit, warm-up, pause between emails (random looks most natural), plain-text signature, tracking domain, replace the App Password, **Pause/Resume**, and **Remove** (blocked while a running or paused campaign uses the account).
+6. Campaigns rotate emails evenly across their accounts, so more accounts means more emails per day with less load on each.
+
+**Coming next:** Leads, Inbox and Settings screens, and the campaign builder. Until they exist, those menu items show a short notice; the features already work through the API.
 
 **Safety notes:** your session ends after 2 hours of inactivity; passwords are never stored in the browser; everything the page shows from the server is displayed as plain text.

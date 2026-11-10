@@ -54,8 +54,8 @@
 
     function render(r) {
       var senders = r[1].items, projects = r[0].items, leads = r[2].stats.total, unread = r[3].unread;
-      var today = fmt.todayUtc(), sent = 0, cap = 0;
-      senders.forEach(function (s) { if (s.status === 'active') { cap += s.daily_limit; if (s.sent_today_date === today) sent += s.sent_today; } });
+      var sent = 0, cap = 0;
+      senders.forEach(function (s) { sent += s.sent_today; if (s.status === 'active') cap += s.limit_today; });
       var badSenders = senders.filter(function (s) { return s.status !== 'active' || s.last_error; });
       var attn = badSenders.length + (r[0].counts.error || 0);
       var attnNote = badSenders.length ? badSenders[0].label + ': ' + (badSenders[0].last_error || (badSenders[0].status === 'paused' ? 'paused' : badSenders[0].status)) : (r[0].counts.error ? 'A campaign is blocked' : 'Everything looks healthy');

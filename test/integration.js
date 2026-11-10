@@ -263,6 +263,20 @@ test('create encrypts the password and never returns it', function () {
     });
   });
 });
+test('sender view includes today figures (warm-up aware) and still hides the password', function () {
+  return sendersSetup().then(function (c) {
+    return c.svc.create(c.a, Object.assign({}, GOOD, { daily_limit: 100, warmup_enabled: true }), '1.1.1.1').then(function (s) {
+      assert.strictEqual(s.sent_today, 0); assert.strictEqual(s.limit_today, 5); assert.strictEqual(s.remaining_today, 5);
+      assert.strictEqual(s.warmup_day, 1); assert.strictEqual(s.hard_cap, 400);
+      var today = new Date(c.svc.now()).toISOString().slice(0, 10);
+      return c.db.run('UPDATE senders SET sent_today = 3, sent_today_date = ? WHERE id = ?', [today, s.id]).then(function () { return c.svc.list(c.a); });
+    }).then(function (rows) {
+      assert.strictEqual(rows[0].sent_today, 3); assert.strictEqual(rows[0].remaining_today, 2);
+      assert.ok(rows[0].password_enc === undefined);
+      return c.db.run("UPDATE senders SET sent_today_date = '2000-01-01'").then(function () { return c.svc.get(c.a, rows[0].id); });
+    }).then(function (r) { assert.strictEqual(r.sent_today, 0, 'yesterday\'s count does not leak into today'); });
+  });
+});
 test('ciphertext is bound to its row (swapping rows breaks decryption)', function () {
   return sendersSetup().then(function (c) {
     return c.svc.create(c.a, GOOD).then(function (s1) {

@@ -153,12 +153,35 @@ Senders.prototype._create = function (userId, input, ip) {
   }).then(function (id) { return self.get(userId, id); });
 };
 
+// Adds read-only "today" figures so the UI never has to re-implement warm-up / cap rules.
+function withToday(row, nowMs) {
+  var out = publicView(row);
+  var dateStr = new Date(nowMs).toISOString().slice(0, 10);
+  var sent = row.sent_today_date === dateStr ? row.sent_today : 0;
+  var limit = row.daily_limit, day = null;
+  if (row.warmup_enabled) {
+    var started = row.warmup_started_at === null || row.warmup_started_at === undefined ? nowMs : row.warmup_started_at;
+    day = Math.max(0, Math.floor((nowMs - started) / 86400000));
+    limit = throttle.warmupLimit(day, row.daily_limit);
+  }
+  out.sent_today = sent;
+  out.limit_today = limit;
+  out.remaining_today = capacityToday(row, dateStr, nowMs);
+  out.warmup_day = day === null ? null : day + 1;
+  out.hard_cap = throttle.HARD_DAILY_CAP;
+  return out;
+}
+
 Senders.prototype.list = function (userId) {
-  return this.db.all('SELECT * FROM senders WHERE user_id = ? ORDER BY created_at DESC, id DESC', [userId]).then(function (rows) { return rows.map(publicView); });
+  var self = this;
+  return this.db.all('SELECT * FROM senders WHERE user_id = ? ORDER BY created_at DESC, id DESC', [userId]).then(function (rows) {
+    var t = self.now(); return rows.map(function (r) { return withToday(r, t); });
+  });
 };
 
 Senders.prototype.get = function (userId, id) {
-  return this._find(userId, id).then(publicView);
+  var self = this;
+  return this._find(userId, id).then(function (r) { return withToday(r, self.now()); });
 };
 
 Senders.prototype.update = function (userId, id, input, ip) {

@@ -1,4 +1,4 @@
-# SenderBolt - Architecture Report (v0.6.0)
+# SenderBolt - Architecture Report (v0.7.0)
 
 Target runtime: **Node.js 12.22.x on Windows 7 (64-bit)**. Code is written in ES2018-style JavaScript
 (no `?.`, `??`, or other post-Node-12 syntax) with promise chains.
@@ -117,6 +117,8 @@ Metric definitions: `emailed` = leads that got an email (or were rejected while 
 | `public/js/api.js` | fetch wrapper: `X-SB-Client` + `X-CSRF-Token`, 30 s timeout, one retry for GET network blips, 401 -> sign-in, 429 -> friendly wait message. CSRF token lives in memory only |
 | `public/js/ui.js`, `format.js`, `strings.js` | toasts, modals/confirm, slide-over, status pills, tiles, progress, sentiment bar, visibility-aware polling; number/time formatting; ALL wording in one file (translation-ready) |
 | `public/js/screens/login.js`, `home.js`, `project.js`, `soon.js` | sign-in/first-run setup, Home, project + campaign drill-down, placeholder for unbuilt screens |
+| `public/js/screens/senders.js` (v0.7) | Senders screen: summary tiles, account cards, add-sender dialog (Gmail / other SMTP) that auto-runs the connection test, settings slide-over (limit <= 400, warm-up, delays, plain-text signature escaped client-side, App Password replacement, pause/remove). Uses `/api/senders*` and `/api/engine/status` only; the server stays the authority for every limit |
+| `src/services/senders.js` (v0.7) | `list/get` now add read-only `sent_today` (today UTC only), `limit_today` (warm-up aware), `remaining_today`, `warmup_day`, `hard_cap`; the password is still never returned |
 | `public/js/app.js` | boot, auth flow, sidebar, hash router, test-mode / offline banners, unread badge |
 | `scripts/demo.js` (`npm run demo`) | opt-in sample data with a RANDOM one-time password; refuses live mode, non-localhost binding and databases with a real account |
 | `test/ui.js` | static-serving traversal attacks, header checks, source scan forbidding unsafe DOM APIs / inline code / external resources, demo-script safety |
@@ -174,7 +176,7 @@ Every state-changing call needs headers `X-SB-Client: 1` and `X-CSRF-Token: <fro
 3c. Open tracking (`track_opens`) is stored but not implemented. Unsubscribe links use the app's public origin, not the tracking domain. Replies landing in Gmail's Spam folder are not seen (INBOX only). If a sender goes down, its assigned leads wait for it (the campaign shows `error` only when no waiting lead has a usable sender).
 3d. Inbox shows plain text only; HTML replies are stored but never exposed until DOMPurify is added.
 4. **Connect-time DNS check for hosts** (anti-rebinding) is not done; only the hostname format is validated.
-5. **Web UI is partial**: Leads, Senders, Inbox, Settings and the campaign builder screens are still to build.
+5. **Web UI is partial**: Leads, Inbox, Settings and the campaign builder screens are still to build (Home, Projects and Senders are done).
 6. Verification means "domain can receive mail", not "mailbox exists" (by design; see leads.js header).
 7. Login rate limits are in memory (reset on restart); fine for one user, swap for a shared store before multi-node SaaS.
 8. Run behind HTTPS (and set `SENDERBOLT_SECURE_COOKIES=1`) before exposing beyond localhost.
@@ -182,4 +184,4 @@ Every state-changing call needs headers `X-SB-Client: 1` and `X-CSRF-Token: <fro
 ## 7. Next steps (suggested order)
 
 1. Live test with one real Gmail App Password (dry-run first).
-2. Remaining web screens (campaign builder, Senders, Leads, Inbox + DOMPurify, Settings) (vanilla JS + clean CSS, tooltips) served with the existing CSP.
+2. Remaining web screens (Leads next, then campaign builder, Inbox + DOMPurify, Settings) (vanilla JS + clean CSS, tooltips) served with the existing CSP.
