@@ -139,6 +139,7 @@ function createDispatcher(o) {
       }
     }
     if (!route) {
+      if (!pathMatched && o.staticHandler && (req.method === 'GET' || req.method === 'HEAD') && u.pathname.indexOf('/api/') !== 0) return o.staticHandler(req, res, u.pathname);
       if (pathMatched) { res.setHeader('Allow', allow.join(', ')); throw new AppError('method_not_allowed', 'Method not allowed', 405); }
       throw new AppError('not_found', 'Not found', 404);
     }

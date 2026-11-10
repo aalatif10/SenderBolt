@@ -1,0 +1,25 @@
+/* Design tokens. Light by default, automatic dark mode. Change colours here only. */
+:root {
+  --bg: #f5f7fa; --surface: #ffffff; --surface-2: #f0f3f8; --border: #e2e7ef; --border-strong: #cfd6e2;
+  --text: #1a2233; --text-2: #4a566b; --text-3: #7a869a;
+  --accent: #2563eb; --accent-hover: #1d4fd0; --accent-soft: #e8efff; --on-accent: #ffffff;
+  --good: #15803d; --good-soft: #e3f6ea; --warn: #b45309; --warn-soft: #fdf0d9; --bad: #c0262d; --bad-soft: #fde8e9;
+  --info: #0e7490; --info-soft: #e0f4f8;
+  --shadow: 0 1px 2px rgba(16, 24, 40, .05), 0 4px 16px rgba(16, 24, 40, .06);
+  --shadow-lg: 0 12px 40px rgba(16, 24, 40, .18);
+  --radius: 12px; --radius-sm: 8px;
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 24px; --space-6: 32px; --space-7: 48px;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --fs-sm: 13px; --fs: 15px; --fs-lg: 18px; --fs-xl: 24px; --fs-2xl: 30px;
+  --sidebar: 232px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f141c; --surface: #171e29; --surface-2: #1e2633; --border: #2a3343; --border-strong: #3a4558;
+    --text: #e8edf5; --text-2: #aab4c5; --text-3: #7d889b;
+    --accent: #5b8cff; --accent-hover: #7aa2ff; --accent-soft: #1c2b4d; --on-accent: #0b1220;
+    --good: #4ade80; --good-soft: #14301f; --warn: #fbbf24; --warn-soft: #3a2d10; --bad: #f87171; --bad-soft: #3b1a1d;
+    --info: #67d4ea; --info-soft: #10303a;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 4px 16px rgba(0, 0, 0, .3); --shadow-lg: 0 12px 40px rgba(0, 0, 0, .6);
+  }
+}

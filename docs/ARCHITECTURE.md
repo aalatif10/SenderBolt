@@ -1,4 +1,4 @@
-# SenderBolt - Architecture Report (v0.5.0)
+# SenderBolt - Architecture Report (v0.6.0)
 
 Target runtime: **Node.js 12.22.x on Windows 7 (64-bit)**. Code is written in ES2018-style JavaScript
 (no `?.`, `??`, or other post-Node-12 syntax) with promise chains.
@@ -13,6 +13,7 @@ Target runtime: **Node.js 12.22.x on Windows 7 (64-bit)**. Code is written in ES
 | Leads and lists, importer, on-demand verifier (backend + API) | Done |
 | Campaigns: wizard data, sequences (up to 5 follow-ups), Smart Split into sub-campaigns, lifecycle, dashboard data (backend + API) | Done |
 | Projects: Project > Campaign > Batch hierarchy with roll-up analytics (backend + API) | Done |
+| Web UI foundation: login/setup, Home, Project drill-down (vanilla JS, no build step) | Done. Leads, Senders, Inbox, Settings, campaign wizard screens: not started |
 | Email templates (variables, fallbacks, spintax, safe escaping) | Done |
 | Sending engine + scheduler (dry-run / live modes) | Done (live SMTP adapter not yet run against a real server) |
 | Reply + bounce sync (IMAP), unified inbox, sentiment, manual reply, unsubscribe | Done (live IMAP adapter not yet run against a real mailbox) |
@@ -106,6 +107,22 @@ Order per request: security headers (CSP, nosniff, DENY framing, no-referrer, CO
 Hierarchy: **Project** (container, e.g. "Q4 domain push") > **Campaign** (a variant: own sequence, leads, senders, settings) > **Batch** (a Smart Split part, mostly invisible to the user). Creating a campaign without `project_id` creates a project of the same name automatically.
 Metric definitions: `emailed` = leads that got an email (or were rejected while sending); `replied` = real replies only (not out-of-office/bounces); rates are % of `emailed`. **Opens are not tracked yet** and are returned as `opens: null, opens_tracked: false`; the UI must say "not tracked", never show 0.
 
+### Web UI (v0.6) - `public/` served by `src/http/static.js`
+| File | Role |
+|---|---|
+| `src/http/static.js` | serves `/public` for GET/HEAD only: extension allowlist, decoded + realpath-confined paths (no traversal/symlink escape), no dotfiles/directories, `no-cache`. Plugged into the dispatcher as the fallback for non-`/api` paths, so Host allowlist, rate limit, CSP and nosniff/DENY headers still apply |
+| `public/index.html`, `favicon.svg` | the single page; only same-origin scripts/styles (CSP `script-src 'self'; style-src 'self'`) |
+| `public/css/tokens.css`, `app.css` | design tokens (colours, spacing, type; automatic dark mode) and components. Tooltips are pure CSS (`data-tip`), keyboard accessible |
+| `public/js/dom.js` | **safe DOM builder `h()`**: strings become text nodes; `innerHTML`, inline handlers and non-local links are impossible. Inline SVG icons |
+| `public/js/api.js` | fetch wrapper: `X-SB-Client` + `X-CSRF-Token`, 30 s timeout, one retry for GET network blips, 401 -> sign-in, 429 -> friendly wait message. CSRF token lives in memory only |
+| `public/js/ui.js`, `format.js`, `strings.js` | toasts, modals/confirm, slide-over, status pills, tiles, progress, sentiment bar, visibility-aware polling; number/time formatting; ALL wording in one file (translation-ready) |
+| `public/js/screens/login.js`, `home.js`, `project.js`, `soon.js` | sign-in/first-run setup, Home, project + campaign drill-down, placeholder for unbuilt screens |
+| `public/js/app.js` | boot, auth flow, sidebar, hash router, test-mode / offline banners, unread badge |
+| `scripts/demo.js` (`npm run demo`) | opt-in sample data with a RANDOM one-time password; refuses live mode, non-localhost binding and databases with a real account |
+| `test/ui.js` | static-serving traversal attacks, header checks, source scan forbidding unsafe DOM APIs / inline code / external resources, demo-script safety |
+
+DOMPurify is needed only when the Inbox screen renders reply HTML (planned: sanitize in the browser, show in a sandboxed iframe); the UI built so far renders no server HTML at all.
+
 ### Pure libraries (`src/lib/`)
 `template.js` (`{{var|fallback}}`, `{a|b}` spintax; values HTML-escaped and never re-scanned; subject mode strips line breaks), `validate.js` (integer / id-list coercion).
 `vault.js` (AES-256-GCM), `password.js` (scrypt N=32768, async variants), `tokens.js`, `cookies.js` (strict serializer), `email.js` (syntax, role, CRLF guard), `csv.js` (parser + formula-injection guard), `split.js` (seeded shuffle, domain spreading, batch split, preview sizes), `throttle.js` (400 cap, warm-up, delays), `health.js` (0 to 100 score, auto-pause below 50), `net.js` (public-hostname / SSRF guard), `text.js`, `http.js`, `errors.js`.
@@ -157,7 +174,7 @@ Every state-changing call needs headers `X-SB-Client: 1` and `X-CSRF-Token: <fro
 3c. Open tracking (`track_opens`) is stored but not implemented. Unsubscribe links use the app's public origin, not the tracking domain. Replies landing in Gmail's Spam folder are not seen (INBOX only). If a sender goes down, its assigned leads wait for it (the campaign shows `error` only when no waiting lead has a usable sender).
 3d. Inbox shows plain text only; HTML replies are stored but never exposed until DOMPurify is added.
 4. **Connect-time DNS check for hosts** (anti-rebinding) is not done; only the hostname format is validated.
-5. **No web UI yet** (API only).
+5. **Web UI is partial**: Leads, Senders, Inbox, Settings and the campaign builder screens are still to build.
 6. Verification means "domain can receive mail", not "mailbox exists" (by design; see leads.js header).
 7. Login rate limits are in memory (reset on restart); fine for one user, swap for a shared store before multi-node SaaS.
 8. Run behind HTTPS (and set `SENDERBOLT_SECURE_COOKIES=1`) before exposing beyond localhost.
@@ -165,4 +182,4 @@ Every state-changing call needs headers `X-SB-Client: 1` and `X-CSRF-Token: <fro
 ## 7. Next steps (suggested order)
 
 1. Live test with one real Gmail App Password (dry-run first).
-2. Web UI (vanilla JS + clean CSS, tooltips) served with the existing CSP.
+2. Remaining web screens (campaign builder, Senders, Leads, Inbox + DOMPurify, Settings) (vanilla JS + clean CSS, tooltips) served with the existing CSP.

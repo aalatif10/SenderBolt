@@ -20,6 +20,7 @@ var InboxSync = require('./engine/inboxSync').InboxSync;
 var Scheduler = require('./engine/scheduler').Scheduler;
 var mailerLib = require('./engine/mailer');
 var mailboxLib = require('./engine/mailbox');
+var staticFiles = require('./http/static');
 var createDispatcher = require('./http/router').createDispatcher;
 var buildRoutes = require('./routes');
 
@@ -66,7 +67,7 @@ function createApp(config) {
         });
       };
       var dispatch = createDispatcher({
-        routes: buildRoutes(deps), sessions: sessions, cookieName: cookieName,
+        routes: buildRoutes(deps), staticHandler: staticFiles.create(path.join(__dirname, '..', 'public')), sessions: sessions, cookieName: cookieName,
         allowedHosts: config.allowedHosts, allowedOrigins: config.allowedOrigins,
         secureCookies: config.secureCookies, trustProxy: config.trustProxy
       });
