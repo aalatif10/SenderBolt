@@ -1,4 +1,4 @@
-# SenderBolt - Architecture Report (v0.7.0)
+# SenderBolt - Architecture Report (v0.7.1)
 
 Target runtime: **Node.js 12.22.x on Windows 7 (64-bit)**. Code is written in ES2018-style JavaScript
 (no `?.`, `??`, or other post-Node-12 syntax) with promise chains.
@@ -68,7 +68,7 @@ Order per request: security headers (CSP, nosniff, DENY framing, no-referrer, CO
 ### Services (`src/services/`)
 - `auth.js` - first-user setup (optional `SENDERBOLT_SETUP_TOKEN`), login with per-IP and per-account limits, escalating lockout (5 failures: 15 min, doubling, max 24 h), identical errors for unknown users, timing-equalized dummy hash, fresh session per login, password change revokes other sessions.
 - `sessions.js` - random 256-bit token in an HttpOnly cookie; only its SHA-256 is stored. 2 h idle, 12 h absolute, max 10 per user. CSRF token = HMAC of the session hash.
-- `senders.js` - validation and CRUD. App passwords encrypted with AES-256-GCM (random IV, AAD bound to `sender:<id>`), never returned or logged. Gmail host/port preset; custom SMTP hosts must be public FQDNs on ports 25/465/587/2525 (IMAP 143/993). `daily_limit` 1 to 400 in code and DB triggers. `capacityToday()` combines limit, warm-up ramp, health and status. `getCredentials()` is internal-only for the future sending engine.
+- `senders.js` - validation and CRUD. App passwords encrypted with AES-256-GCM (random IV, AAD bound to `sender:<id>`), never returned or logged. Gmail host/port preset; custom SMTP hosts must be public FQDNs on ports 25/465/587/2525 (IMAP 143/993). `daily_limit` 1 to 400 in code and DB triggers. `capacityToday()` combines limit, warm-up ramp, health and status (all ramp rules are pure functions in `lib/throttle.js`). `getCredentials()` is internal-only for the future sending engine.
 - `leads.js` - folders; import from CSV (header aliases, custom columns, BOM, `,` `;` tab) or pasted text; duplicates and suppressed emails skipped; role-address flag; list/search/sort (whitelisted columns, escaped LIKE); stats incl. valid rate; CSV export with formula-injection neutralization; suppression list; **manual verifier** (syntax + DNS MX, 8 parallel lookups, per-domain cache, 5 s timeout). Transient DNS failures never mark a lead invalid.
 - `audit.js` - append-only log with automatic redaction of keys like password/token/secret.
 
@@ -107,6 +107,18 @@ Order per request: security headers (CSP, nosniff, DENY framing, no-referrer, CO
 Hierarchy: **Project** (container, e.g. "Q4 domain push") > **Campaign** (a variant: own sequence, leads, senders, settings) > **Batch** (a Smart Split part, mostly invisible to the user). Creating a campaign without `project_id` creates a project of the same name automatically.
 Metric definitions: `emailed` = leads that got an email (or were rejected while sending); `replied` = real replies only (not out-of-office/bounces); rates are % of `emailed`. **Opens are not tracked yet** and are returned as `opens: null, opens_tracked: false`; the UI must say "not tracked", never show 0.
 
+### Warm-up (v0.7.1) - `lib/throttle.js`, `migrations/005_warmup.sql`
+Warm-up is a per-sender volume ramp (no peer network). It is **optional**: `warmup_enabled = 0` means the sender uses its configured limit (max 400) from day one.
+| Rule | How it works |
+|---|---|
+| Paces | `standard`: 5/day, +25% per ramp day (400/day on ramp day 21). `gentle`: 3/day, +15% per ramp day (day 36). Never above the configured limit |
+| Idle-safe | The ramp position (`rampIndex`) counts only UTC days on which the sender really sent. Paused weeks, holidays or empty campaigns do not advance it, and a long gap can never cause a jump to full volume |
+| No token days | A day advances the ramp only if the sender used at least half of that day's allowance (1 email on a 30-email day does not count). The day in progress is never counted early, so the limit cannot rise mid-day |
+| One day boundary | Ramp and daily counter both use the UTC date (the old rule mixed 24h blocks with UTC midnight and could allow about 2x in 24h) |
+| Health-aware | `senderHealth.recompute` sets `warmup_penalty` from the 7-day hard-bounce rate (needs 20+ sends): 2% -> 2 steps back, 4% -> 4, 6% -> 6 (about 20% less volume per step, never below the starting amount). It clears by itself once bounces age out. Auto-pause below health 50 is unchanged |
+| Counter | `sendEngine._onSuccess` stores `warmup_days` inside the send transaction. It also counts while warm-up is off, so an account that has been sending at volume counts as warmed up if the switch is turned on later |
+The API adds read-only `warmup_day`, `warmup_reaches_day`, `warmup_slowed` (null/false when warm-up is off). Existing senders keep their progress (migration 005 converts the old calendar clock, minus one day).
+
 ### Web UI (v0.6) - `public/` served by `src/http/static.js`
 | File | Role |
 |---|---|
@@ -127,7 +139,7 @@ DOMPurify is needed only when the Inbox screen renders reply HTML (planned: sani
 
 ### Pure libraries (`src/lib/`)
 `template.js` (`{{var|fallback}}`, `{a|b}` spintax; values HTML-escaped and never re-scanned; subject mode strips line breaks), `validate.js` (integer / id-list coercion).
-`vault.js` (AES-256-GCM), `password.js` (scrypt N=32768, async variants), `tokens.js`, `cookies.js` (strict serializer), `email.js` (syntax, role, CRLF guard), `csv.js` (parser + formula-injection guard), `split.js` (seeded shuffle, domain spreading, batch split, preview sizes), `throttle.js` (400 cap, warm-up, delays), `health.js` (0 to 100 score, auto-pause below 50), `net.js` (public-hostname / SSRF guard), `text.js`, `http.js`, `errors.js`.
+`vault.js` (AES-256-GCM), `password.js` (scrypt N=32768, async variants), `tokens.js`, `cookies.js` (strict serializer), `email.js` (syntax, role, CRLF guard), `csv.js` (parser + formula-injection guard), `split.js` (seeded shuffle, domain spreading, batch split, preview sizes), `throttle.js` (400 cap, warm-up ramp: paces, send-day index, bounce penalty; delays), `health.js` (0 to 100 score, auto-pause below 50), `net.js` (public-hostname / SSRF guard), `text.js`, `http.js`, `errors.js`.
 
 ## 4. HTTP API (all JSON, all `/api`, all need a session unless noted)
 

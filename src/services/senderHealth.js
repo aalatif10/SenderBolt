@@ -2,12 +2,14 @@
 // Sender health: recomputed from the last 30 days of real results, and a sender that falls below
 // the threshold is paused automatically (protects the Gmail account's reputation).
 var health = require('../lib/health');
+var throttle = require('../lib/throttle');
 
 var WINDOW_MS = 30 * 86400000;
+var RECENT_MS = 7 * 86400000;      // window for the warm-up slow-down
 
 // db may be a Database or a tx. Returns the new score.
 function recompute(db, senderId, now) {
-  var since = now - WINDOW_MS, sent = 0, bouncedLater = 0, rejected = 0, replies = 0;
+  var since = now - WINDOW_MS, recent = now - RECENT_MS, sent = 0, bouncedLater = 0, rejected = 0, replies = 0, sent7 = 0, bounced7 = 0;
   return db.get("SELECT COUNT(*) AS n FROM messages WHERE sender_id = ? AND direction = 'out' AND status = 'sent' AND step_no IS NOT NULL AND sent_at >= ?", [senderId, since]).then(function (r) {
     sent = r.n;     // accepted by our SMTP provider
     // bounce notices that came back to the mailbox later (these refer to emails counted in `sent`)
@@ -21,8 +23,16 @@ function recompute(db, senderId, now) {
     return db.get("SELECT COUNT(*) AS n FROM messages WHERE sender_id = ? AND direction = 'in' AND kind = 'email' AND created_at >= ?", [senderId, since]);
   }).then(function (r) {
     replies = r.n;
+    // Same counting over the last 7 days only: drives how much the warm-up ramp is slowed.
+    return db.get("SELECT (SELECT COUNT(*) FROM messages WHERE sender_id = ? AND direction = 'out' AND status = 'sent' AND step_no IS NOT NULL AND sent_at >= ?) AS sent, " +
+      "(SELECT COUNT(*) FROM messages WHERE sender_id = ? AND direction = 'in' AND kind = 'bounce' AND error_class IN ('hard','policy') AND created_at >= ?) AS bounced, " +
+      "(SELECT COUNT(*) FROM messages WHERE sender_id = ? AND direction = 'out' AND status = 'failed' AND error_class IN ('recipient','policy') AND created_at >= ?) AS rejected",
+      [senderId, recent, senderId, recent, senderId, recent]);
+  }).then(function (r7) {
+    sent7 = r7.sent + r7.rejected; bounced7 = r7.bounced + r7.rejected;
     var score = health.computeHealth({ sent: sent + rejected, hardBounces: bouncedLater + rejected, replies: replies, complaints: 0 });
-    return db.run('UPDATE senders SET health_score = ? WHERE id = ?', [score, senderId]).then(function () {
+    var penalty = throttle.warmupPenaltySteps(sent7, bounced7);
+    return db.run('UPDATE senders SET health_score = ?, warmup_penalty = ? WHERE id = ?', [score, penalty, senderId]).then(function () {
       if (score >= health.AUTO_PAUSE_BELOW) return score;
       return db.run("UPDATE senders SET status = 'paused', last_error = ?, updated_at = ? WHERE id = ? AND status = 'active'",
         ['Auto-paused: health score fell to ' + score + ' (too many bounces)', now, senderId]).then(function () { return score; });

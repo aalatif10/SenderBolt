@@ -5,6 +5,7 @@
 //  - column names in UPDATE come from a fixed whitelist, never from user input
 //  - hosts must be public hostnames (SSRF guard), ports restricted to mail ports
 //  - daily limit hard-capped at 400 in validation AND by database triggers (migration 004)
+//  - warm-up is optional per sender; the ramp rules live in lib/throttle.js (pure, unit-tested)
 var email = require('../lib/email');
 var vault = require('../lib/vault');
 var throttle = require('../lib/throttle');
@@ -18,7 +19,7 @@ var IMAP_PORTS = [143, 993];
 var GMAIL = { smtp_host: 'smtp.gmail.com', smtp_port: 465, smtp_secure: 1, imap_host: 'imap.gmail.com', imap_port: 993 };
 
 var COLUMNS = ['label', 'email', 'provider', 'username', 'smtp_host', 'smtp_port', 'smtp_secure', 'imap_host', 'imap_port',
-  'from_name', 'daily_limit', 'delay_mode', 'delay_fixed_sec', 'delay_min_sec', 'delay_max_sec', 'warmup_enabled',
+  'from_name', 'daily_limit', 'delay_mode', 'delay_fixed_sec', 'delay_min_sec', 'delay_max_sec', 'warmup_enabled', 'warmup_pace',
   'signature_html', 'tracking_domain'];
 
 function hasControl(s) {
@@ -83,6 +84,9 @@ function validate(input, isCreate) {
   });
   if (v.delay_min_sec !== undefined && v.delay_max_sec !== undefined && v.delay_min_sec > v.delay_max_sec) errors.delay_min_sec = 'Min delay cannot exceed max delay';
   if (has('warmup_enabled')) v.warmup_enabled = input.warmup_enabled ? 1 : 0;
+  if (has('warmup_pace')) {
+    if (throttle.PACE_NAMES.indexOf(input.warmup_pace) === -1) errors.warmup_pace = 'Warm-up pace must be ' + throttle.PACE_NAMES.join(' or '); else v.warmup_pace = input.warmup_pace;
+  }
   if (has('signature_html')) {
     if (input.signature_html !== null && (typeof input.signature_html !== 'string' || input.signature_html.length > 10000)) errors.signature_html = 'Signature too long (max 10000 chars)';
     else v.signature_html = input.signature_html || null;   // sanitized again at send time
@@ -154,20 +158,16 @@ Senders.prototype._create = function (userId, input, ip) {
 };
 
 // Adds read-only "today" figures so the UI never has to re-implement warm-up / cap rules.
+// warmup_day / warmup_reaches_day are null when warm-up is switched off (the sender uses its full limit).
 function withToday(row, nowMs) {
   var out = publicView(row);
   var dateStr = new Date(nowMs).toISOString().slice(0, 10);
-  var sent = row.sent_today_date === dateStr ? row.sent_today : 0;
-  var limit = row.daily_limit, day = null;
-  if (row.warmup_enabled) {
-    var started = row.warmup_started_at === null || row.warmup_started_at === undefined ? nowMs : row.warmup_started_at;
-    day = Math.max(0, Math.floor((nowMs - started) / 86400000));
-    limit = throttle.warmupLimit(day, row.daily_limit);
-  }
-  out.sent_today = sent;
-  out.limit_today = limit;
+  out.sent_today = row.sent_today_date === dateStr ? row.sent_today : 0;
+  out.limit_today = throttle.limitToday(row, dateStr);
   out.remaining_today = capacityToday(row, dateStr, nowMs);
-  out.warmup_day = day === null ? null : day + 1;
+  out.warmup_day = row.warmup_enabled ? throttle.rampIndex(row, dateStr) + 1 : null;
+  out.warmup_reaches_day = row.warmup_enabled ? throttle.warmupDaysToLimit(row.daily_limit, row.warmup_pace) : null;
+  out.warmup_slowed = !!(row.warmup_enabled && row.warmup_penalty > 0);
   out.hard_cap = throttle.HARD_DAILY_CAP;
   return out;
 }
@@ -240,17 +240,11 @@ Senders.prototype.getCredentials = function (userId, id) {
 };
 
 // Pure: how many more emails this sender may send today.
-// dateStr is the sender's local day (YYYY-MM-DD) as decided by the caller.
+// dateStr is the UTC day (YYYY-MM-DD) as decided by the caller. nowMs is kept for callers' convenience.
 function capacityToday(sender, dateStr, nowMs) {
   if (sender.status !== 'active' || sender.health_score < health.AUTO_PAUSE_BELOW) return 0;
   var sent = sender.sent_today_date === dateStr ? sender.sent_today : 0;
-  var limit = sender.daily_limit;
-  if (sender.warmup_enabled) {
-    var started = sender.warmup_started_at === null || sender.warmup_started_at === undefined ? nowMs : sender.warmup_started_at;
-    var days = Math.max(0, Math.floor((nowMs - started) / 86400000));
-    limit = throttle.warmupLimit(days, sender.daily_limit);
-  }
-  return Math.max(0, limit - sent);
+  return Math.max(0, throttle.limitToday(sender, dateStr) - sent);
 }
 
 module.exports = { Senders: Senders, capacityToday: capacityToday, validate: validate };

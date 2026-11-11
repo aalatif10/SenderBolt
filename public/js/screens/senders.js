@@ -18,7 +18,7 @@
     if (s.status === 'disabled') return { key: 'draft', label: 'Disabled', tip: 'This account is switched off and will never be used.' };
     if (s.status === 'paused') return { key: 'paused', label: 'Paused', tip: s.last_error ? 'Paused automatically: ' + s.last_error : 'Nothing is sent from this account until you resume it.' };
     if (s.health_score < 50) return { key: 'error', label: 'Needs attention', tip: 'The health score is very low, so this account is not used until it recovers.' };
-    if (s.warmup_enabled && s.limit_today < s.daily_limit) return { key: 'active', label: 'Warming up', tip: 'New accounts start with a small daily amount that grows each day. Today: up to ' + s.limit_today + ' emails.' };
+    if (s.warmup_enabled && s.limit_today < s.daily_limit) return { key: 'active', label: s.warmup_slowed ? 'Warming up (slowed)' : 'Warming up', tip: 'Warm-up day ' + s.warmup_day + ' of about ' + s.warmup_reaches_day + '. Today: up to ' + s.limit_today + ' emails, growing each day the account is really used.' + (s.warmup_slowed ? ' Growth is slowed because of recent bounces.' : '') };
     return { key: 'active', label: 'Active', tip: 'Ready to send.' };
   }
   function pill(st) { return h('span', { class: 'pill pill-' + st.key, tip: st.tip }, st.label); }
@@ -65,6 +65,32 @@
   }
   function num(inp, lo, hi) { var n = parseInt(inp.value, 10); return isFinite(n) ? n : NaN; }
 
+  // ---- warm-up controls (shared) --------------------------------------------------------------
+  var WARM_ON = 'The daily amount starts small and grows, but only on days the account is really used. Idle days do not count, and growth slows by itself if emails start bouncing. Recommended for new or rarely used accounts.';
+  var WARM_OFF = 'Full speed: the account sends up to your daily limit from the very first day. Only choose this for accounts that already send a similar volume regularly.';
+  var PACE_HINT = { standard: 'Standard: starts at 5 a day and reaches the maximum in about 3 weeks.', gentle: 'Gentle: starts at 3 a day and takes about 5 weeks. Best for brand-new Gmail accounts.' };
+  function warmControls(s, idp) {   // s = existing sender or null (new)
+    var box = h('input', { type: 'checkbox', id: idp + '-warm' }); box.checked = s ? !!s.warmup_enabled : true;
+    var pace = h('select', { class: 'input', id: idp + '-pace' }, h('option', { value: 'standard' }, 'Standard (about 3 weeks)'), h('option', { value: 'gentle' }, 'Gentle (about 5 weeks)'));
+    pace.value = (s && s.warmup_pace) || 'standard';
+    var hint = h('div', { class: 'hint' }), paceHint = h('div', { class: 'hint' });
+    var paceField = h('div', { class: 'field' }, h('label', { for: idp + '-pace' }, 'Warm-up speed'), pace, paceHint);
+    function sync() {
+      hint.textContent = box.checked ? WARM_ON : WARM_OFF; paceHint.textContent = PACE_HINT[pace.value];
+      paceField.classList.toggle('hidden', !box.checked);
+    }
+    box.addEventListener('change', sync); pace.addEventListener('change', sync); sync();
+    var status = null;
+    if (s && s.warmup_enabled) {
+      status = h('div', { class: 'callout' }, h('b', { text: 'Warm-up day ' + s.warmup_day + ' of about ' + s.warmup_reaches_day + '. ' }),
+        'Today this account may send up to ' + fmt.num(s.limit_today) + ' emails' + (s.limit_today < s.daily_limit ? ', rising toward ' + fmt.num(s.daily_limit) + '.' : '.') +
+        (s.warmup_slowed ? ' Growth is currently slowed because of recent bounces: clean your lists and it recovers within a week.' : ''));
+    }
+    return { box: box, pace: pace, node: h('div', null, status,
+      h('div', { class: 'field check' }, box, h('label', { for: idp + '-warm' }, 'Warm-up: start small and grow daily'), hint), paceField),
+      values: function () { return { warmup_enabled: box.checked, warmup_pace: pace.value }; } };
+  }
+
   // ---- add sender -------------------------------------------------------------------------
   function addModal(onDone) {
     var provider = 'gmail';
@@ -76,6 +102,7 @@
     var host = h('input', { class: 'input', id: 'as-host', placeholder: 'smtp.example.com', maxlength: 253 });
     var port = h('input', { class: 'input', id: 'as-port', type: 'number', value: 465 });
     var imapHost = h('input', { class: 'input', id: 'as-ihost', placeholder: 'imap.example.com', maxlength: 253 });
+    var warm = warmControls(null, 'as');
     var smtpBox = h('div', { class: 'hidden' },
       field('SMTP server', host, 'The outgoing mail server, from your email provider.', 'as-host'),
       field('SMTP port', port, '465 (secure) or 587 are the most common.', 'as-port'),
@@ -99,14 +126,15 @@
       field('Email address', email, null, 'as-email'),
       field('App Password (or password)', pass, null, 'as-pass'), help, smtpBox,
       field('Name shown to recipients', name, 'People see this as the sender name. Use a real person\'s name for best results.', 'as-name'),
-      field('Emails per day', limit, 'New accounts should start low. The absolute maximum is ' + CAP + ' per day, which keeps a safe buffer under Gmail\'s own limit.', 'as-limit'));
+      field('Emails per day', limit, 'The most this account will ever send in a day. The absolute maximum is ' + CAP + ', which keeps a safe buffer under Gmail\'s own limit.', 'as-limit'), warm.node);
     ui.modal({ title: 'Add a sender', body: body, actions: [
       { label: 'Cancel' },
       { label: 'Add and test connection', kind: 'primary', onClick: function (close) {
         err.classList.add('hidden');
         var lim = num(limit);
         if (!isFinite(lim) || lim < 1 || lim > CAP) { err.textContent = 'Emails per day must be between 1 and ' + CAP + '.'; err.classList.remove('hidden'); return Promise.reject(new Error('v')); }
-        var payload = { label: email.value.trim(), email: email.value, provider: provider, password: pass.value, from_name: name.value, daily_limit: lim, warmup_enabled: true };
+        var payload = { label: email.value.trim(), email: email.value, provider: provider, password: pass.value, from_name: name.value, daily_limit: lim };
+        Object.assign(payload, warm.values());
         if (provider === 'smtp') {
           payload.smtp_host = host.value; payload.smtp_port = parseInt(port.value, 10) || 465;
           if (imapHost.value.trim()) { payload.imap_host = imapHost.value; payload.imap_port = 993; }
@@ -138,7 +166,7 @@
     var p = ui.panel(s.email), err = h('div', { class: 'form-error hidden', role: 'alert' });
     var name = h('input', { class: 'input', id: 'st-name', maxlength: 80, value: s.from_name || '' });
     var limit = h('input', { class: 'input', id: 'st-limit', type: 'number', min: 1, max: CAP, value: s.daily_limit });
-    var warm = h('input', { type: 'checkbox', id: 'st-warm' }); warm.checked = !!s.warmup_enabled;
+    var warm = warmControls(s, 'st');
     var mode = h('select', { class: 'input', id: 'st-mode' }, h('option', { value: 'random' }, 'Random (looks more natural)'), h('option', { value: 'fixed' }, 'Fixed'));
     mode.value = s.delay_mode;
     var dmin = h('input', { class: 'input', id: 'st-dmin', type: 'number', min: 1, max: 3600, value: s.delay_min_sec });
@@ -160,7 +188,7 @@
       err.classList.add('hidden');
       var lim = num(limit);
       if (!isFinite(lim) || lim < 1 || lim > CAP) { err.textContent = 'Emails per day must be between 1 and ' + CAP + '.'; err.classList.remove('hidden'); return; }
-      var body = { from_name: name.value, daily_limit: lim, warmup_enabled: warm.checked, delay_mode: mode.value, signature_html: textToSig(sig.value), tracking_domain: track.value.trim() };
+      var body = { from_name: name.value, daily_limit: lim, warmup_enabled: warm.box.checked, warmup_pace: warm.pace.value, delay_mode: mode.value, signature_html: textToSig(sig.value), tracking_domain: track.value.trim() };
       if (mode.value === 'random') { body.delay_min_sec = num(dmin); body.delay_max_sec = num(dmax); } else body.delay_fixed_sec = num(dfix);
       if (newPass.value) body.password = newPass.value;
       save.disabled = true;
@@ -183,8 +211,7 @@
       h('h3', { class: 'sub-h', text: 'Sending' }),
       field('Name shown to recipients', name, null, 'st-name'),
       field('Emails per day', limit, 'Maximum ' + CAP + '. Gmail allows about 500 per day, so ' + CAP + ' keeps a safe 100-email buffer and protects your account.', 'st-limit'),
-      h('div', { class: 'field check' }, warm, h('label', { for: 'st-warm' }, 'Warm-up: start small and grow daily'),
-        h('div', { class: 'hint', text: 'Recommended for new or rarely used accounts. The daily amount ramps up automatically until it reaches your limit.' })),
+      warm.node,
       field('Pause between emails', mode, 'Random pauses look like a human. Very short pauses can trigger spam filters.', 'st-mode'), randBox, fixBox,
       h('h3', { class: 'sub-h', text: 'Signature' }),
       field('Added to the end of every email', sig, 'Plain text. Line breaks are kept.', 'st-sig'),

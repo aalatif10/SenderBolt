@@ -115,6 +115,43 @@ test('daily limit hard-capped at 400', function () {
   assert.strictEqual(throttle.clampDailyLimit(-5), 1);
   assert.strictEqual(throttle.clampDailyLimit('abc'), 1);
 });
+test('warm-up paces: standard and gentle ramps, days-to-limit, cap respected', function () {
+  assert.strictEqual(throttle.warmupLimit(0, 400, 'standard'), 5); assert.strictEqual(throttle.warmupLimit(0, 400, 'gentle'), 3);
+  assert.strictEqual(throttle.warmupLimit(20, 400, 'standard'), 400); assert.strictEqual(throttle.warmupLimit(20, 400, 'gentle'), 49);
+  assert.strictEqual(throttle.warmupLimit(5, 400, 'nonsense'), throttle.warmupLimit(5, 400, 'standard'), 'unknown pace falls back to standard');
+  assert.strictEqual(throttle.warmupLimit(0, 2, 'standard'), 2, 'never above the configured limit, even at the start');
+  assert.strictEqual(throttle.warmupDaysToLimit(400, 'standard'), 21); assert.strictEqual(throttle.warmupDaysToLimit(400, 'gentle'), 36);
+  assert.strictEqual(throttle.warmupDaysToLimit(250, 'standard'), 19); assert.strictEqual(throttle.warmupDaysToLimit(3, 'standard'), 1);
+  assert.strictEqual(throttle.warmupDaysToLimit(9999, 'standard'), 21, 'configured limit is clamped to the 400 cap first');
+});
+test('ramp index: only days that were really used move it (idle days, token days, day in progress)', function () {
+  var base = { warmup_days: 0, sent_today: 0, sent_today_date: null, daily_limit: 100, warmup_pace: 'standard' };
+  var ri = throttle.rampIndex;
+  assert.strictEqual(ri(base, '2026-11-01'), 0, 'never sent');
+  assert.strictEqual(ri(Object.assign({}, base, { sent_today: 5, sent_today_date: '2026-11-01' }), '2026-11-01'), 0, 'day in progress is not counted early');
+  assert.strictEqual(ri(Object.assign({}, base, { sent_today: 3, sent_today_date: '2026-11-01' }), '2026-11-02'), 1, '3 of 5 allowed = enough');
+  assert.strictEqual(ri(Object.assign({}, base, { sent_today: 2, sent_today_date: '2026-11-01' }), '2026-11-02'), 0, '2 of 5 = a token day, no step');
+  assert.strictEqual(ri(Object.assign({}, base, { sent_today: 5, sent_today_date: '2026-11-01' }), '2026-12-20'), 1, 'a long idle gap adds nothing beyond the one real day');
+  assert.strictEqual(ri(Object.assign({}, base, { warmup_days: 10, sent_today: 23, sent_today_date: '2026-11-01' }), '2026-11-02'), 10, '23 of 47 is under half: stays');
+  assert.strictEqual(ri(Object.assign({}, base, { warmup_days: 10, sent_today: 24, sent_today_date: '2026-11-01' }), '2026-11-02'), 11, '24 of 47 is at least half');
+  assert.strictEqual(throttle.dayCounts(0, 5), false); assert.strictEqual(throttle.dayCounts(1, 1), true);
+});
+test('warm-up penalty: gentle slow-down on rising bounces, never on tiny samples', function () {
+  var p = throttle.warmupPenaltySteps;
+  assert.strictEqual(p(19, 19), 0, 'under 20 sends = not enough data'); assert.strictEqual(p(100, 1), 0); assert.strictEqual(p(100, 2), 2);
+  assert.strictEqual(p(100, 4), 4); assert.strictEqual(p(100, 6), 6); assert.strictEqual(p(100, 50), 6); assert.strictEqual(p(undefined, undefined), 0);
+});
+test('limitToday: warm-up OFF means full limit from day one; ON follows ramp, penalty and pace', function () {
+  var s = { warmup_enabled: 0, warmup_days: 0, warmup_penalty: 3, sent_today: 0, sent_today_date: null, daily_limit: 250, warmup_pace: 'standard' };
+  var lt = throttle.limitToday;
+  assert.strictEqual(lt(s, '2026-11-01'), 250, 'toggle off: 250 right away, penalty ignored');
+  assert.strictEqual(lt(Object.assign({}, s, { daily_limit: 9999 }), '2026-11-01'), 400, 'still capped at 400');
+  assert.strictEqual(lt(Object.assign({}, s, { warmup_enabled: 1, warmup_penalty: 0 }), '2026-11-01'), 5);
+  assert.strictEqual(lt(Object.assign({}, s, { warmup_enabled: 1, warmup_penalty: 0, warmup_pace: 'gentle' }), '2026-11-01'), 3);
+  assert.strictEqual(lt(Object.assign({}, s, { warmup_enabled: 1, warmup_days: 10, warmup_penalty: 0 }), '2026-11-01'), 47);
+  assert.strictEqual(lt(Object.assign({}, s, { warmup_enabled: 1, warmup_days: 10, warmup_penalty: 6 }), '2026-11-01'), 12, 'six steps back');
+  assert.strictEqual(lt(Object.assign({}, s, { warmup_enabled: 1, warmup_days: 2, warmup_penalty: 6 }), '2026-11-01'), 5, 'never below the starting amount');
+});
 test('warm-up ramps and respects cap', function () {
   assert.strictEqual(throttle.warmupLimit(0, 500), 5);
   assert.ok(throttle.warmupLimit(10, 500) > throttle.warmupLimit(3, 500));

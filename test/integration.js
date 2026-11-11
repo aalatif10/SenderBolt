@@ -43,7 +43,7 @@ group('migrations and schema');
 test('applies once, is idempotent, detects tampering', function () {
   return database.open(':memory:').then(function (db) {
     return migrate(db).then(function (a) {
-      assert.deepStrictEqual(a, ['001_init.sql', '002_campaign_settings.sql', '003_engine.sql', '004_projects.sql']);
+      assert.deepStrictEqual(a, ['001_init.sql', '002_campaign_settings.sql', '003_engine.sql', '004_projects.sql', '005_warmup.sql']);
       return migrate(db);
     }).then(function (b) {
       assert.deepStrictEqual(b, []);
@@ -371,17 +371,25 @@ test('audit log never contains secrets', function () {
       });
   });
 });
-test('capacityToday: limits, warm-up, health and status', function () {
-  var day = 86400000, now = 10 * day;
-  var base = { status: 'active', health_score: 100, daily_limit: 100, warmup_enabled: 0, warmup_started_at: now, sent_today: 30, sent_today_date: '2026-11-08' };
-  var cap = sendersMod.capacityToday;
+test('capacityToday: limits, warm-up (optional), health and status', function () {
+  var now = 10 * 86400000;
+  var base = { status: 'active', health_score: 100, daily_limit: 100, warmup_enabled: 0, warmup_days: 0, warmup_penalty: 0, warmup_pace: 'standard', sent_today: 30, sent_today_date: '2026-11-08' };
+  var cap = sendersMod.capacityToday, on = function (x) { return Object.assign({}, base, { warmup_enabled: 1 }, x); };
   assert.strictEqual(cap(base, '2026-11-08', now), 70);
   assert.strictEqual(cap(base, '2026-11-09', now), 100);                                         // new day resets
   assert.strictEqual(cap(Object.assign({}, base, { sent_today: 500 }), '2026-11-08', now), 0);
   assert.strictEqual(cap(Object.assign({}, base, { status: 'paused' }), '2026-11-08', now), 0);
   assert.strictEqual(cap(Object.assign({}, base, { health_score: 49 }), '2026-11-08', now), 0);
-  assert.strictEqual(cap(Object.assign({}, base, { warmup_enabled: 1, sent_today: 0 }), '2026-11-08', now), 5);   // day 0 of warm-up
-  assert.ok(cap(Object.assign({}, base, { warmup_enabled: 1, sent_today: 0, warmup_started_at: now - 30 * day }), '2026-11-08', now) === 100);
+  assert.strictEqual(cap(on({ sent_today: 0, sent_today_date: null }), '2026-11-08', now), 5);   // warm-up day 1
+  assert.strictEqual(cap(on({ sent_today: 0, sent_today_date: null, warmup_pace: 'gentle' }), '2026-11-08', now), 3);
+  assert.strictEqual(cap(on({ warmup_days: 40, sent_today: 0 }), '2026-11-09', now), 100);       // well warmed up: full limit
+  // warm-up OFF: full limit from day one, even for a brand-new sender and even with a penalty on record
+  assert.strictEqual(cap(Object.assign({}, base, { sent_today: 0, sent_today_date: null, warmup_penalty: 4 }), '2026-11-08', now), 100);
+  // last send day earned a step (3 of 5) vs was a token day (1 of 5)
+  assert.strictEqual(cap(on({ sent_today: 3, sent_today_date: '2026-11-07' }), '2026-11-08', now), 6);
+  assert.strictEqual(cap(on({ sent_today: 1, sent_today_date: '2026-11-07' }), '2026-11-08', now), 5);
+  assert.strictEqual(cap(on({ warmup_days: 10, warmup_penalty: 6, sent_today: 0, sent_today_date: null }), '2026-11-08', now), 12);  // slowed by bounces
+  assert.strictEqual(cap(on({ warmup_days: 10, sent_today: 12, sent_today_date: '2026-11-08', warmup_penalty: 6 }), '2026-11-08', now), 0);   // 12 of 12 used
 });
 test('health score', function () {
   assert.strictEqual(health.computeHealth({ sent: 10, hardBounces: 5 }), 100);                 // too little data

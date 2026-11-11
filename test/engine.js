@@ -290,4 +290,57 @@ h.test('start reports missing merge values and senders without reply tracking (n
   });
 });
 
+h.group('engine: warm-up ramp (optional, idle-safe, health-aware)');
+function sendN(c, n) {   // n real sends on the current clock day (one per tick, an hour apart, inside the 9-17 window)
+  var p = Promise.resolve();
+  for (var i = 0; i < n; i++) p = p.then(function () { return adv(c, 10 * 60000); });
+  return p;
+}
+h.test('warm-up ON caps a new sender at 5/day; OFF lets the same sender use its full limit on day one', function () {
+  return setup().then(function (c) {
+    return c.db.run('UPDATE senders SET daily_limit = 50 WHERE id = ?', [c.sid]).then(function () { return launch(c, 14); }).then(function () { return c.engine.tick(); })
+      .then(function () { return sendN(c, 9); }).then(function () { return c.db.get('SELECT sent_today FROM senders WHERE id = ?', [c.sid]); })
+      .then(function (r) { assert.strictEqual(r.sent_today, 5, 'ramp day 1 = 5 emails'); return c.db.run('UPDATE senders SET warmup_enabled = 0 WHERE id = ?', [c.sid]); })
+      .then(function () { return sendN(c, 9); }).then(function () { return c.db.get('SELECT sent_today FROM senders WHERE id = ?', [c.sid]); })
+      .then(function (r) { assert.strictEqual(r.sent_today, 14, 'warm-up off: all 14 leads went out the same day, limit 50'); });
+  });
+});
+h.test('the ramp advances only after a day that was really used; idle weeks and token days change nothing', function () {
+  return setup().then(function (c) {
+    var q = function () { return c.db.get('SELECT warmup_days, sent_today FROM senders WHERE id = ?', [c.sid]); };
+    return launch(c, 60).then(function () { return c.engine.tick(); }).then(function () { return sendN(c, 3); }).then(q)
+      .then(function (r) { assert.strictEqual(r.sent_today, 4); assert.strictEqual(r.warmup_days, 0, 'day in progress is not counted');
+        c.clock.t += DAY; return c.engine.tick(); })                                                 // Wed: yesterday used 4 of 5 -> earned a step
+      .then(q).then(function (r) { assert.strictEqual(r.warmup_days, 1); return c.senders.get(c.a, c.sid); })
+      .then(function (s) { assert.strictEqual(s.limit_today, 6); assert.strictEqual(s.warmup_day, 2);
+        c.clock.t += DAY; return c.engine.tick(); })                                                 // Thu: Wed was a token day (1 of 6) -> no step
+      .then(q).then(function (r) { assert.strictEqual(r.warmup_days, 1, 'one email on a 6-email day does not count');
+        c.clock.t += 7 * DAY; return c.engine.tick(); })                                             // a week of nothing, then next Thu
+      .then(q).then(function (r) { assert.strictEqual(r.warmup_days, 1, 'idle days never advance the ramp'); return c.senders.get(c.a, c.sid); })
+      .then(function (s) { assert.strictEqual(s.limit_today, 6, 'still on the ramp it earned, not a calendar-based jump'); });
+  });
+});
+h.test('recent bounces slow the ramp (7-day rate) and it recovers; tiny samples never slow it', function () {
+  return setup().then(function (c) {
+    var senderHealth = require('../src/services/senderHealth');
+    function rows(sentN, bounceN) {
+      var ps = [];
+      for (var i = 0; i < sentN; i++) ps.push(c.db.run("INSERT INTO messages (user_id, sender_id, direction, status, step_no, sent_at, created_at) VALUES (?,?,'out','sent',0,?,?)", [c.a, c.sid, c.clock.t, c.clock.t]));
+      for (var j = 0; j < bounceN; j++) ps.push(c.db.run("INSERT INTO messages (user_id, sender_id, direction, status, kind, error_class, created_at) VALUES (?,?,'in','received','bounce','hard',?)", [c.a, c.sid, c.clock.t]));
+      return Promise.all(ps);
+    }
+    return c.db.run('UPDATE senders SET warmup_days = 10, daily_limit = 100 WHERE id = ?', [c.sid])
+      .then(function () { return rows(10, 5); }).then(function () { return senderHealth.recompute(c.db, c.sid, c.clock.t); })
+      .then(function () { return c.senders.get(c.a, c.sid); })
+      .then(function (s) { assert.strictEqual(s.limit_today, 47, '15 sends is too little data: no slow-down'); assert.strictEqual(s.warmup_slowed, false); return rows(15, 0); })
+      .then(function () { return rows(0, 0); }).then(function () { return senderHealth.recompute(c.db, c.sid, c.clock.t); })   // 25 sends, 5 bounces = 20%
+      .then(function () { return c.senders.get(c.a, c.sid); })
+      .then(function (s) { assert.strictEqual(s.warmup_slowed, true); assert.strictEqual(s.limit_today, 12, 'six steps back from ramp day 10'); return c.db.get('SELECT health_score, status FROM senders WHERE id = ?', [c.sid]); })
+      .then(function (r) { assert.ok(r.health_score < 50 ? r.status === 'paused' : r.status === 'active'); return c.senders.get(c.a, c.sid); })
+      .then(function () { c.clock.t += 8 * DAY; return senderHealth.recompute(c.db, c.sid, c.clock.t); })                      // old bounces fall out of the 7-day window
+      .then(function () { return c.db.get('SELECT warmup_penalty FROM senders WHERE id = ?', [c.sid]); })
+      .then(function (r) { assert.strictEqual(r.warmup_penalty, 0, 'recovered once the bounces are older than 7 days'); });
+  });
+});
+
 h.run();

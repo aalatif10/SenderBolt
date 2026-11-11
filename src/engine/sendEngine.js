@@ -279,9 +279,14 @@ E._onSuccess = function (sender, c, steps, claim, mail, res) {
   return this.db.transaction(function (tx) {
     return tx.run("UPDATE messages SET status = 'sent', sent_at = ?, message_id_hdr = ?, error = NULL, error_class = NULL WHERE id = ?", [t2, (res && res.messageId) || mail.messageId, claim.id])
       .then(function () { return self._applySuccess(tx, c, steps, t2); })
-      .then(function () {
-        return tx.run('UPDATE senders SET sent_today = CASE WHEN sent_today_date = ? THEN sent_today + 1 ELSE 1 END, sent_today_date = ?, next_send_at = ?, error_streak = 0, last_error = NULL, warmup_started_at = COALESCE(warmup_started_at, ?) WHERE id = ?',
-          [today, today, t2 + delay, t2, sender.id]);
+      .then(function () { return tx.get('SELECT * FROM senders WHERE id = ?', [sender.id]); })
+      .then(function (fresh) {
+        // Ramp progress: rampIndex() decides (from the fresh row) whether the previous send day earned a step.
+        // It is always recomputed here, so idle days never advance it. It also counts while warm-up is off,
+        // so an account that has been sending at volume is treated as warmed up if warm-up is switched on later.
+        var idx = throttle.rampIndex(fresh, today);
+        return tx.run('UPDATE senders SET sent_today = CASE WHEN sent_today_date = ? THEN sent_today + 1 ELSE 1 END, sent_today_date = ?, warmup_days = ?, next_send_at = ?, error_streak = 0, last_error = NULL, warmup_started_at = COALESCE(warmup_started_at, ?) WHERE id = ?',
+          [today, today, idx, t2 + delay, t2, sender.id]);
       });
   });
 };
