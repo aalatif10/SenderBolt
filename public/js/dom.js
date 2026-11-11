@@ -14,6 +14,9 @@
     plus: 'M12 5v14M5 12h14', x: 'M6 6l12 12M18 6L6 18', check: 'M5 13l4 4L19 7',
     alert: 'M12 3l10 18H2zM12 10v5M12 18v.01', play: 'M7 4l13 8-13 8z', pause: 'M8 5v14M16 5v14',
     chevron: 'M9 6l6 6-6 6', back: 'M15 6l-6 6 6 6', logout: 'M9 4H4v16h5M16 8l4 4-4 4M20 12H9',
+    trash: 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6', search: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14M20 20l-4-4',
+    download: 'M12 4v11M7 11l5 5 5-5M5 20h14', upload: 'M12 16V5M7 9l5-5 5 5M5 20h14', edit: 'M4 20h4L19 9l-4-4L4 16z',
+    shield: 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z',
     bolt: 'M13 2L4 14h7l-1 8 9-12h-7z', info: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 8v.01M11 12h1v5h1'
   };
   function icon(name, cls) {

@@ -189,9 +189,20 @@ Leads.prototype.renameFolder = function (userId, folderId, name) {
   }).then(function () { return { id: folderId, name: n }; });
 };
 
+// Leads that are still waiting in a running / paused / preparing campaign. Deleting them would
+// silently shrink that campaign (campaign_leads rows cascade away), so deletes are refused instead.
+var IN_CAMPAIGN_SQL = "SELECT COUNT(DISTINCT cl.lead_id) AS c FROM campaign_leads cl JOIN campaigns c ON c.id = cl.campaign_id " +
+  "WHERE c.user_id = ? AND c.status IN ('active','paused','preparing') AND cl.status IN ('pending','active','paused') AND ";
+function assertNotInCampaign(count) {
+  if (count > 0) throw new AppError('conflict', count + (count === 1 ? ' lead is' : ' leads are') + ' still in a running or paused campaign. Finish or delete that campaign first.', 409);
+}
+
 Leads.prototype.deleteFolder = function (userId, folderId, ip) {
   var self = this, removed = 0;
   return this._folder(userId, folderId).then(function () {
+    return self.db.get(IN_CAMPAIGN_SQL + 'cl.lead_id IN (SELECT id FROM leads WHERE folder_id = ? AND user_id = ?)', [userId, folderId, userId]);
+  }).then(function (busy) {
+    assertNotInCampaign(busy.c);
     return self.db.get('SELECT COUNT(*) AS c FROM leads WHERE folder_id = ? AND user_id = ?', [folderId, userId]);
   }).then(function (r) {
     removed = r.c;
@@ -272,6 +283,19 @@ Leads.prototype.listLeads = function (userId, folderId, o) {
   });
 };
 
+// Ids of every lead matching a filter (for "verify all unverified"). Capped at MAX_IMPORT_ROWS.
+Leads.prototype.leadIds = function (userId, folderId, o) {
+  var self = this;
+  o = o || {};
+  return this._folder(userId, folderId).then(function () {
+    var f = leadFilter(userId, folderId, o);
+    return self.db.all('SELECT l.id FROM leads l WHERE ' + f.sql + ' ORDER BY l.id LIMIT ' + (MAX_IMPORT_ROWS + 1), f.params);
+  }).then(function (rows) {
+    var truncated = rows.length > MAX_IMPORT_ROWS;
+    return { ids: rows.slice(0, MAX_IMPORT_ROWS).map(function (r) { return r.id; }), truncated: truncated };
+  });
+};
+
 Leads.prototype.stats = function (userId, folderId) {
   var self = this;
   return (folderId ? this._folder(userId, folderId) : Promise.resolve()).then(function () {
@@ -288,7 +312,10 @@ Leads.prototype.stats = function (userId, folderId) {
 Leads.prototype.deleteLeads = function (userId, ids, ip) {
   var self = this, list;
   try { list = idList(ids, MAX_DELETE_BATCH); } catch (e) { return Promise.reject(e); }
-  return this.db.run('DELETE FROM leads WHERE user_id = ? AND id IN (' + placeholders(list.length) + ')', [userId].concat(list)).then(function (r) {
+  return this.db.get(IN_CAMPAIGN_SQL + 'cl.lead_id IN (' + placeholders(list.length) + ')', [userId].concat(list)).then(function (busy) {
+    assertNotInCampaign(busy.c);
+    return self.db.run('DELETE FROM leads WHERE user_id = ? AND id IN (' + placeholders(list.length) + ')', [userId].concat(list));
+  }).then(function (r) {
     return audit.log(self.db, { userId: userId, action: 'leads.delete', ip: ip, meta: { requested: list.length, deleted: r.changes } }, self.now)
       .then(function () { return { deleted: r.changes }; });
   });

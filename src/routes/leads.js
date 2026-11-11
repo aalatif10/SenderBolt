@@ -17,6 +17,7 @@ module.exports = function register(router, d) {
 
   router.get('/api/folders/:id/stats', function (ctx) { return L.stats(ctx.user.id, parseId(ctx.params.id)).then(function (s) { return { stats: s }; }); });
   router.get('/api/folders/:id/leads', function (ctx) { return L.listLeads(ctx.user.id, parseId(ctx.params.id), ctx.query); });
+  router.get('/api/folders/:id/lead-ids', function (ctx) { return L.leadIds(ctx.user.id, parseId(ctx.params.id), ctx.query); });
   router.post('/api/folders/:id/import', { maxBody: BIG, limit: importLimit }, function (ctx) {
     return L.importLeads(ctx.user.id, parseId(ctx.params.id), ctx.body.format, ctx.body.data, ctx.ip).then(function (r) { return reply(201, { result: r }); });
   });

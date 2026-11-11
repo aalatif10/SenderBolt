@@ -1,4 +1,4 @@
-# SenderBolt - Architecture Report (v0.7.1)
+# SenderBolt - Architecture Report (v0.8.0)
 
 Target runtime: **Node.js 12.22.x on Windows 7 (64-bit)**. Code is written in ES2018-style JavaScript
 (no `?.`, `??`, or other post-Node-12 syntax) with promise chains.
@@ -13,7 +13,7 @@ Target runtime: **Node.js 12.22.x on Windows 7 (64-bit)**. Code is written in ES
 | Leads and lists, importer, on-demand verifier (backend + API) | Done |
 | Campaigns: wizard data, sequences (up to 5 follow-ups), Smart Split into sub-campaigns, lifecycle, dashboard data (backend + API) | Done |
 | Projects: Project > Campaign > Batch hierarchy with roll-up analytics (backend + API) | Done |
-| Web UI foundation: login/setup, Home, Project drill-down (vanilla JS, no build step) | Done. Leads, Senders, Inbox, Settings, campaign wizard screens: not started |
+| Web UI foundation: login/setup, Home, Project drill-down, Senders, Leads (vanilla JS, no build step) | Done. Inbox, Settings, campaign wizard screens: not started |
 | Email templates (variables, fallbacks, spintax, safe escaping) | Done |
 | Sending engine + scheduler (dry-run / live modes) | Done (live SMTP adapter not yet run against a real server) |
 | Reply + bounce sync (IMAP), unified inbox, sentiment, manual reply, unsubscribe | Done (live IMAP adapter not yet run against a real mailbox) |
@@ -131,6 +131,7 @@ The API adds read-only `warmup_day`, `warmup_reaches_day`, `warmup_slowed` (null
 | `public/js/screens/login.js`, `home.js`, `project.js`, `soon.js` | sign-in/first-run setup, Home, project + campaign drill-down, placeholder for unbuilt screens |
 | `public/js/screens/senders.js` (v0.7) | Senders screen: summary tiles, account cards, add-sender dialog (Gmail / other SMTP) that auto-runs the connection test, settings slide-over (limit <= 400, warm-up, delays, plain-text signature escaped client-side, App Password replacement, pause/remove). Uses `/api/senders*` and `/api/engine/status` only; the server stays the authority for every limit |
 | `src/services/senders.js` (v0.7) | `list/get` now add read-only `sent_today` (today UTC only), `limit_today` (warm-up aware), `remaining_today`, `warmup_day`, `hard_cap`; the password is still never returned |
+| `public/js/screens/leads.js` (v0.8) | Leads screen, routes `#/leads` (lists) and `#/leads/suppression`. Folder list; import dialog (CSV file via FileReader with drag and drop, or pasted text; Excel is refused with instructions); stats strip whose tiles filter the table; searchable, sortable, paged table with plain-language verifier notes; bulk delete / do-not-email; "Check emails" scope dialog + progress run (500 per request, honours 429 Retry-After, stoppable, one run at a time); do-not-email tab (paged, add by paste, remove with warning). Display only: the server stays the authority for validity and limits |
 | `public/js/app.js` | boot, auth flow, sidebar, hash router, test-mode / offline banners, unread badge |
 | `scripts/demo.js` (`npm run demo`) | opt-in sample data with a RANDOM one-time password; refuses live mode, non-localhost binding and databases with a real account |
 | `test/ui.js` | static-serving traversal attacks, header checks, source scan forbidding unsafe DOM APIs / inline code / external resources, demo-script safety |
@@ -152,7 +153,8 @@ DOMPurify is needed only when the Inbox screen renders reply HTML (planned: sani
 | GET/POST `/senders`, GET/PATCH/DELETE `/senders/:id`, POST `/senders/:id/status` | sender CRUD |
 | GET/POST `/folders`, PATCH/DELETE `/folders/:id` | folders |
 | GET `/folders/:id/leads`, `/stats`, `/export`; POST `/folders/:id/import` | leads |
-| GET `/stats`, POST `/leads/delete`, POST `/leads/verify` | global stats, bulk delete, manual verify |
+| GET `/folders/:id/lead-ids?status=&search=` | every matching lead id (max 50,000) so the UI can verify a whole list without paging |
+| GET `/stats`, POST `/leads/delete`, POST `/leads/verify` | global stats, bulk delete (refused with 409 for leads waiting in a running/paused campaign; same for deleting a folder), manual verify |
 | GET/POST `/suppression`, POST `/suppression/remove` | suppression list |
 | GET `/campaigns?status=&q=&sender_id=&page=` | dashboard list with filter counts, progress, next send |
 | POST `/campaigns`, GET/PATCH/DELETE `/campaigns/:id`, GET `/campaigns/:id/leads` | create (optionally split), detail, edit, delete, per-lead status |
@@ -188,12 +190,13 @@ Every state-changing call needs headers `X-SB-Client: 1` and `X-CSRF-Token: <fro
 3c. Open tracking (`track_opens`) is stored but not implemented. Unsubscribe links use the app's public origin, not the tracking domain. Replies landing in Gmail's Spam folder are not seen (INBOX only). If a sender goes down, its assigned leads wait for it (the campaign shows `error` only when no waiting lead has a usable sender).
 3d. Inbox shows plain text only; HTML replies are stored but never exposed until DOMPurify is added.
 4. **Connect-time DNS check for hosts** (anti-rebinding) is not done; only the hostname format is validated.
-5. **Web UI is partial**: Leads, Inbox, Settings and the campaign builder screens are still to build (Home, Projects and Senders are done).
-6. Verification means "domain can receive mail", not "mailbox exists" (by design; see leads.js header).
+5. **Web UI is partial**: Inbox, Settings and the campaign builder screens are still to build (Home, Projects, Senders and Leads are done).
+6. Verification means "domain can receive mail", not "mailbox exists" (by design; see leads.js header). The checker never produces `catch_all`, so the Leads screen's Risky tile (risky + catch-all) is effectively risky only.
+6b. Imports are CSV or pasted text only; Excel files must be saved as CSV (Excel import is not built).
 7. Login rate limits are in memory (reset on restart); fine for one user, swap for a shared store before multi-node SaaS.
 8. Run behind HTTPS (and set `SENDERBOLT_SECURE_COOKIES=1`) before exposing beyond localhost.
 
 ## 7. Next steps (suggested order)
 
 1. Live test with one real Gmail App Password (dry-run first).
-2. Remaining web screens (Leads next, then campaign builder, Inbox + DOMPurify, Settings) (vanilla JS + clean CSS, tooltips) served with the existing CSP.
+2. Remaining web screens (campaign builder next, then Inbox + DOMPurify, Settings) (vanilla JS + clean CSS, tooltips) served with the existing CSP.

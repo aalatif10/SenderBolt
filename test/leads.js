@@ -189,4 +189,32 @@ h.test('parseInput row limits and formats', function () {
   assert.strictEqual(parseInput('paste', 'a@b.com, c@d.org.').length, 2);
 });
 
+h.group('leads: safe deletes and id listing');
+h.test('leads waiting in a running/paused campaign cannot be deleted (lead or folder); finished campaigns do not block', function () {
+  return setup().then(function (c) {
+    return c.svc.importLeads(c.a, c.folder, 'paste', 'a@good.com b@good.com c@good.com').then(function () { return c.db.all('SELECT id FROM leads ORDER BY id'); }).then(function (rows) {
+      var ids = rows.map(function (r) { return r.id; });
+      return c.db.run("INSERT INTO campaigns (user_id, name, status, created_at, updated_at) VALUES (?, 'Run', 'active', 1, 1)", [c.a]).then(function (cr) {
+        return c.db.run("INSERT INTO campaign_leads (campaign_id, lead_id, status) VALUES (?, ?, 'active')", [cr.lastID, ids[0]]).then(function () {
+          return h.expectReject(c.svc.deleteLeads(c.a, [ids[0], ids[1]]), 'conflict');
+        }).then(function () { return h.expectReject(c.svc.deleteFolder(c.a, c.folder), 'conflict'); })
+          .then(function () { return c.db.get('SELECT COUNT(*) AS n FROM leads'); }).then(function (r) { assert.strictEqual(r.n, 3, 'nothing was deleted'); })
+          .then(function () { return c.svc.deleteLeads(c.a, [ids[1], ids[2]]); }).then(function (r) { assert.strictEqual(r.deleted, 2); })   // leads not in the campaign are fine
+          .then(function () { return c.db.run("UPDATE campaigns SET status = 'completed' WHERE id = ?", [cr.lastID]); })
+          .then(function () { return c.svc.deleteFolder(c.a, c.folder); }).then(function (r) { assert.strictEqual(r.removed_leads, 1); });
+      });
+    });
+  });
+});
+h.test('leadIds returns every matching id (status filter), is scoped to the owner', function () {
+  return setup().then(function (c) {
+    return c.svc.importLeads(c.a, c.folder, 'paste', 'a@good.com b@nxdomain.com c@good.com').then(function () { return c.db.all('SELECT id FROM leads ORDER BY id'); }).then(function (rows) {
+      return c.svc.leadIds(c.a, c.folder, { status: 'unverified' }).then(function (r) { assert.strictEqual(r.ids.length, 3); assert.strictEqual(r.truncated, false); return c.svc.verifyLeads(c.a, [rows[0].id, rows[1].id]); })
+        .then(function () { return c.svc.leadIds(c.a, c.folder, { status: 'unverified' }); }).then(function (r) { assert.deepStrictEqual(r.ids, [rows[2].id]); return c.svc.leadIds(c.a, c.folder, { status: 'invalid' }); })
+        .then(function (r) { assert.strictEqual(r.ids.length, 1); return h.expectReject(c.svc.leadIds(c.b, c.folder, {}), 'not_found'); })
+        .then(function () { return h.expectReject(c.svc.leadIds(c.a, c.folder, { status: 'bogus' }), 'validation'); });
+    });
+  });
+});
+
 h.run();

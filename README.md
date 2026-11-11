@@ -79,6 +79,14 @@ Close the window and start normally (without the `set` line) to go back to your 
 5. **Settings** opens a side panel: daily limit, warm-up, pause between emails (random looks most natural), plain-text signature, tracking domain, replace the App Password, **Pause/Resume**, and **Remove** (blocked while a running or paused campaign uses the account).
 6. Campaigns rotate emails evenly across their accounts, so more accounts means more emails per day with less load on each.
 
-**Coming next:** Leads, Inbox and Settings screens, and the campaign builder. Until they exist, those menu items show a short notice; the features already work through the API.
+**Leads** (menu: Leads)
+1. **Lists** are folders for your contacts (a niche, market or location). Create one with **New list**, or choose **＋ New list…** while importing. Rename, **Export** (CSV) and **Delete** are at the top of each list.
+2. **Import leads** takes a **CSV file** (drag it in or click; needs a column called "email", optional first name / last name / company, any other columns are kept for your email text) or **pasted emails** in any mix of commas, spaces and lines. Using Excel? Save as CSV first. Duplicates, badly written addresses and people on the do-not-email list are skipped, and a report shows every skipped row and why.
+3. **Check emails** verifies on demand (nothing runs in the background): choose only the unchecked ones, the whole list, or your selection. It confirms the address is written correctly and the domain has a mail server; it cannot prove the mailbox exists. A progress window shows the run and you can stop it any time.
+4. The **stats bar** shows total, valid rate, valid, invalid, risky and not checked. Click a figure to filter the table. The **Details** column explains each result in plain words; "Role" marks shared mailboxes like info@.
+5. Select rows to **Delete** them or put them on the do-not-email list. Leads that are waiting in a running or paused campaign cannot be deleted.
+6. **Do-not-email list** (second tab): unsubscribes, bounces and "stop" replies land here automatically; add your own by pasting addresses; **Remove** asks first because emailing someone who opted out can get your accounts reported.
+
+**Coming next:** Inbox and Settings screens, and the campaign builder. Until they exist, those menu items show a short notice; the features already work through the API.
 
 **Safety notes:** your session ends after 2 hours of inactivity; passwords are never stored in the browser; everything the page shows from the server is displayed as plain text.

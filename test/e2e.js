@@ -180,9 +180,15 @@ h.test('folder, import, stats, verify, export, delete', function () {
   }).then(function (r) {
     assert.strictEqual(r.body.total, 2);
     state.leadIds = r.body.items.map(function (l) { return l.id; });
+    return request('GET', '/api/folders/' + folderId + '/lead-ids?status=unverified');
+  }).then(function (r) {
+    assert.strictEqual(r.status, 200); assert.deepStrictEqual(r.body.ids.slice().sort(), state.leadIds.slice().sort()); assert.strictEqual(r.body.truncated, false);
     return request('POST', '/api/leads/verify', { json: { ids: state.leadIds } });
   }).then(function (r) {
     assert.strictEqual(r.body.valid, 1); assert.strictEqual(r.body.invalid, 1);
+    return request('GET', '/api/folders/' + folderId + '/lead-ids?status=unverified');
+  }).then(function (r) {
+    assert.strictEqual(r.body.ids.length, 0);
     return request('GET', '/api/folders/' + folderId + '/stats');
   }).then(function (r) {
     assert.strictEqual(r.body.stats.total, 2); assert.strictEqual(r.body.stats.valid_rate, 50);

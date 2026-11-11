@@ -13,7 +13,6 @@
     { hash: '#/settings', key: 'settings', icon: 'settings', label: 'Settings' }
   ];
   var SOON = {
-    leads: ['users', 'Leads', 'Your lead folders, imports and the email checker.'],
     inbox: ['inbox', 'Inbox', 'All replies from every account in one place.'],
     settings: ['settings', 'Settings', 'Your account, password and preferences.']
   };
@@ -39,6 +38,7 @@
     if (key === '') screen = SB.screens.home();
     else if (key === 'project' && /^\d{1,15}$/.test(parts[1] || '')) screen = SB.screens.project({ id: parts[1] });
     else if (key === 'senders') screen = SB.screens.senders();
+    else if (key === 'leads' && (!parts[1] || parts[1] === 'suppression') && parts.length < 3) screen = SB.screens.leads({ tab: parts[1] === 'suppression' ? 'suppression' : 'lists' });
     else if (SOON[key]) screen = SB.screens.soon.apply(null, SOON[key]);
     else screen = { el: h('div', { class: 'card empty' }, h('h2', { text: 'Page not found' }), h('a', { class: 'btn', href: '#/' }, 'Back to Home')), destroy: function () {} };
     current = screen; SB.mount(viewEl, screen.el);
