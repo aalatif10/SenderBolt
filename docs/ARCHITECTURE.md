@@ -1,4 +1,4 @@
-# SenderBolt - Architecture Report (v0.8.0)
+# SenderBolt - Architecture Report (v0.9.0)
 
 Target runtime: **Node.js 12.22.x on Windows 7 (64-bit)**. Code is written in ES2018-style JavaScript
 (no `?.`, `??`, or other post-Node-12 syntax) with promise chains.
@@ -13,12 +13,13 @@ Target runtime: **Node.js 12.22.x on Windows 7 (64-bit)**. Code is written in ES
 | Leads and lists, importer, on-demand verifier (backend + API) | Done |
 | Campaigns: wizard data, sequences (up to 5 follow-ups), Smart Split into sub-campaigns, lifecycle, dashboard data (backend + API) | Done |
 | Projects: Project > Campaign > Batch hierarchy with roll-up analytics (backend + API) | Done |
-| Web UI foundation: login/setup, Home, Project drill-down, Senders, Leads (vanilla JS, no build step) | Done. Inbox, Settings, campaign wizard screens: not started |
+| Web UI: login/setup, Home, Project drill-down, Senders, Leads, Campaign Builder wizard with autosaved drafts (vanilla JS, no build step) | Done. Inbox and Settings screens: not started |
 | Email templates (variables, fallbacks, spintax, safe escaping) | Done |
 | Sending engine + scheduler (dry-run / live modes) | Done (live SMTP adapter not yet run against a real server) |
 | Reply + bounce sync (IMAP), unified inbox, sentiment, manual reply, unsubscribe | Done (live IMAP adapter not yet run against a real mailbox) |
 | Web UI (all screens) | Not started |
-| DOMPurify HTML sanitizing, Excel import, open tracking | Not started |
+| Own allowlist HTML sanitizer for email bodies (`src/lib/sanitize.js`) | Done (DOMPurify not used, see Campaign Builder) |
+| Excel import, open tracking, Inbox HTML rendering | Not started |
 
 ## 2. Folder structure
 
@@ -119,6 +120,15 @@ Warm-up is a per-sender volume ramp (no peer network). It is **optional**: `warm
 | Counter | `sendEngine._onSuccess` stores `warmup_days` inside the send transaction. It also counts while warm-up is off, so an account that has been sending at volume counts as warmed up if the switch is turned on later |
 The API adds read-only `warmup_day`, `warmup_reaches_day`, `warmup_slowed` (null/false when warm-up is off). Existing senders keep their progress (migration 005 converts the old calendar clock, minus one day).
 
+### Campaign Builder (v0.9) - wizard, editor, drafts, sanitizer
+| File | Role |
+|---|---|
+| `src/lib/sanitize.js` | **allowlist HTML re-serializer** for email bodies. Tags: p div br span b strong i em u a ul ol li blockquote. `a[href]` only http(s)/mailto (entity, whitespace and control-character tricks decoded first). `style` keeps only font-family (allowlisted families), font-size, font-weight, font-style, text-decoration underline, color. script/style/iframe/svg/object/... lose their content. Idempotent, depth-limited, keeps `{{var\|fallback}}` and `{a\|b}` as plain text. Applied in `validateSteps` (save), `previewTemplate`, `variableCoverage`, drafts, and again in `sendEngine._compose` for step bodies and the sender signature. Chosen over DOMPurify because DOMPurify needs a DOM (jsdom) on the server and could not be installed; a small tokenizer with a fixed allowlist is easier to audit. `test/sanitize.js` has 27 XSS vectors, idempotence and a 4000-case fuzz |
+| `src/db/migrations/006_wizard_drafts.sql`, `src/services/drafts.js`, `src/routes/drafts.js` | `wizard_drafts(user_id, project_id, name, data JSON, rev)`. `normalise()` whitelists every field, caps lengths, sanitizes HTML, keeps half-typed delays. `rev` compare-and-set: a stale save gets `409 conflict` (second tab). Max 50 drafts per user, 600 KB each, every query scoped by `user_id`. A draft holds no leads and can never send |
+| `src/services/campaigns.js` `variableCoverage` | `POST /api/campaigns/variable-coverage`: for the chosen leads + steps, how many people lack each `{{variable}}` that has no fallback (same rules as send time) |
+| `public/js/editor.js` | rich-text editor: contenteditable + `execCommand`. No innerHTML: saved HTML is rebuilt through an allowlist from a DOMParser document, output is produced by an own serializer. **CSP note:** `style-src 'self'` blocks inline style attributes even inside DOMParser documents, so the editor runs with `styleWithCSS` off (execCommand emits `<font face size>`), HTML is rewritten as text (`style=` to `data-st=`, `<style>` removed) before parsing, styles are applied only via CSSOM property setters, and `<font>` is serialized as a styled `<span>` |
+| `public/js/screens/wizard.js` | 4 steps (Emails, Audience, Sending, Review), autosave 1.2 s after the last edit, `beforeunload` warning while unsaved, flush on leaving, resume from `#/campaign/draft/<id>` (URL is rewritten after the first save), Drafts list on Home. Delay fields accept any whole number; the server limit is 1 to 60 days (DB CHECK 0..60) |
+
 ### Web UI (v0.6) - `public/` served by `src/http/static.js`
 | File | Role |
 |---|---|
@@ -158,7 +168,8 @@ DOMPurify is needed only when the Inbox screen renders reply HTML (planned: sani
 | GET/POST `/suppression`, POST `/suppression/remove` | suppression list |
 | GET `/campaigns?status=&q=&sender_id=&page=` | dashboard list with filter counts, progress, next send |
 | POST `/campaigns`, GET/PATCH/DELETE `/campaigns/:id`, GET `/campaigns/:id/leads` | create (optionally split), detail, edit, delete, per-lead status |
-| POST `/campaigns/split-preview`, POST `/templates/preview` | wizard: split sizes + conflicts; rendered email preview |
+| POST `/campaigns/split-preview`, POST `/campaigns/variable-coverage`, POST `/templates/preview` | wizard: split sizes + conflicts; people missing a variable; rendered email preview |
+| GET/POST `/drafts`, GET/PUT/DELETE `/drafts/:id` | wizard drafts; PUT needs the `rev` last seen (409 on conflict) |
 | GET/POST `/projects`, GET/PATCH/DELETE `/projects/:id` | projects with roll-up totals (`?archived=1`, `?q=`); detail includes each campaign |
 | GET `/campaigns/:id/analytics` | drill-down: campaign totals, batches, per-step funnel |
 | POST `/campaigns/:id/start`, `/pause`, `/resume` | lifecycle (main campaign or a single part); start also returns non-blocking `warnings` |
@@ -185,12 +196,12 @@ Every state-changing call needs headers `X-SB-Client: 1` and `X-CSRF-Token: <fro
 
 1. **Campaign work has not yet been run on Node 12 + `sqlite3`.** Foundation, senders and leads were confirmed on Windows 7 / Node 12.22 by the project owner. The campaign module is new: run `npm test` again after pulling.
 2. **Live SMTP/IMAP adapters are untested against real servers.** The engine, sync and every failure path are tested with fakes; `nodemailer`, `imap` and `mailparser` calls follow their docs but have not been run against Gmail. Start with dry-run, then one sender and one lead to yourself. Their exact versions in `package.json` also need confirming on Node 12 (`npm install`).
-3. **No HTML sanitizing yet.** Email bodies and signatures are stored as written. DOMPurify (needs `jsdom`) will clean them, and inbound replies, before anything is rendered in the UI (always in a sandboxed iframe). Until then never inject stored HTML into a page.
+3. **Outgoing HTML is sanitized (own allowlist), inbound reply HTML is not rendered yet.** Campaign bodies and signatures go through `lib/sanitize.js`. Reply HTML is stored but never shown; when the Inbox renders it, run it through the same sanitizer client-side plus a sandboxed iframe. Older campaigns created before v0.9 are cleaned at send time.
 3b. Windows/time zones are enforced; "weekdays only" means Mon-Fri in the campaign's UTC offset. Daily limits reset at UTC midnight.
 3c. Open tracking (`track_opens`) is stored but not implemented. Unsubscribe links use the app's public origin, not the tracking domain. Replies landing in Gmail's Spam folder are not seen (INBOX only). If a sender goes down, its assigned leads wait for it (the campaign shows `error` only when no waiting lead has a usable sender).
 3d. Inbox shows plain text only; HTML replies are stored but never exposed until DOMPurify is added.
 4. **Connect-time DNS check for hosts** (anti-rebinding) is not done; only the hostname format is validated.
-5. **Web UI is partial**: Inbox, Settings and the campaign builder screens are still to build (Home, Projects, Senders and Leads are done).
+5. **Web UI is partial**: Inbox and Settings screens are still to build. The wizard has no "send me a test email" yet, and follow-up waits are capped at 60 days.
 6. Verification means "domain can receive mail", not "mailbox exists" (by design; see leads.js header). The checker never produces `catch_all`, so the Leads screen's Risky tile (risky + catch-all) is effectively risky only.
 6b. Imports are CSV or pasted text only; Excel files must be saved as CSV (Excel import is not built).
 7. Login rate limits are in memory (reset on restart); fine for one user, swap for a shared store before multi-node SaaS.
@@ -199,4 +210,4 @@ Every state-changing call needs headers `X-SB-Client: 1` and `X-CSRF-Token: <fro
 ## 7. Next steps (suggested order)
 
 1. Live test with one real Gmail App Password (dry-run first).
-2. Remaining web screens (campaign builder next, then Inbox + DOMPurify, Settings) (vanilla JS + clean CSS, tooltips) served with the existing CSP.
+2. Remaining web screens (Inbox, then Settings) (vanilla JS + clean CSS, tooltips) served with the existing CSP.

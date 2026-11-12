@@ -61,7 +61,7 @@ h.test('existing campaigns get their own project; cap clamped to 400; triggers e
         .then(function () { return db.run("INSERT INTO campaigns (user_id, name, status, created_at, updated_at) VALUES (?, 'Old main', 'draft', 5, 5)", [uid]); })
         .then(function (m) { return db.run("INSERT INTO campaigns (user_id, parent_id, name, status, created_at, updated_at) VALUES (?, ?, 'Old part', 'draft', 5, 5)", [uid, m.lastID]); })
         .then(function () { return migrate(db); })
-        .then(function (applied) { assert.deepStrictEqual(applied, ['004_projects.sql', '005_warmup.sql']); return Promise.all([db.get('SELECT daily_limit, warmup_days, warmup_penalty, warmup_pace FROM senders'), db.all('SELECT * FROM projects'), db.all('SELECT id, parent_id, project_id FROM campaigns ORDER BY id')]); })
+        .then(function (applied) { assert.deepStrictEqual(applied, ['004_projects.sql', '005_warmup.sql', '006_wizard_drafts.sql']); return Promise.all([db.get('SELECT daily_limit, warmup_days, warmup_penalty, warmup_pace FROM senders'), db.all('SELECT * FROM projects'), db.all('SELECT id, parent_id, project_id FROM campaigns ORDER BY id')]); })
         .then(function (r) {
           assert.strictEqual(r[0].daily_limit, 400); assert.deepStrictEqual([r[0].warmup_days, r[0].warmup_penalty, r[0].warmup_pace], [0, 0, 'standard'], 'old senders get safe warm-up defaults'); assert.strictEqual(r[1].length, 1); assert.strictEqual(r[1][0].name, 'Old main');
           assert.strictEqual(r[2][0].project_id, r[1][0].id); assert.strictEqual(r[2][1].project_id, null, 'parts belong through their main campaign');

@@ -15,6 +15,7 @@
 var crypto = require('crypto');
 var vault = require('../lib/vault');
 var tpl = require('../lib/template');
+var sanitize = require('../lib/sanitize');
 var split = require('../lib/split');
 var throttle = require('../lib/throttle');
 var email = require('../lib/email');
@@ -187,14 +188,14 @@ E._compose = function (sender, c, step, history) {
     subject = s.text; missing = missing.concat(s.missing);
     if (!subject && !s.missing.length) missing.push('subject');
   }
-  var b = tpl.render(step.body_html, vars, { html: true, rnd: rnd });
+  var b = tpl.render(sanitize.clean(step.body_html), vars, { html: true, rnd: rnd });
   b.missing.forEach(function (m) { if (missing.indexOf(m) === -1) missing.push(m); });
 
   var link = this.publicOrigin && this.secret ? unsub.url(this.publicOrigin, unsub.make(this.secret, c.cl_id)) : null;
   var footer = link
     ? '<p style="font-size:12px;color:#777">If you would rather not receive these emails, <a href="' + link + '">unsubscribe</a>.</p>'
     : '<p style="font-size:12px;color:#777">Not interested? Reply with "unsubscribe" and I will not contact you again.</p>';
-  var bodyHtml = b.text + (sender.signature_html ? '<br>' + sender.signature_html : '') + footer;
+  var bodyHtml = b.text + (sender.signature_html ? '<br>' + sanitize.clean(sender.signature_html) : '') + footer;
   var mailto = '<mailto:' + sender.email + '?subject=unsubscribe>';
   var headers = { 'List-Unsubscribe': link ? '<' + link + '>, ' + mailto : mailto };
   if (link) headers['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click';

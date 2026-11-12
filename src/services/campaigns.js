@@ -26,6 +26,7 @@ var DONE_STATUSES = ['replied', 'completed', 'bounced', 'unsubscribed'];
 var FILTERS = { all: null, active: ['active'], paused: ['paused'], completed: ['completed'], draft: ['draft', 'preparing'], error: ['error'] };
 var SAMPLE_LEAD = { first_name: 'Alex', last_name: 'Morgan', company: 'Acme Domains', email: 'alex@acme-domains.com', domain: 'acme-domains.com' };
 
+var sanitize = require('../lib/sanitize');
 function bad(field, msg) { var d = {}; d[field] = msg; return new AppError('validation', msg, 400, d); }
 function seq(items, fn) { return items.reduce(function (p, it, i) { return p.then(function () { return fn(it, i); }); }, Promise.resolve()); }
 
@@ -38,7 +39,9 @@ function validateSteps(steps) {
     if (text.hasControl(subject) || subject.length > 200) throw bad('steps', 'Step ' + (i + 1) + ': subject must be one line, max 200 characters');
     if (i === 0 && !subject) throw bad('steps', 'The first email needs a subject');
     var body = typeof s.body_html === 'string' ? s.body_html : '';
-    if (!body.trim() || body.length > 50000) throw bad('steps', 'Step ' + (i + 1) + ': body is required (max 50,000 characters)');
+    if (body.length > 50000) throw bad('steps', 'Step ' + (i + 1) + ': body is too long (max 50,000 characters)');
+    body = sanitize.clean(body);
+    if (sanitize.isBlank(body)) throw bad('steps', 'Step ' + (i + 1) + ': the email body is empty');
     var delay = 0;
     if (i > 0) {
       delay = s.delay_days === undefined ? 3 : v.intIn(s.delay_days, 1, 60);
@@ -553,6 +556,41 @@ C.remove = function (userId, id, ip) {
   }).then(function () { return audit.log(self.db, { userId: userId, action: 'campaign.delete', entity: 'campaign', entityId: id, ip: ip }, self.now); });
 };
 
+// Wizard check: how many of the chosen leads lack a value for each {{variable}} that has no fallback.
+// input: lead source (folder_id | lead_ids, same filters as create) + steps [{subject, body_html}].
+C.variableCoverage = function (userId, input) {
+  var self = this;
+  return Promise.resolve().then(function () {
+    input = input || {};
+    var src = parseLeadSource(input);
+    if (!Array.isArray(input.steps) || input.steps.length > MAX_STEPS) throw bad('steps', 'Invalid steps');
+    var texts = input.steps.map(function (s) { s = s || {}; return { subject: String(s.subject || '').slice(0, 200), body: sanitize.clean(String(s.body_html || '').slice(0, 50000)) }; });
+    return self._selectLeads(userId, src).then(function (rows) {
+      var vars = {};
+      texts.forEach(function (t) { tpl.findVariables(t.subject + ' ' + t.body).forEach(function (n) { vars[n] = 0; }); });
+      var names = Object.keys(vars), res = { total: rows.length, variables: [], leads_affected: 0 };
+      if (!names.length || !rows.length) return res;
+      var affected = 0;
+      return seq(v.chunk(rows.map(function (r) { return r.id; }), 500), function (chunk) {
+        return self.db.all('SELECT email, domain, first_name, last_name, company, custom FROM leads WHERE user_id = ? AND id IN (' + v.placeholders(chunk.length) + ')', [userId].concat(chunk)).then(function (leads) {
+          leads.forEach(function (l) {
+            var vv = tpl.leadVars(l), hit = false, miss = {};
+            texts.forEach(function (t) {
+              tpl.render(t.subject, vv, { html: false }).missing.concat(tpl.render(t.body, vv, { html: true }).missing).forEach(function (n) { miss[n] = true; });
+            });
+            Object.keys(miss).forEach(function (n) { if (vars[n] !== undefined) vars[n]++; hit = true; });
+            if (hit) affected++;
+          });
+        });
+      }).then(function () {
+        res.variables = names.map(function (n) { return { name: n, missing: vars[n] }; });
+        res.leads_affected = affected;
+        return res;
+      });
+    });
+  });
+};
+
 // Render the first email (or any step) for a sample or real lead so the wizard can show a preview.
 C.previewTemplate = function (userId, input) {
   var self = this;
@@ -572,8 +610,9 @@ C.previewTemplate = function (userId, input) {
   }).then(function (ctx) {
     var rnd = require('../lib/split').mulberry32(7);
     var s = tpl.render(input.subject || '', ctx.vars, { html: false, rnd: rnd });
-    var b = tpl.render(input.body_html || '', ctx.vars, { html: true, rnd: rnd });
-    var used = tpl.findVariables(String(input.subject || '') + ' ' + String(input.body_html || ''));
+    var cleanBody = sanitize.clean(input.body_html || '');
+    var b = tpl.render(cleanBody, ctx.vars, { html: true, rnd: rnd });
+    var used = tpl.findVariables(String(input.subject || '') + ' ' + cleanBody);
     return { subject: s.text, body_html: b.text, variables: used, missing: s.missing.concat(b.missing.filter(function (m) { return s.missing.indexOf(m) === -1; })), sample: ctx.sample };
   });
 };

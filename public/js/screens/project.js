@@ -64,6 +64,7 @@
         h('div', { class: 'page-head' },
           h('div', null, h('div', { class: 'actions' }, h('h1', { text: p.name }), ui.statusPill(p.status)), p.description ? h('p', { class: 'sub', text: p.description }) : null),
           h('div', { class: 'actions' },
+            h('a', { class: 'btn btn-sm btn-primary', href: '#/campaign/new/' + p.id, id: 'project-new-campaign' }, SB.icon('plus'), 'New campaign'),
             h('button', { class: 'btn btn-sm', type: 'button', on: { click: function () { editModal(p, load); } } }, 'Edit'),
             h('button', { class: 'btn btn-sm', type: 'button', on: { click: function () {
               ui.confirm({ title: p.archived ? 'Restore project?' : 'Archive project?', message: p.archived ? 'It will appear in your project list again.' : 'It disappears from the main list. Results are kept. You cannot archive while campaigns are running.',
@@ -87,7 +88,7 @@
               h('td', { text: fmt.num(c.sent) }), h('td', { text: fmt.num(c.metrics.replied) }), h('td', { text: fmt.num(c.stats.bounced) }), h('td', { text: fmt.until(c.next_send_at) }),
               h('td', null, h('div', { class: 'actions' }, lifecycle(c, load), h('span', { class: 'faint' }, SB.icon('chevron')))));
           }))))
-        : h('div', { class: 'card empty' }, h('h2', { text: 'No campaigns in this project yet' }), h('p', { text: 'The campaign builder is the next screen being built. Campaigns you create through it will appear here.' }));
+        : h('div', { class: 'card empty' }, h('h2', { text: 'No campaigns in this project yet' }), h('p', { text: 'Write your emails, choose who receives them and pick your senders. Your progress is saved as you go.' }), h('a', { class: 'btn btn-primary', href: '#/campaign/new/' + p.id }, SB.icon('plus'), 'New campaign'));
       SB.mount(body, h('div', null, head, tiles,
         t.replied ? h('div', { class: 'card' }, h('h3', null, 'Reply sentiment'), h('div', { class: 'section-title' }), ui.sentimentBar(t.sentiment)) : null,
         h('div', { class: 'section-title' }, h('div', { class: 'actions' }, h('h2', { text: 'Campaigns' }), ui.info('Click a campaign to see its batches and how many emails went out at each step.'))), campaigns));

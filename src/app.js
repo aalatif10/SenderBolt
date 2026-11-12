@@ -11,6 +11,7 @@ var Leads = require('./services/leads').Leads;
 var CampaignsService = require('./services/campaigns').CampaignsService;
 var RateLimiter = require('./security/rateLimiter').RateLimiter;
 var ProjectsService = require('./services/projects').ProjectsService;
+var DraftsService = require('./services/drafts').DraftsService;
 var InboxService = require('./services/inbox').InboxService;
 var UnsubscribeService = require('./services/unsubscribe').UnsubscribeService;
 var SenderTest = require('./services/senderTest').SenderTest;
@@ -53,6 +54,7 @@ function createApp(config) {
         inboxSync: mode === 'off' ? null : inboxSync,
         senderTest: new SenderTest(db, { key: config.masterKey, mailer: mailer, mailbox: mailbox, inboxSync: inboxSync, now: config.now })
       };
+      deps.drafts = new DraftsService(db, { now: config.now });
       deps.projects = new ProjectsService(db, { campaigns: deps.campaigns, now: config.now });
       deps.engineStatus = function (userId) {
         var t = (config.now || Date.now)();

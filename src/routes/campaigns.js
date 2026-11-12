@@ -14,6 +14,7 @@ module.exports = function register(router, d) {
     return S.create(ctx.user.id, ctx.body, ctx.ip).then(function (c) { return reply(201, { campaign: c }); });
   });
   router.post('/api/campaigns/split-preview', { limit: heavy }, function (ctx) { return S.previewSplit(ctx.user.id, ctx.body); });
+  router.post('/api/campaigns/variable-coverage', { maxBody: 200000, limit: heavy }, function (ctx) { return S.variableCoverage(ctx.user.id, ctx.body); });
   router.post('/api/templates/preview', { maxBody: 200000 }, function (ctx) { return S.previewTemplate(ctx.user.id, ctx.body); });
 
   router.get('/api/campaigns/:id', function (ctx) { return S.get(ctx.user.id, parseId(ctx.params.id)).then(function (c) { return { campaign: c }; }); });

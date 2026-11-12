@@ -49,11 +49,12 @@
   SB.screens.home = function () {
     var root = h('div'), body = h('div', null, h('div', { class: 'skeleton' }));
     var head = h('div', { class: 'page-head' }, h('div', null, h('h1', { text: 'Home' }), h('p', { class: 'sub', text: 'Your outreach at a glance.' })),
-      h('button', { class: 'btn btn-primary', type: 'button', on: { click: newProjectModal } }, SB.icon('plus'), 'New project'));
+      h('div', { class: 'actions' }, h('a', { class: 'btn btn-primary', href: '#/campaign/new', id: 'home-new-campaign' }, SB.icon('plus'), 'New campaign'),
+        h('button', { class: 'btn', type: 'button', on: { click: newProjectModal } }, 'New project')));
     root.appendChild(head); root.appendChild(body);
 
     function render(r) {
-      var senders = r[1].items, projects = r[0].items, leads = r[2].stats.total, unread = r[3].unread;
+      var drafts = r[4].drafts, senders = r[1].items, projects = r[0].items, leads = r[2].stats.total, unread = r[3].unread;
       var sent = 0, cap = 0;
       senders.forEach(function (s) { sent += s.sent_today; if (s.status === 'active') cap += s.limit_today; });
       var badSenders = senders.filter(function (s) { return s.status !== 'active' || s.last_error; });
@@ -68,11 +69,13 @@
         ? h('div', { class: 'project-grid' }, projects.map(projectCard))
         : h('div', { class: 'card empty' }, h('h2', { text: 'No projects yet' }), h('p', { text: 'Create a project to organise your campaigns and see their results in one place.' }),
           h('button', { class: 'btn btn-primary', type: 'button', on: { click: newProjectModal } }, SB.icon('plus'), 'New project'));
-      SB.mount(body, h('div', null, nextStep(senders, leads, projects.length), tiles, h('div', { class: 'section-title' }, h('h2', { text: 'Projects' })), list));
+      SB.mount(body, h('div', null, nextStep(senders, leads, projects.length), tiles,
+        drafts.length ? h('div', null, h('div', { class: 'section-title' }, h('div', { class: 'actions' }, h('h2', { text: 'Drafts' }), ui.info('Campaigns you started writing but have not created yet. Everything you typed is saved.'))), SB.screens.draftList(drafts, load)) : null,
+        h('div', { class: 'section-title' }, h('h2', { text: 'Projects' })), list));
     }
 
     function load() {
-      return Promise.all([SB.api.get('/api/projects'), SB.api.get('/api/senders'), SB.api.get('/api/stats'), SB.api.get('/api/inbox?limit=1')]).then(render, function (e) {
+      return Promise.all([SB.api.get('/api/projects'), SB.api.get('/api/senders'), SB.api.get('/api/stats'), SB.api.get('/api/inbox?limit=1'), SB.api.get('/api/drafts')]).then(render, function (e) {
         if (e.code !== 'offline') SB.mount(body, h('div', { class: 'form-error', text: SB.api.friendly(e) }));
       });
     }

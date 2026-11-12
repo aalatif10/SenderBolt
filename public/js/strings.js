@@ -69,5 +69,29 @@ SB.S = {
     verifyNote: 'The check confirms the address is written correctly and that its domain has a mail server. It cannot confirm that the specific mailbox exists, so a few valid addresses can still bounce.'
   },
   testMode: 'Test mode: the whole flow runs, but no real email is sent or read.',
-  engineOff: 'The sending engine is switched off. Nothing will be sent.'
+  engineOff: 'The sending engine is switched off. Nothing will be sent.',
+  wizard: {
+    namePlaceholder: 'Name this campaign (only you see it)', saved: 'Draft saved', saving: 'Saving\u2026', unsaved: 'Unsaved changes', conflict: 'Changed in another tab',
+    conflictLong: 'This draft was changed in another tab or window, so saving here is paused to protect that version.',
+    saveTip: 'Saves everything now. It also saves by itself a moment after you stop typing.', draftSaved: 'Draft saved. You can find it on Home.',
+    discardTip: 'Delete this draft and leave the builder.',
+    subjectPlaceholder: 'e.g. Quick question about {{company|your domain}}', subjectHint: 'Keep it short and specific. You can use fields like {{first_name|there}}.',
+    followSubjectPlaceholder: 'Leave empty to reply in the same conversation', followSubjectHint: 'Empty = sent as "Re: <previous subject>", so it appears in the same conversation.',
+    bodyPlaceholder: 'Write your first email here\u2026', followBodyPlaceholder: 'Write the follow-up\u2026',
+    addTip: 'Adds a follow-up that is sent automatically if the person has not replied. You can add up to 5.',
+    delayTip: 'Type any whole number of days from 1 to 60. The wait counts from the previous email. A follow-up is never sent to someone who has replied, bounced or unsubscribed.',
+    delayEmpty: 'Type how many days to wait.', delayRange: 'Use a whole number from 1 to 60 days.',
+    fieldsHelp: 'Tip: use the "Insert field" menu to personalise. {{first_name|there}} means "use the first name, or \"there\" if it is empty". {Hi|Hello} picks one of the words at random for each person.',
+    previewTip: 'How the email looks for an example person (Alex Morgan, Acme Domains). Real people get their own details.', previewEmpty: 'Start typing and the preview appears here.',
+    pickFolder: 'Choose a lead folder first.', folderHint: 'People in this folder receive the sequence. Add or verify leads on the Leads page.',
+    roleHint: 'Role addresses are shared inboxes. They usually reply less and complain more.',
+    eligibleTip: 'After removing invalid addresses, anyone on your suppression list, and people already in a running campaign.',
+    coverageHelp: 'Those people will be skipped (and marked as errors) instead of receiving an email with a blank gap. Add a fallback like {{first_name|there}} to include them.',
+    audienceAuto: 'Invalid addresses, unsubscribed people and people already in a running campaign are always left out automatically.',
+    sendersHint: 'Emails rotate across the accounts you choose and respect each account\'s daily limit and warm-up.',
+    weekdaysHint: 'Saturday and Sunday are skipped.', stopHint: 'Recommended. Nobody gets a follow-up after answering.',
+    splitTip: 'Splits a big list into smaller batches that send side by side. People from the same company land in different batches.',
+    splitHint: 'For example 26 per batch. You see the batch sizes right away.', shuffleTip: 'Mix the people differently, then show the new batch sizes.',
+    createTip: 'Saves the campaign without sending anything. You can start it from the project page.', startTip: 'Creates the campaign and starts sending inside your sending window.'
+  }
 };

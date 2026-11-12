@@ -55,6 +55,7 @@
     ApiError: ApiError,
     get: function (p, o) { return request('GET', p, null, o); },
     post: function (p, b, o) { return request('POST', p, b, o); },
+    put: function (p, b, o) { return request('PUT', p, b, o); },
     patch: function (p, b, o) { return request('PATCH', p, b, o); },
     del: function (p, o) { return request('DELETE', p, null, o); },
     setCsrf: function (t) { csrf = t; },

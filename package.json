@@ -1,6 +1,6 @@
 {
   "name": "senderbolt",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "private": true,
   "description": "SenderBolt - B2B email outreach and campaign management platform",
   "main": "src/server.js",
@@ -11,7 +11,7 @@
     "init": "node scripts/init.js",
     "demo": "node scripts/demo.js",
     "start": "node src/server.js",
-    "test": "node test/run.js && node test/integration.js && node test/leads.js && node test/campaigns.js && node test/projects.js && node test/engine.js && node test/inbox.js && node test/e2e.js && node test/e2e_engine.js && node test/ui.js"
+    "test": "node test/run.js && node test/sanitize.js && node test/integration.js && node test/leads.js && node test/campaigns.js && node test/drafts.js && node test/projects.js && node test/engine.js && node test/inbox.js && node test/e2e.js && node test/e2e_engine.js && node test/ui.js"
   },
   "dependencies": {
     "nodemailer": "6.9.1",

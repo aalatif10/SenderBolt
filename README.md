@@ -87,6 +87,14 @@ Close the window and start normally (without the `set` line) to go back to your 
 5. Select rows to **Delete** them or put them on the do-not-email list. Leads that are waiting in a running or paused campaign cannot be deleted.
 6. **Do-not-email list** (second tab): unsubscribes, bounces and "stop" replies land here automatically; add your own by pasting addresses; **Remove** asks first because emailing someone who opted out can get your accounts reported.
 
-**Coming next:** Inbox and Settings screens, and the campaign builder. Until they exist, those menu items show a short notice; the features already work through the API.
+**New campaign** (Home or a project page: **New campaign**)
+1. **Emails** (content first): name the campaign, write the subject and message of the first email. Nothing else is on screen until you press **Add follow-up** under it (up to 5). For each follow-up type any whole number of days to wait (1 to 60) or tap a shortcut (2d, 3d, 5d, 7d, 14d, 30d). A blank follow-up subject is sent as "Re: <previous subject>" so it stays in the same conversation.
+2. The toolbar gives font, size, bold, italic, underline, bullet and numbered lists, links (Ctrl+K), clear formatting and an **Insert field** menu ({{first_name|there}}, spintax). The preview on the right shows the email you are editing for an example person.
+3. **Audience**: choose a lead folder and which address types to include. You see how many people will be emailed and how many are missing information that your emails use (for example an empty first name with no fallback).
+4. **Sending**: choose sender accounts, the daily sending window, time zone, weekdays only and stop-on-reply. **Smart Split** cuts big lists into batches (for example 26 per batch) with the sizes shown live; **Shuffle** mixes people so colleagues from one company are not in the same batch.
+5. **Review**: fix anything flagged, pick a project, then **Create campaign** (nothing is sent) or **Create and start**.
+6. **Drafts are automatic**: everything is saved a moment after you stop typing (and on **Save draft**). Close the tab, reload or come back tomorrow: Home lists your drafts under **Drafts** and **Continue** resumes exactly where you stopped. If the same draft is open in two tabs, the second tab stops saving instead of overwriting the first.
+
+**Coming next:** Inbox and Settings screens. Until they exist, those menu items show a short notice; the features already work through the API.
 
 **Safety notes:** your session ends after 2 hours of inactivity; passwords are never stored in the browser; everything the page shows from the server is displayed as plain text.
