@@ -5,6 +5,7 @@ var reply = require('../http/router').reply;
 var RateLimiter = require('../security/rateLimiter').RateLimiter;
 
 module.exports = function register(router, d) {
+  var testLimit = { by: 'user', limiter: new RateLimiter({ windowMs: 600000, max: 10 }) };     // 10 test emails per 10 minutes
   var S = d.campaigns;
   var heavy = { by: 'user', limiter: new RateLimiter({ windowMs: 60000, max: 30 }) };
   var BODY = 700000;     // up to 6 steps x 50k chars of HTML
@@ -15,6 +16,7 @@ module.exports = function register(router, d) {
   });
   router.post('/api/campaigns/split-preview', { limit: heavy }, function (ctx) { return S.previewSplit(ctx.user.id, ctx.body); });
   router.post('/api/campaigns/variable-coverage', { maxBody: 200000, limit: heavy }, function (ctx) { return S.variableCoverage(ctx.user.id, ctx.body); });
+  router.post('/api/campaigns/test-send', { maxBody: 200000, limit: testLimit }, function (ctx) { return d.testSend.send(ctx.user, ctx.body, ctx.ip); });
   router.post('/api/templates/preview', { maxBody: 200000 }, function (ctx) { return S.previewTemplate(ctx.user.id, ctx.body); });
 
   router.get('/api/campaigns/:id', function (ctx) { return S.get(ctx.user.id, parseId(ctx.params.id)).then(function (c) { return { campaign: c }; }); });

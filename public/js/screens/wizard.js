@@ -34,7 +34,7 @@
   SB.screens.wizard = function (params) {
     var st = blankState(), draft = null /* { id, rev } */, root = h('div'), body = h('div'), stepsEl = h('div', { class: 'wz-steps' });
     var dead = false, dirty = false, saving = false, saveTimer = null, conflict = false, lastSaved = null, saveEl = h('span', { class: 'wz-save', role: 'status' });
-    var folders = [], senders = [], projects = [], projectId = params.projectId || null, activeIdx = 0, editors = [], launching = false;
+    var userEmail = params.userEmail || '', folders = [], senders = [], projects = [], projectId = params.projectId || null, activeIdx = 0, editors = [], launching = false;
     var previewTimer = null, previewBox = null, coverageBox = null, splitBox = null, countBox = null, previewSeq = 0, audSeq = 0;
 
     // ---------- autosave ----------
@@ -91,6 +91,30 @@
       } });
     }
 
+    // ---------- send me a test email ----------
+    function testDialog(i) {
+      var active = senders.filter(function (x) { return x.status === 'active'; });
+      if (!active.length) { ui.toast(W.testNoSender, true); return; }
+      var s = st.steps[i], prev = i > 0 ? st.steps[i - 1].subject : '';
+      var pick = h('select', { class: 'input', id: 'wz-test-sender', 'aria-label': 'Send from' }, active.map(function (x) { return h('option', { value: x.id }, (x.label || x.email) + (x.label && x.label !== x.email ? ' (' + x.email + ')' : '')); }));
+      var pre = st.sender_ids.filter(function (id) { return active.some(function (x) { return x.id === id; }); })[0]; if (pre) pick.value = String(pre);
+      var to = h('input', { class: 'input', id: 'wz-test-to', type: 'email', maxlength: 254, value: userEmail, 'aria-label': 'Send test to' });
+      var err = h('div', { class: 'form-error hidden', role: 'alert' });
+      ui.modal({ title: 'Send me a test email', body: h('div', null, err,
+        h('p', { class: 'muted', text: W.testIntro }),
+        h('div', { class: 'field' }, h('label', { for: 'wz-test-sender' }, 'Send from'), pick),
+        h('div', { class: 'field' }, h('label', { for: 'wz-test-to' }, 'Send to'), to, h('div', { class: 'hint', text: W.testToHint }))),
+        actions: [{ label: 'Cancel' }, { label: 'Send test', kind: 'primary', onClick: function (close) {
+          err.classList.add('hidden');
+          return SB.api.post('/api/campaigns/test-send', { sender_id: Number(pick.value), to: to.value.trim(), subject: s.subject, previous_subject: prev, body_html: s.body_html }).then(function (r) {
+            close();
+            if (r.dry_run) ui.toast(W.testDry, true);
+            else ui.toast('Test sent to ' + r.to + '. It can take a minute to arrive; check spam too.');
+            if (r.missing && r.missing.length) ui.toast('Fields without a value in the example data: ' + r.missing.join(', ') + '.', true);
+          }, function (e) { err.textContent = SB.api.friendly(e); err.classList.remove('hidden'); throw e; });
+        } }] });
+    }
+
     // ---------- step 1: emails ----------
     function delayRow(i) {
       var s = st.steps[i], msg = h('div', { class: 'hint', role: 'status' });
@@ -125,7 +149,9 @@
       editors[i] = ed;
       var card = h('div', { class: 'card wz-email' + (i === activeIdx ? ' active' : ''), 'data-idx': i },
         h('div', { class: 'wz-email-head' }, h('h3', { text: labelFor(i) }),
-          i > 0 ? h('button', { class: 'btn btn-sm btn-ghost', type: 'button', tip: 'Remove this follow-up', on: { click: function () { removeFollowUp(i); } } }, SB.icon('trash'), 'Remove') : null),
+          h('div', { class: 'actions' },
+            h('button', { class: 'btn btn-sm', type: 'button', id: 'wz-test-' + i, tip: W.testTip, on: { click: function () { testDialog(i); } } }, SB.icon('send'), 'Send test'),
+            i > 0 ? h('button', { class: 'btn btn-sm btn-ghost', type: 'button', tip: 'Remove this follow-up', on: { click: function () { removeFollowUp(i); } } }, SB.icon('trash'), 'Remove') : null)),
         i > 0 ? delayRow(i) : null,
         h('div', { class: 'field' }, h('label', { for: 'wz-subj-' + i }, 'Subject'), subj,
           i > 0 ? h('div', { class: 'hint', text: W.followSubjectHint }) : h('div', { class: 'hint', text: W.subjectHint })),
@@ -320,6 +346,7 @@
         row('Smart Split', st.split.enabled ? 'Batches of ' + st.split.batch_size : 'Off'),
         h('div', { class: 'field pad-t' }, h('label', { for: 'wz-project' }, 'Add to project'), projSel)));
       out.appendChild(h('div', { class: 'actions wz-final' },
+        h('button', { class: 'btn', type: 'button', id: 'wz-test-review', tip: W.testTip, on: { click: function () { testDialog(0); } } }, SB.icon('send'), 'Send me a test'),
         h('button', { class: 'btn', type: 'button', id: 'wz-create', disabled: probs.length ? true : null, tip: W.createTip, on: { click: function () { launch(false); } } }, 'Create campaign'),
         h('button', { class: 'btn btn-primary', type: 'button', id: 'wz-start', disabled: probs.length ? true : null, tip: W.startTip, on: { click: function () { launch(true); } } }, SB.icon('play'), 'Create and start')));
       return out;

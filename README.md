@@ -92,8 +92,9 @@ Close the window and start normally (without the `set` line) to go back to your 
 2. The toolbar gives font, size, bold, italic, underline, bullet and numbered lists, links (Ctrl+K), clear formatting and an **Insert field** menu ({{first_name|there}}, spintax). The preview on the right shows the email you are editing for an example person.
 3. **Audience**: choose a lead folder and which address types to include. You see how many people will be emailed and how many are missing information that your emails use (for example an empty first name with no fallback).
 4. **Sending**: choose sender accounts, the daily sending window, time zone, weekdays only and stop-on-reply. **Smart Split** cuts big lists into batches (for example 26 per batch) with the sizes shown live; **Shuffle** mixes people so colleagues from one company are not in the same batch.
-5. **Review**: fix anything flagged, pick a project, then **Create campaign** (nothing is sent) or **Create and start**.
-6. **Drafts are automatic**: everything is saved a moment after you stop typing (and on **Save draft**). Close the tab, reload or come back tomorrow: Home lists your drafts under **Drafts** and **Continue** resumes exactly where you stopped. If the same draft is open in two tabs, the second tab stops saving instead of overwriting the first.
+5. **Send test** (on each email and on Review): sends that email to you with an example person filled in, so you can check formatting in a real inbox. The subject starts with [TEST]; nothing is added to any campaign. In test mode it tells you nothing was really sent.
+6. **Review**: fix anything flagged, pick a project, then **Create campaign** (nothing is sent) or **Create and start**.
+7. **Drafts are automatic**: everything is saved a moment after you stop typing (and on **Save draft**). Close the tab, reload or come back tomorrow: Home lists your drafts under **Drafts** and **Continue** resumes exactly where you stopped. If the same draft is open in two tabs, the second tab stops saving instead of overwriting the first.
 
 **Coming next:** Inbox and Settings screens. Until they exist, those menu items show a short notice; the features already work through the API.
 

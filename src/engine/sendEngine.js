@@ -191,7 +191,7 @@ E._compose = function (sender, c, step, history) {
   var b = tpl.render(sanitize.clean(step.body_html), vars, { html: true, rnd: rnd });
   b.missing.forEach(function (m) { if (missing.indexOf(m) === -1) missing.push(m); });
 
-  var link = this.publicOrigin && this.secret ? unsub.url(this.publicOrigin, unsub.make(this.secret, c.cl_id)) : null;
+  var link = !c.test && this.publicOrigin && this.secret ? unsub.url(this.publicOrigin, unsub.make(this.secret, c.cl_id)) : null;
   var footer = link
     ? '<p style="font-size:12px;color:#777">If you would rather not receive these emails, <a href="' + link + '">unsubscribe</a>.</p>'
     : '<p style="font-size:12px;color:#777">Not interested? Reply with "unsubscribe" and I will not contact you again.</p>';
