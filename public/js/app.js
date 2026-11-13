@@ -12,11 +12,6 @@
     { hash: '#/inbox', key: 'inbox', icon: 'inbox', label: 'Inbox' },
     { hash: '#/settings', key: 'settings', icon: 'settings', label: 'Settings' }
   ];
-  var SOON = {
-    inbox: ['inbox', 'Inbox', 'All replies from every account in one place.'],
-    settings: ['settings', 'Settings', 'Your account, password and preferences.']
-  };
-
   function destroyCurrent() { if (current && current.destroy) current.destroy(); current = null; }
 
   function showAuth(mode) {
@@ -39,9 +34,10 @@
     else if (key === 'project' && /^\d{1,15}$/.test(parts[1] || '')) screen = SB.screens.project({ id: parts[1] });
     else if (key === 'campaign' && parts[1] === 'new' && (!parts[2] || /^\d{1,15}$/.test(parts[2])) && parts.length < 4) screen = SB.screens.wizard({ projectId: parts[2] || null, userEmail: user.email });
     else if (key === 'campaign' && parts[1] === 'draft' && /^\d{1,15}$/.test(parts[2] || '') && parts.length < 4) screen = SB.screens.wizard({ draftId: parts[2], userEmail: user.email });
+    else if (key === 'inbox' && parts.length < 2) screen = SB.screens.inbox();
     else if (key === 'senders') screen = SB.screens.senders();
     else if (key === 'leads' && (!parts[1] || parts[1] === 'suppression') && parts.length < 3) screen = SB.screens.leads({ tab: parts[1] === 'suppression' ? 'suppression' : 'lists' });
-    else if (SOON[key]) screen = SB.screens.soon.apply(null, SOON[key]);
+    else if (key === 'settings' && parts.length < 2) screen = SB.screens.settings({ userEmail: user.email });
     else screen = { el: h('div', { class: 'card empty' }, h('h2', { text: 'Page not found' }), h('a', { class: 'btn', href: '#/' }, 'Back to Home')), destroy: function () {} };
     current = screen; SB.mount(viewEl, screen.el);
     var navKey = (key === 'project' || key === 'campaign') ? '' : key;

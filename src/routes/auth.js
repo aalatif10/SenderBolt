@@ -1,4 +1,5 @@
 'use strict';
+var audit = require('../services/audit');
 // Auth routes: /api/auth/*  (status, setup, login, logout, me, password)
 var cookies = require('../lib/cookies');
 var tokens = require('../lib/tokens');
@@ -46,5 +47,19 @@ module.exports = function register(router, d) {
   router.post('/api/auth/password', function (ctx) {
     return d.auth.changePassword(ctx.user.id, str(ctx.body.currentPassword, 200), str(ctx.body.newPassword, 200), ctx.sessionToken, ctx.ip)
       .then(function () { return { ok: true }; });
+  });
+
+  // Active sign-ins (this and other devices) and a way to end all the others.
+  router.get('/api/auth/sessions', function (ctx) {
+    return d.sessions.listForUser(ctx.user.id, ctx.sessionToken).then(function (items) { return { items: items }; });
+  });
+  router.post('/api/auth/sessions/revoke-others', function (ctx) {
+    return d.sessions.destroyAllForUser(ctx.user.id, ctx.sessionToken).then(function (r) {
+      return audit.log(d.db, { userId: ctx.user.id, action: 'sessions.revoke_others', ip: ctx.ip }, d.config.now).then(function () { return { ok: true, ended: r && r.changes ? r.changes : 0 }; });
+    });
+  });
+  // Recent account activity (audit trail, secrets already redacted when written).
+  router.get('/api/auth/activity', function (ctx) {
+    return d.db.all('SELECT action, entity, entity_id, ip, created_at FROM audit_log WHERE user_id = ? ORDER BY id DESC LIMIT 50', [ctx.user.id]).then(function (items) { return { items: items }; });
   });
 };

@@ -97,5 +97,26 @@ SB.S = {
     testToHint: 'Your login address by default. Use an inbox you can open.', testNoSender: 'Add an active sender account first (Senders page); your draft is saved.',
     testDry: 'Test mode is on, so nothing was really sent. Turn on live sending to receive test emails.',
     createTip: 'Saves the campaign without sending anything. You can start it from the project page.', startTip: 'Creates the campaign and starts sending inside your sending window.'
+  },
+  inbox: {
+    sentiment: {
+      interested: { label: 'Interested', cls: 'int', tip: 'They want to talk, buy or sell. Answer these first.' },
+      more_info: { label: 'More info', cls: 'more', tip: 'They asked a question or want details before deciding.' },
+      not_interested: { label: 'Not interested', cls: 'not', tip: 'They said no. They are removed from the sequence automatically.' },
+      neutral: { label: 'Neutral', cls: 'neu', tip: 'Not clear yet. Read it and choose a tag yourself.' }
+    },
+    kinds: { auto_reply: 'Automatic reply (out of office)', bounce: 'Delivery failure notice' },
+    syncTip: 'Checks every connected mailbox for new replies right now. It also happens automatically in the background.',
+    sentimentTip: 'The tag is guessed from the words. Click a different one to correct it; your choice is kept.',
+    replyTip: 'Sent from the same account as the first email and threaded in the same conversation.',
+    blocked: 'This person opted out or their address bounced, so replying is turned off.',
+    empty: 'No replies yet. When someone answers one of your emails it shows up here, from every connected account.',
+    emptyFiltered: 'No conversations match these filters.',
+    plainNote: 'Replies are shown as plain text for safety.'
+  },
+  settings: {
+    accountTip: 'The address you sign in with.',
+    passwordHint: 'At least 12 characters. Changing it signs you out everywhere else.',
+    sigTip: 'Added to the end of every email from an account that has no signature of its own.'
   }
 };

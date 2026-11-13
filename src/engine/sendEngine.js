@@ -16,6 +16,7 @@ var crypto = require('crypto');
 var vault = require('../lib/vault');
 var tpl = require('../lib/template');
 var sanitize = require('../lib/sanitize');
+var withSignature = require('../services/settings').withSignature;
 var split = require('../lib/split');
 var throttle = require('../lib/throttle');
 var email = require('../lib/email');
@@ -218,6 +219,15 @@ E._attempt = function (sender, c, t, stats) {
       var step = steps[c.current_step];
       if (!step) return self._finishLead(c, 'completed', null, t).then(function () { return 'skipped'; });
       return self.db.all("SELECT subject, message_id_hdr FROM messages WHERE campaign_lead_id = ? AND direction = 'out' AND status = 'sent' AND step_no IS NOT NULL ORDER BY step_no", [c.cl_id]).then(function (history) {
+        return withSignature(self.db, c.user_id, sender).then(function (snd) { return self._attemptSend(snd, c, t, stats, steps, step, history); });
+      });
+    });
+  });
+};
+
+E._attemptSend = function (sender, c, t, stats, steps, step, history) {
+  var self = this, composed, claim;
+  return Promise.resolve().then(function () {
         composed = self._compose(sender, c, step, history);
         if (composed.missing.length) {
           return self._finishLead(c, 'error', 'Missing merge field: ' + composed.missing.join(', '), t).then(function () { return 'skipped'; });
@@ -233,8 +243,6 @@ E._attempt = function (sender, c, t, stats) {
             return self._onFailure(sender, c, steps, claim, err).then(function () { return 'failed'; });
           });
         });
-      });
-    });
   });
 };
 

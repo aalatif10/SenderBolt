@@ -19,6 +19,7 @@ var sanitize = require('../lib/sanitize');
 var sendErrors = require('../lib/sendErrors');
 var throttle = require('../lib/throttle');
 var audit = require('./audit');
+var withSignature = require('./settings').withSignature;
 
 var SAMPLE_LEAD = { first_name: 'Alex', last_name: 'Morgan', company: 'Acme Domains', email: 'alex@acme-domains.com', domain: 'acme-domains.com' };
 function bad(field, msg) { var d = {}; d[field] = msg; return new AppError('validation', msg, 400, d); }
@@ -60,16 +61,18 @@ T.send = function (user, input, ip) {
     // compose like a campaign email, but addressed to the test recipient (lead data only fills the fields)
     var c = { test: true, cl_id: 0, current_step: 0, email: to, domain: lead.domain, first_name: lead.first_name, last_name: lead.last_name, company: lead.company, custom: lead.custom };
     var history = previous ? [{ subject: previous, message_id_hdr: null }] : [];
-    var composed = self.engine._compose(sender, c, { subject: String(input.subject || '').trim(), body_html: input.body_html }, history);
-    var mail = composed.mail;
-    mail.to = to; mail.subject = '[TEST] ' + mail.subject.replace(/[\r\n]+/g, ' ');
-    mail.inReplyTo = null; mail.references = [];
-    var live = self.mailer.mode === 'live';
-    var out = { to: to, sender: sender.email, subject: mail.subject, delivered: live, dry_run: !live, missing: composed.missing, used_lead: usedLead };
-    return audit.log(self.db, { userId: user.id, action: 'test_email.send', entity: 'sender', entityId: sender.id, ip: ip, meta: { to: to, live: live } }, self.now).then(function () {
-      if (!live) return out;
-      return self.engine.deliver(sender, mail).then(function () { return out; }, function (err) {
-        throw new AppError('conflict', 'The test email was not sent: ' + sendErrors.classify(err).message, 502);
+    return withSignature(self.db, user.id, sender).then(function (snd) {
+      var composed = self.engine._compose(snd, c, { subject: String(input.subject || '').trim(), body_html: input.body_html }, history);
+      var mail = composed.mail;
+      mail.to = to; mail.subject = '[TEST] ' + mail.subject.replace(/[\r\n]+/g, ' ');
+      mail.inReplyTo = null; mail.references = [];
+      var live = self.mailer.mode === 'live';
+      var out = { to: to, sender: snd.email, subject: mail.subject, delivered: live, dry_run: !live, missing: composed.missing, used_lead: usedLead };
+      return audit.log(self.db, { userId: user.id, action: 'test_email.send', entity: 'sender', entityId: snd.id, ip: ip, meta: { to: to, live: live } }, self.now).then(function () {
+        if (!live) return out;
+        return self.engine.deliver(snd, mail).then(function () { return out; }, function (err) {
+          throw new AppError('conflict', 'The test email was not sent: ' + sendErrors.classify(err).message, 502);
+        });
       });
     });
   });

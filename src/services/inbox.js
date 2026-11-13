@@ -10,8 +10,10 @@ var crypto = require('crypto');
 var AppError = require('../lib/errors').AppError;
 var v = require('../lib/validate');
 var htmlLib = require('../lib/html');
+var sanitize = require('../lib/sanitize');
 var emailLib = require('../lib/email');
 var audit = require('./audit');
+var withSignature = require('./settings').withSignature;
 
 var SENTIMENTS = ['interested', 'more_info', 'not_interested', 'neutral'];
 var MAX_REPLY = 20000;
@@ -146,6 +148,8 @@ I.reply = function (userId, clId, input, ip) {
     return self.db.get('SELECT * FROM senders WHERE id = ? AND user_id = ?', [conv.sender_id, userId]);
   }).then(function (s) {
     if (!s || s.status === 'disabled') throw new AppError('conflict', 'The sender account is disabled', 409);
+    return withSignature(self.db, userId, s);
+  }).then(function (s) {
     sender = s;
     return self.db.all("SELECT subject, message_id_hdr, direction FROM messages WHERE campaign_lead_id = ? AND user_id = ? AND message_id_hdr IS NOT NULL AND ((direction = 'out' AND status = 'sent') OR (direction = 'in' AND kind IN ('email','auto_reply'))) ORDER BY COALESCE(sent_at, received_at, created_at), id", [clId, userId]);
   }).then(function (hist) {
@@ -156,7 +160,7 @@ I.reply = function (userId, clId, input, ip) {
     var domain = emailLib.domainOf(sender.email);
     var mail = {
       from: { name: sender.from_name || '', address: sender.email }, to: conv.lead_email, subject: subject,
-      html: htmlLib.textToHtml(text) + (sender.signature_html ? '<br>' + sender.signature_html : ''), text: text,
+      html: htmlLib.textToHtml(text) + (sender.signature_html ? '<br>' + sanitize.clean(sender.signature_html) : ''), text: text,
       headers: {}, messageId: '<' + crypto.randomBytes(12).toString('hex') + '.r' + clId + '@' + domain + '>',
       inReplyTo: ids.length ? ids[ids.length - 1] : null, references: ids.slice(-20)
     };

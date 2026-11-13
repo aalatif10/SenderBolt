@@ -1,4 +1,4 @@
-# SenderBolt - Architecture Report (v0.9.0)
+# SenderBolt - Architecture Report (v0.10.0)
 
 Target runtime: **Node.js 12.22.x on Windows 7 (64-bit)**. Code is written in ES2018-style JavaScript
 (no `?.`, `??`, or other post-Node-12 syntax) with promise chains.
@@ -13,7 +13,7 @@ Target runtime: **Node.js 12.22.x on Windows 7 (64-bit)**. Code is written in ES
 | Leads and lists, importer, on-demand verifier (backend + API) | Done |
 | Campaigns: wizard data, sequences (up to 5 follow-ups), Smart Split into sub-campaigns, lifecycle, dashboard data (backend + API) | Done |
 | Projects: Project > Campaign > Batch hierarchy with roll-up analytics (backend + API) | Done |
-| Web UI: login/setup, Home, Project drill-down, Senders, Leads, Campaign Builder wizard with autosaved drafts (vanilla JS, no build step) | Done. Inbox and Settings screens: not started |
+| Web UI: login/setup, Home, Project drill-down, Senders, Leads, Campaign Builder, Inbox, Settings (vanilla JS, no build step) | Done |
 | Email templates (variables, fallbacks, spintax, safe escaping) | Done |
 | Sending engine + scheduler (dry-run / live modes) | Done (live SMTP adapter not yet run against a real server) |
 | Reply + bounce sync (IMAP), unified inbox, sentiment, manual reply, unsubscribe | Done (live IMAP adapter not yet run against a real mailbox) |
@@ -130,6 +130,14 @@ The API adds read-only `warmup_day`, `warmup_reaches_day`, `warmup_slowed` (null
 | `src/services/testSend.js`, `POST /api/campaigns/test-send` | **Send me a test email**: composes with the real campaign pipeline (`engine._compose` with `test: true`: same template engine, sanitizer, signature; no unsubscribe link), subject prefixed `[TEST]`, sent from one of the user's ACTIVE senders (today's limit must not be used up) to the login address or any valid address. No campaign, lead, message or counter is touched; audit entry only. Rate limit 10 per 10 min. Dry-run mode sends nothing and says so. `test/testsend.js` |
 | `public/js/screens/wizard.js` | 4 steps (Emails, Audience, Sending, Review), autosave 1.2 s after the last edit, `beforeunload` warning while unsaved, flush on leaving, resume from `#/campaign/draft/<id>` (URL is rewritten after the first save), Drafts list on Home. Delay fields accept any whole number; the server limit is 1 to 60 days (DB CHECK 0..60) |
 
+### Inbox and Settings (v0.10)
+| File | Role |
+|---|---|
+| `public/js/screens/inbox.js` | Unified Inbox (`#/inbox`): conversation list (sentiment chips with counts, unread, campaign and account filters, search, paging, 15 s refresh that never interrupts a reply being typed), full thread (your emails, replies, auto-replies, bounce notices), tag correction, quick reply (same account, same conversation), mark unread, "Check for replies". Slide-over thread on small screens. **Replies are shown as plain text only** (`textContent`); the server never exposes incoming HTML, so no sanitizer or iframe is needed on this screen |
+| `public/js/screens/settings.js` (`#/settings`) | account + change password (policy errors shown; wrong current password does not log you out), where you are signed in + "sign out other devices", default signature (rich-text editor), recent activity |
+| `src/services/settings.js`, `src/routes/settings.js`, `migrations/007_user_settings.sql` | `GET/PUT /api/settings`: default signature (sanitized on save and on use, max 10,000 chars). `withSignature()` gives a sender row the default only when it has no signature of its own; used by the send engine, test emails and manual replies. `test/settings.js` |
+| `src/services/sessions.js` `listForUser`, `routes/auth.js` | `GET /api/auth/sessions` (never returns tokens), `POST /api/auth/sessions/revoke-others`, `GET /api/auth/activity` (last 50 audit entries of the user) |
+
 ### Web UI (v0.6) - `public/` served by `src/http/static.js`
 | File | Role |
 |---|---|
@@ -202,7 +210,7 @@ Every state-changing call needs headers `X-SB-Client: 1` and `X-CSRF-Token: <fro
 3c. Open tracking (`track_opens`) is stored but not implemented. Unsubscribe links use the app's public origin, not the tracking domain. Replies landing in Gmail's Spam folder are not seen (INBOX only). If a sender goes down, its assigned leads wait for it (the campaign shows `error` only when no waiting lead has a usable sender).
 3d. Inbox shows plain text only; HTML replies are stored but never exposed until DOMPurify is added.
 4. **Connect-time DNS check for hosts** (anti-rebinding) is not done; only the hostname format is validated.
-5. **Web UI is partial**: Inbox and Settings screens are still to build. Follow-up waits are capped at 60 days.
+5. Follow-up waits are capped at 60 days.
 6. Verification means "domain can receive mail", not "mailbox exists" (by design; see leads.js header). The checker never produces `catch_all`, so the Leads screen's Risky tile (risky + catch-all) is effectively risky only.
 6b. Imports are CSV or pasted text only; Excel files must be saved as CSV (Excel import is not built).
 7. Login rate limits are in memory (reset on restart); fine for one user, swap for a shared store before multi-node SaaS.
@@ -211,4 +219,4 @@ Every state-changing call needs headers `X-SB-Client: 1` and `X-CSRF-Token: <fro
 ## 7. Next steps (suggested order)
 
 1. Live test with one real Gmail App Password (dry-run first).
-2. Remaining web screens (Inbox, then Settings) (vanilla JS + clean CSS, tooltips) served with the existing CSP.
+2. Open tracking, Excel import, a campaign edit screen (campaigns can be edited via the API while they are drafts) (vanilla JS + clean CSS, tooltips) served with the existing CSP.

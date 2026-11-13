@@ -96,6 +96,15 @@ Close the window and start normally (without the `set` line) to go back to your 
 6. **Review**: fix anything flagged, pick a project, then **Create campaign** (nothing is sent) or **Create and start**.
 7. **Drafts are automatic**: everything is saved a moment after you stop typing (and on **Save draft**). Close the tab, reload or come back tomorrow: Home lists your drafts under **Drafts** and **Continue** resumes exactly where you stopped. If the same draft is open in two tabs, the second tab stops saving instead of overwriting the first.
 
-**Coming next:** Inbox and Settings screens. Until they exist, those menu items show a short notice; the features already work through the API.
+**Inbox** (menu: Inbox)
+1. Every reply from every account and campaign appears in one list, newest first. Filter by **Interested / More info / Not interested**, **Unread**, campaign or account, or search by name, company or subject. **Check for replies** looks at your mailboxes right now (it also happens in the background).
+2. Click a conversation to read the whole thread: your emails, their replies, automatic out-of-office answers and delivery-failure notices. The colour tag is guessed from the words; click another tag to correct it.
+3. Write in the box and press **Send reply**. It goes from the same account, in the same conversation. If the person opted out or the address bounced, replying is turned off. Replies are shown as plain text for safety. **Mark unread** brings a conversation back to the top of your unread list.
+
+**Settings** (menu: Settings)
+1. **Change password** (12+ characters). Other devices are signed out when you do.
+2. **Where you are signed in** lists your browsers and devices; **Sign out other devices** ends all but this one.
+3. **Default email signature**: added to emails from any account that has no signature of its own (an account's own signature, set on the Senders page, always wins).
+4. **Recent activity** shows the last actions on your account.
 
 **Safety notes:** your session ends after 2 hours of inactivity; passwords are never stored in the browser; everything the page shows from the server is displayed as plain text.

@@ -12,6 +12,7 @@ var CampaignsService = require('./services/campaigns').CampaignsService;
 var RateLimiter = require('./security/rateLimiter').RateLimiter;
 var ProjectsService = require('./services/projects').ProjectsService;
 var TestSendService = require('./services/testSend').TestSendService;
+var SettingsService = require('./services/settings').SettingsService;
 var DraftsService = require('./services/drafts').DraftsService;
 var InboxService = require('./services/inbox').InboxService;
 var UnsubscribeService = require('./services/unsubscribe').UnsubscribeService;
@@ -56,6 +57,7 @@ function createApp(config) {
         senderTest: new SenderTest(db, { key: config.masterKey, mailer: mailer, mailbox: mailbox, inboxSync: inboxSync, now: config.now })
       };
       deps.testSend = new TestSendService(db, { engine: engine, mailer: mailer, now: config.now });
+      deps.settings = new SettingsService(db, { now: config.now });
       deps.drafts = new DraftsService(db, { now: config.now });
       deps.projects = new ProjectsService(db, { campaigns: deps.campaigns, now: config.now });
       deps.engineStatus = function (userId) {

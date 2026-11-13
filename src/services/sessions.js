@@ -68,6 +68,14 @@ Sessions.prototype.destroyAllForUser = function (userId, exceptToken) {
   return this.db.run('DELETE FROM sessions WHERE user_id = ?', [userId]);
 };
 
+// The user's active sessions (never the token or its hash). `current` marks the one making the request.
+Sessions.prototype.listForUser = function (userId, currentToken) {
+  var cur = currentToken ? tokens.sha256hex(currentToken) : null, t = this.now();
+  return this.db.all('SELECT token_hash, created_at, last_seen_at, expires_at, ip, user_agent FROM sessions WHERE user_id = ? AND expires_at > ? ORDER BY last_seen_at DESC', [userId, t]).then(function (rows) {
+    return rows.map(function (r) { return { current: r.token_hash === cur, created_at: r.created_at, last_seen_at: r.last_seen_at, expires_at: r.expires_at, ip: r.ip, user_agent: r.user_agent ? String(r.user_agent).slice(0, 160) : null }; });
+  });
+};
+
 Sessions.prototype.purgeExpired = function () {
   var t = this.now();
   return this.db.run('DELETE FROM sessions WHERE expires_at <= ? OR last_seen_at < ?', [t, t - this.idleMs]);
