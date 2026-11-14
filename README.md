@@ -49,7 +49,7 @@ Set `SENDERBOLT_PUBLIC_ORIGIN=https://your-domain` to get one-click unsubscribe 
 
 
 **Home**
-- A blue **Test mode** strip means nothing real is sent (see "Sending modes"). It disappears in live mode.
+- An amber strip appears only if the sending engine is switched off (`SENDERBOLT_SENDING=off`).
 - A **Next step** card tells you what to do next (connect a sender, add leads, create a project).
 - Four tiles: emails sent today vs. capacity, replies waiting, projects running, and anything needing attention. Hover the small **i** next to any label to read what it means.
 - **Projects** are shown as cards with progress, sent, replies, bounces and the next email time. Click one to open it. The page refreshes itself every 10 seconds.
@@ -81,7 +81,7 @@ Set `SENDERBOLT_PUBLIC_ORIGIN=https://your-domain` to get one-click unsubscribe 
 2. The toolbar gives font, size, bold, italic, underline, bullet and numbered lists, links (Ctrl+K), clear formatting and an **Insert field** menu ({{first_name|there}}, spintax). The preview on the right shows the email you are editing for an example person.
 3. **Audience**: choose a lead folder and which address types to include. You see how many people will be emailed and how many are missing information that your emails use (for example an empty first name with no fallback).
 4. **Sending**: choose sender accounts, the daily sending window, time zone, weekdays only and stop-on-reply. **Smart Split** cuts big lists into batches (for example 26 per batch) with the sizes shown live; **Shuffle** mixes people so colleagues from one company are not in the same batch.
-5. **Send test** (on each email and on Review): sends that email to you with an example person filled in, so you can check formatting in a real inbox. The subject starts with [TEST]; nothing is added to any campaign. In test mode it tells you nothing was really sent.
+5. **Send test** (on each email and on Review): sends that email to you with an example person filled in, so you can check formatting in a real inbox. The subject starts with [TEST]; nothing is added to any campaign.
 6. **Review**: fix anything flagged, pick a project, then **Create campaign** (nothing is sent) or **Create and start**.
 7. **Drafts are automatic**: everything is saved a moment after you stop typing (and on **Save draft**). Close the tab, reload or come back tomorrow: Home lists your drafts under **Drafts** and **Continue** resumes exactly where you stopped. If the same draft is open in two tabs, the second tab stops saving instead of overwriting the first.
 

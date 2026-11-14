@@ -107,7 +107,7 @@ Order per request: security headers (CSP, nosniff, DENY framing, no-referrer, CO
 | `src/services/projects.js`, `routes/projects.js` | project CRUD (archive/delete refused while anything is sending; delete removes its campaigns and batches); roll-up analytics `batch -> campaign -> project`; campaign drill-down with batches and a per-step funnel |
 
 Hierarchy: **Project** (container, e.g. "Q4 domain push") > **Campaign** (a variant: own sequence, leads, senders, settings) > **Batch** (a Smart Split part, mostly invisible to the user). Creating a campaign without `project_id` creates a project of the same name automatically.
-Metric definitions: `emailed` = leads that got an email (or were rejected while sending); `replied` = real replies only (not out-of-office/bounces); rates are % of `emailed`. **Opens are not tracked yet** and are returned as `opens: null, opens_tracked: false`; the UI must say "not tracked", never show 0.
+Metric definitions: `emailed` = leads that got an email (or were rejected while sending); `replied` = real replies only (not out-of-office/bounces); rates are % of `emailed`. **Opens** are counted only for campaigns with `track_opens` (unique people who loaded the pixel); otherwise they are `opens: null, opens_tracked: false` and the UI says "not tracked", never 0.
 
 ### Warm-up (v0.7.1) - `lib/throttle.js`, `migrations/005_warmup.sql`
 Warm-up is a per-sender volume ramp (no peer network). It is **optional**: `warmup_enabled = 0` means the sender uses its configured limit (max 400) from day one.
