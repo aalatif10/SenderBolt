@@ -19,7 +19,7 @@ SB.S = {
     unsub: 'People who asked to stop. They are never emailed again.',
     replyRate: 'Replies divided by people emailed.',
     bounceRate: 'Bounces divided by people emailed. Keep this under 3% to protect your Gmail accounts.',
-    opens: 'Open tracking is not available. Replies are the reliable signal of interest.',
+    opens: 'People whose email loaded its tiny tracking image. Approximate: some mail apps load images automatically (inflates) and others block them (undercounts). Replies are the reliable signal.',
     progress: 'How many people have finished: replied, completed the sequence, bounced or unsubscribed.',
     next: 'When the next email in this campaign is due.'
   },
@@ -68,7 +68,6 @@ SB.S = {
     },
     verifyNote: 'The check confirms the address is written correctly and that its domain has a mail server. It cannot confirm that the specific mailbox exists, so a few valid addresses can still bounce.'
   },
-  testMode: 'Test mode: the whole flow runs, but no real email is sent or read.',
   engineOff: 'The sending engine is switched off. Nothing will be sent.',
   wizard: {
     namePlaceholder: 'Name this campaign (only you see it)', saved: 'Draft saved', saving: 'Saving\u2026', unsaved: 'Unsaved changes', conflict: 'Changed in another tab',
@@ -89,13 +88,12 @@ SB.S = {
     coverageHelp: 'Those people will be skipped (and marked as errors) instead of receiving an email with a blank gap. Add a fallback like {{first_name|there}} to include them.',
     audienceAuto: 'Invalid addresses, unsubscribed people and people already in a running campaign are always left out automatically.',
     sendersHint: 'Emails rotate across the accounts you choose and respect each account\'s daily limit and warm-up.',
-    weekdaysHint: 'Saturday and Sunday are skipped.', stopHint: 'Recommended. Nobody gets a follow-up after answering.',
+    weekdaysHint: 'Saturday and Sunday are skipped.', stopHint: 'Recommended. Nobody gets a follow-up after answering.', opensHint: 'Adds an invisible 1-pixel image so you can see roughly who opened. Needs your public address (SENDERBOLT_PUBLIC_ORIGIN) to work. Counts are approximate; replies are the reliable signal.',
     splitTip: 'Splits a big list into smaller batches that send side by side. People from the same company land in different batches.',
     splitHint: 'For example 26 per batch. You see the batch sizes right away.', shuffleTip: 'Mix the people differently, then show the new batch sizes.',
     testTip: 'Sends this email to you so you can check how it looks in a real inbox.',
     testIntro: 'One real email, written exactly like a campaign email, with an example person filled in (Alex Morgan, Acme Domains). The subject starts with [TEST] and nothing is added to any campaign.',
     testToHint: 'Your login address by default. Use an inbox you can open.', testNoSender: 'Add an active sender account first (Senders page); your draft is saved.',
-    testDry: 'Test mode is on, so nothing was really sent. Turn on live sending to receive test emails.',
     createTip: 'Saves the campaign without sending anything. You can start it from the project page.', startTip: 'Creates the campaign and starts sending inside your sending window.'
   },
   inbox: {

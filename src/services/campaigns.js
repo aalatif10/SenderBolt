@@ -179,10 +179,10 @@ function insertLeads(tx, campaignId, leads) {
     return tx.run('INSERT INTO campaign_leads (campaign_id, lead_id, position) VALUES ' + rows.map(function () { return '(?,?,?)'; }).join(','), params);
   });
 }
-var CAMPAIGN_COLS = 'user_id, parent_id, name, status, split_seed, batch_size, window_start_hour, window_end_hour, utc_offset_min, weekdays_only, stop_on_reply, track_opens, created_at, updated_at';
-function insertCampaign(tx, userId, parentId, name, status, seed, batchSize, s, t) {
-  return tx.run('INSERT INTO campaigns (' + CAMPAIGN_COLS + ') VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-    [userId, parentId, name, status, seed, batchSize, s.window_start_hour, s.window_end_hour, s.utc_offset_min, s.weekdays_only, s.stop_on_reply, s.track_opens, t, t]).then(function (r) { return r.lastID; });
+var CAMPAIGN_COLS = 'user_id, parent_id, project_id, name, status, split_seed, batch_size, window_start_hour, window_end_hour, utc_offset_min, weekdays_only, stop_on_reply, track_opens, created_at, updated_at';
+function insertCampaign(tx, userId, parentId, projectId, name, status, seed, batchSize, s, t) {
+  return tx.run('INSERT INTO campaigns (' + CAMPAIGN_COLS + ') VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+    [userId, parentId, parentId ? null : projectId, name, status, seed, batchSize, s.window_start_hour, s.window_end_hour, s.utc_offset_min, s.weekdays_only, s.stop_on_reply, s.track_opens, t, t]).then(function (r) { return r.lastID; });
 }
 
 C._checkSenders = function (userId, ids) {
@@ -219,14 +219,14 @@ C.create = function (userId, input, ip) {
         // No project given: the campaign gets a project of its own (keeps one-step creation for simple cases).
         var pj = projectId !== null ? Promise.resolve(projectId)
           : tx.run('INSERT INTO projects (user_id, name, created_at, updated_at) VALUES (?,?,?,?)', [userId, name, t, t]).then(function (r) { return r.lastID; });
-        return pj.then(function (pid) { projectId = pid; return insertCampaign(tx, userId, null, name, 'draft', plan.seed, plan.batchSize, settings, t); }).then(function (id) {
+        return pj.then(function (pid) { projectId = pid; return insertCampaign(tx, userId, null, projectId, name, 'draft', plan.seed, plan.batchSize, settings, t); }).then(function (id) {
           mainId = id;
-          return tx.run('UPDATE campaigns SET project_id = ? WHERE id = ?', [projectId, mainId]);
+          return null;
         }).then(function () { return insertSteps(tx, mainId, steps); }).then(function () { return linkSenders(tx, mainId, senderIds); }).then(function () {
           if (!plan.isSplit) return insertLeads(tx, mainId, plan.batches[0]);
           return seq(plan.batches, function (batch, i) {
             var partName = name + ' - Part ' + (i + 1) + '/' + plan.batches.length, pid;
-            return insertCampaign(tx, userId, mainId, partName, 'draft', plan.seed, plan.batchSize, settings, t).then(function (id) {
+            return insertCampaign(tx, userId, mainId, null, partName, 'draft', plan.seed, plan.batchSize, settings, t).then(function (id) {
               pid = id;
               return insertSteps(tx, pid, steps);
             }).then(function () { return linkSenders(tx, pid, senderIds); }).then(function () { return insertLeads(tx, pid, batch); });
@@ -554,6 +554,54 @@ C.remove = function (userId, id, ip) {
     if (leaves.some(function (l) { return l.status === 'active'; })) throw new AppError('conflict', 'Pause the campaign before deleting it', 409);
     return self.db.run('DELETE FROM campaigns WHERE id = ? AND user_id = ?', [id, userId]);
   }).then(function () { return audit.log(self.db, { userId: userId, action: 'campaign.delete', entity: 'campaign', entityId: id, ip: ip }, self.now); });
+};
+
+// Batch actions on MAIN campaigns: { action: 'delete' | 'move', ids[], project_id | new_project_name }.
+// Partial success is normal (a running campaign cannot be deleted): returns { done: [ids], failed: [{id, message}] }.
+var MAX_BATCH = 200;
+C.batch = function (userId, input, ip) {
+  var self = this;
+  return Promise.resolve().then(function () {
+    input = input || {};
+    if (input.action !== 'delete' && input.action !== 'move') throw bad('action', 'Choose delete or move');
+    var ids = v.idArray(input.ids, 1, MAX_BATCH);
+    if (!ids) throw bad('ids', 'Select between 1 and ' + MAX_BATCH + ' campaigns');
+    ids = ids.filter(function (x, i) { return ids.indexOf(x) === i; });
+    var res = { action: input.action, done: [], failed: [] };
+    function each(fn) {
+      return seq(ids, function (id) {
+        return fn(id).then(function () { res.done.push(id); }, function (e) {
+          if (!(e instanceof AppError)) throw e;
+          res.failed.push({ id: id, message: e.message });
+        });
+      }).then(function () { return res; });
+    }
+    if (input.action === 'delete') return each(function (id) { return self.remove(userId, id, ip); });
+    var target;
+    if (input.project_id !== undefined && input.project_id !== null) {
+      var pid = v.intIn(input.project_id, 1, 9007199254740991);
+      if (pid === null) throw bad('project_id', 'Invalid project');
+      target = self.db.get('SELECT id, archived FROM projects WHERE id = ? AND user_id = ?', [pid, userId]).then(function (p) {
+        if (!p) throw bad('project_id', 'Project not found');
+        if (p.archived) throw bad('project_id', 'This project is archived. Unarchive it first.');
+        return p.id;
+      });
+    } else if (input.new_project_name !== undefined) {
+      var nm = validateName(input.new_project_name), t = self.now();
+      target = self.db.run('INSERT INTO projects (user_id, name, created_at, updated_at) VALUES (?,?,?,?)', [userId, nm, t, t]).then(function (r) { return r.lastID; });
+    } else throw bad('project_id', 'Choose where to move the campaigns');
+    return target.then(function (projectId) {
+      res.project_id = projectId;
+      return each(function (id) {
+        return self._own(userId, id).then(function (c) {
+          if (c.parent_id) throw bad('id', 'Move the main campaign, not one of its parts');
+          if (c.project_id === projectId) return null;
+          return self.db.run('UPDATE campaigns SET project_id = ?, updated_at = ? WHERE id = ? AND user_id = ?', [projectId, self.now(), id, userId])
+            .then(function () { return audit.log(self.db, { userId: userId, action: 'campaign.move', entity: 'campaign', entityId: id, ip: ip, meta: { from: c.project_id, to: projectId } }, self.now); });
+        });
+      });
+    });
+  });
 };
 
 // Wizard check: how many of the chosen leads lack a value for each {{variable}} that has no fallback.

@@ -17,20 +17,31 @@ function stripQuoted(text) {
   return s.split('\n').filter(function (l) { return !/^\s*>/.test(l); }).join('\n').trim();
 }
 
-var STOP = /\b(un-?subscribe|remove (me|us)( from)?|take (me|us) off|stop (emailing|e-mailing|contacting|sending|messaging|writing)|do not (contact|email|e-mail|write)|don'?t (contact|email|e-mail|write)|opt[- ]?out|no more (emails?|e-mails?|messages)|cease and desist)\b/i;
+// The ONLY opt-out phrase: "stop campaign" (any case, anywhere in the subject or in the NEW text of the reply).
+// Single words like "stop", "unsubscribe" or "remove" never opt anybody out; they are too easy to write by accident
+// ("don't stop now", "how do I unsubscribe from X?"). The phrase must be those two whole words next to each other.
+var STOP_PHRASE = /(^|[^a-z0-9])stop[\s\u00a0]+campaign(?![a-z0-9])/i;
+// Lines of OUR OWN footer contain the phrase too; if a reply client quotes them without ">" they must not count.
+var FOOTER_LINE = /(rather not receive|stop receiving|stop these) (these )?emails/i;
+
+function isStopRequest(subject, rawText) {
+  if (STOP_PHRASE.test(String(subject == null ? '' : subject))) return true;
+  var body = stripQuoted(rawText).split('\n').filter(function (l) { return !FOOTER_LINE.test(l); }).join('\n');
+  return STOP_PHRASE.test(body);
+}
+
 var NOT_INTERESTED = /\b(not (interested|for sale|selling|looking|a (good )?fit|available)|no,? thanks?|no thank you|not at this time|not now|wrong (person|email|address|contact)|not the right (person|contact)|have no (interest|plans)|not (planning|looking) to sell|already (sold|have)|isn'?t for sale|is not for sale)\b/i;
 var INTERESTED = /(\binterested\b|\blet'?s (talk|chat|connect|discuss|schedule|set up)\b|\bsounds (good|great|interesting)\b|\bsend (me )?(your |the )?(offer|price|proposal|details|number|quote)\b|\bwhat'?s your (best )?(offer|price|number)\b|\bwhat is your (best )?(offer|price|number)\b|\bmake (me )?an offer\b|\bhappy to (talk|chat|discuss)\b|\bgive me a call\b|\bcall me\b|\bmy (phone )?number is\b|\bopen to (offers|selling|discussing)\b|^\s*(yes|yeah|yep|sure)\b[\s.!]*$)/i;
 var MORE_INFO = /(\?|\bmore (info|information|details)\b|\btell me more\b|\bwho (are|is) (you|this)\b|\bhow did you (find|get)\b|\bcan you (explain|clarify)\b|\bwhat do you (mean|want)\b|\bwhich (domain|one|name)\b)/i;
 
-// Returns { sentiment: interested|more_info|not_interested|neutral, stop: bool }
+// Returns { sentiment: interested|more_info|not_interested|neutral }. (Opt-outs are decided by isStopRequest only.)
 function classify(rawText) {
   var t = stripQuoted(rawText);
-  if (!t) return { sentiment: 'neutral', stop: false };
-  if (STOP.test(t)) return { sentiment: 'not_interested', stop: true };
-  if (NOT_INTERESTED.test(t)) return { sentiment: 'not_interested', stop: false };
-  if (INTERESTED.test(t)) return { sentiment: 'interested', stop: false };
-  if (MORE_INFO.test(t)) return { sentiment: 'more_info', stop: false };
-  return { sentiment: 'neutral', stop: false };
+  if (!t) return { sentiment: 'neutral' };
+  if (NOT_INTERESTED.test(t)) return { sentiment: 'not_interested' };
+  if (INTERESTED.test(t)) return { sentiment: 'interested' };
+  if (MORE_INFO.test(t)) return { sentiment: 'more_info' };
+  return { sentiment: 'neutral' };
 }
 
 // Automatic replies (out of office, vacation) must not stop a sequence.
@@ -42,4 +53,4 @@ function isAutoReply(m) {
   return /\b(out of (the )?office|automatic reply|auto[- ]?reply|autoreply|vacation|away from (my )?(desk|office)|on leave)\b/i.test(String(m.subject || ''));
 }
 
-module.exports = { classify: classify, stripQuoted: stripQuoted, isAutoReply: isAutoReply };
+module.exports = { classify: classify, isStopRequest: isStopRequest, stripQuoted: stripQuoted, isAutoReply: isAutoReply };

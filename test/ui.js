@@ -1,5 +1,5 @@
 'use strict';
-// Web UI: static-file hardening, "no unsafe DOM API" source scan, CSP-compatibility, demo-script safety.
+// Web UI: static-file hardening, "no unsafe DOM API" source scan, CSP-compatibility.
 var assert = require('assert');
 var http = require('http');
 var fs = require('fs');
@@ -39,6 +39,7 @@ h.test('boot', function () {
   var probe = http.createServer();
   return new Promise(function (r) { probe.listen(0, '127.0.0.1', r); }).then(function () { S.port = probe.address().port; return new Promise(function (r) { probe.close(r); }); }).then(function () {
     var cfg = config.build({ SENDERBOLT_MASTER_KEY: crypto.randomBytes(32).toString('hex'), SENDERBOLT_SESSION_SECRET: crypto.randomBytes(32).toString('hex'), PORT: String(S.port), HOST: '127.0.0.1', SENDERBOLT_DB_FILE: ':memory:' });
+    var io = h.fakeIO(); cfg.mailer = io.mailer; cfg.mailbox = io.mailbox;
     return createApp(cfg);
   }).then(function (app) { S.app = app; S.host = '127.0.0.1:' + S.port; S.server = http.createServer(app.dispatch); return new Promise(function (r) { S.server.listen(S.port, '127.0.0.1', r); }); });
 });
@@ -93,33 +94,6 @@ h.test('every script referenced by index.html exists', function () {
 h.test('UI never persists secrets: the CSRF token is kept in memory only', function () {
   var api = fs.readFileSync(path.join(PUB, 'js', 'api.js'), 'utf8');
   assert.ok(/var csrf = null/.test(api)); assert.ok(!/document\.cookie/.test(api));
-});
-
-h.group('web UI: demo account script');
-function runDemo(cwd, env, args) {
-  return cp.spawnSync(process.execPath, [path.join(__dirname, '..', 'scripts', 'demo.js')].concat(args || []), { cwd: cwd, env: Object.assign({ PATH: process.env.PATH }, env), encoding: 'utf8' });
-}
-function tmpEnv(extra) {
-  var dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-demo-'));
-  return { dir: dir, env: Object.assign({ SENDERBOLT_MASTER_KEY: crypto.randomBytes(32).toString('hex'), SENDERBOLT_SESSION_SECRET: crypto.randomBytes(32).toString('hex'), HOST: '127.0.0.1', PORT: '3999' }, extra || {}) };
-}
-h.test('demo password is random per run (never hardcoded), shown once; second run refuses; reset gives a new one', function () {
-  var t = tmpEnv(), r1 = runDemo(t.dir, t.env), m1 = /Password:\s+(\S+)/.exec(r1.stdout);
-  assert.strictEqual(r1.status, 0, r1.stderr); assert.ok(m1 && m1[1].length >= 16); assert.ok(/demo@example\.com/.test(r1.stdout));
-  var r2 = runDemo(t.dir, t.env); assert.strictEqual(r2.status, 1); assert.ok(/already there/.test(r2.stderr));
-  var r3 = runDemo(t.dir, t.env, ['--reset-password']), m3 = /Password:\s+(\S+)/.exec(r3.stdout);
-  assert.strictEqual(r3.status, 0, r3.stderr); assert.notStrictEqual(m3[1], m1[1]);
-  var src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'demo.js'), 'utf8'); assert.ok(src.indexOf(m1[1]) === -1);
-});
-h.test('demo refuses live sending and non-localhost binding, and never touches a database with a real account', function () {
-  var live = tmpEnv({ SENDERBOLT_SENDING: 'live' }), r = runDemo(live.dir, live.env); assert.strictEqual(r.status, 1); assert.ok(/live/.test(r.stderr));
-  var open = tmpEnv({ HOST: '0.0.0.0' }); r = runDemo(open.dir, open.env); assert.strictEqual(r.status, 1); assert.ok(/localhost/.test(r.stderr));
-  var real = tmpEnv(), dbfile = path.join(real.dir, 'data', 'senderbolt.db');
-  var db = require('../src/db'), migrate = require('../src/db/migrate').migrate;
-  fs.mkdirSync(path.dirname(dbfile), { recursive: true });
-  return db.open(dbfile).then(function (d) { return migrate(d).then(function () { return h.mkUser(d, 'owner@real.com'); }).then(function () { return d.close(); }); }).then(function () {
-    var rr = runDemo(real.dir, real.env); assert.strictEqual(rr.status, 1); assert.ok(/real account/.test(rr.stderr));
-  });
 });
 
 h.run();

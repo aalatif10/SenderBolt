@@ -31,4 +31,14 @@ function run() {
   return chain.then(function () { console.log('\n' + passed + ' passed, ' + failed + ' failed'); process.exit(failed ? 1 : 0); });
 }
 
-module.exports = { test: test, group: group, run: run, freshDb: freshDb, mkUser: mkUser, expectReject: expectReject };
+// Offline stand-ins for SMTP/IMAP so app-level tests never touch the network.
+function fakeIO() {
+  var sent = [];
+  return {
+    sent: sent,
+    mailer: { send: function (creds, mail) { sent.push(mail); return Promise.resolve({ messageId: mail.messageId }); }, verify: function () { return Promise.resolve(true); } },
+    mailbox: { verify: function () { return Promise.resolve(true); }, baseline: function () { return Promise.resolve({ uidValidity: 1, lastUid: 0 }); },
+      fetchSince: function (c, st) { return Promise.resolve({ uidValidity: st.uidValidity, lastUid: st.lastUid, messages: [] }); } }
+  };
+}
+module.exports = { fakeIO: fakeIO, test: test, group: group, run: run, freshDb: freshDb, mkUser: mkUser, expectReject: expectReject };

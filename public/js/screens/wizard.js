@@ -34,7 +34,7 @@
   SB.screens.wizard = function (params) {
     var st = blankState(), draft = null /* { id, rev } */, root = h('div'), body = h('div'), stepsEl = h('div', { class: 'wz-steps' });
     var dead = false, dirty = false, saving = false, saveTimer = null, conflict = false, lastSaved = null, saveEl = h('span', { class: 'wz-save', role: 'status' });
-    var userEmail = params.userEmail || '', folders = [], senders = [], projects = [], projectId = params.projectId || null, activeIdx = 0, editors = [], launching = false;
+    var editId = params.editId || null, userEmail = params.userEmail || '', folders = [], senders = [], projects = [], projectId = params.projectId || null, activeIdx = 0, editors = [], launching = false;
     var previewTimer = null, previewBox = null, coverageBox = null, splitBox = null, countBox = null, previewSeq = 0, audSeq = 0;
 
     // ---------- autosave ----------
@@ -45,7 +45,7 @@
     function payload() { return { name: st.name, step: st.step, steps: st.steps, sender_ids: st.sender_ids, folder_id: st.folder_id, exclude_role: st.exclude_role, lead_statuses: st.lead_statuses, split: st.split, settings: st.settings }; }
     function saveNow() {
       clearTimeout(saveTimer);
-      if (saving || conflict || !dirty || !hasContent(st)) return Promise.resolve();
+      if (editId || saving || conflict || !dirty || !hasContent(st)) return Promise.resolve();
       saving = true; paintSave();
       var snapshot = JSON.stringify(payload()), p;
       if (!draft) p = SB.api.post('/api/drafts', { project_id: projectId ? Number(projectId) : null, data: payload() });
@@ -59,7 +59,7 @@
         else if (e.code !== 'offline') ui.toast(SB.api.friendly(e), true);
       }).then(function () { saving = false; paintSave(); if (dirty && !conflict && !dead) schedule(); });
     }
-    function schedule() { clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 1200); }
+    function schedule() { if (editId) return; clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 1200); }
     function touch() { dirty = true; paintSave(); schedule(); }
     function onBeforeUnload(e) { if (dirty && hasContent(st)) { e.preventDefault(); e.returnValue = ''; return ''; } }
     window.addEventListener('beforeunload', onBeforeUnload);
@@ -76,9 +76,9 @@
     function head() {
       var name = h('input', { class: 'input wz-name', id: 'wz-name', maxlength: 120, placeholder: W.namePlaceholder, value: st.name, 'aria-label': 'Campaign name' });
       name.addEventListener('input', function () { st.name = name.value; touch(); });
-      return h('div', null, h('div', { class: 'crumbs' }, h('a', { href: '#/' }, 'Home'), ' / New campaign'),
+      return h('div', null, h('div', { class: 'crumbs' }, h('a', { href: '#/' }, 'Home'), editId ? ' / Edit campaign' : ' / New campaign'),
         h('div', { class: 'page-head' }, h('div', { class: 'wz-title' }, name, saveEl),
-          h('div', { class: 'actions' },
+          editId ? h('div', { class: 'actions' }, h('a', { class: 'btn btn-ghost', href: '#/project/' + projectId, id: 'wz-cancel-edit' }, 'Cancel')) : h('div', { class: 'actions' },
             h('button', { class: 'btn', type: 'button', tip: W.saveTip, on: { click: function () { saveNow().then(function () { if (!conflict && !dirty) ui.toast(W.draftSaved); }); } } }, 'Save draft'),
             h('button', { class: 'btn btn-ghost', type: 'button', tip: W.discardTip, on: { click: discard } }, 'Discard'))),
         conflict ? h('div', { class: 'form-error' }, W.conflictLong, ' ', h('button', { class: 'btn btn-sm', type: 'button', on: { click: function () { location.reload(); } } }, 'Reload latest')) : null,
@@ -108,8 +108,7 @@
           err.classList.add('hidden');
           return SB.api.post('/api/campaigns/test-send', { sender_id: Number(pick.value), to: to.value.trim(), subject: s.subject, previous_subject: prev, body_html: s.body_html }).then(function (r) {
             close();
-            if (r.dry_run) ui.toast(W.testDry, true);
-            else ui.toast('Test sent to ' + r.to + '. It can take a minute to arrive; check spam too.');
+            ui.toast('Test sent to ' + r.to + '. It can take a minute to arrive; check spam too.');
             if (r.missing && r.missing.length) ui.toast('Fields without a value in the example data: ' + r.missing.join(', ') + '.', true);
           }, function (e) { err.textContent = SB.api.friendly(e); err.classList.remove('hidden'); throw e; });
         } }] });
@@ -224,6 +223,7 @@
       });
     }
     function stepAudience() {
+      if (editId) return h('div', { class: 'wz-narrow' }, h('div', { class: 'card' }, h('h2', { text: 'Audience' }), h('p', { class: 'muted', text: 'The people in a campaign are fixed once it is created, so the sequence you send stays consistent. To email different people, create a new campaign.' })));
       var sel = h('select', { class: 'input', id: 'wz-folder', 'aria-label': 'Lead folder' }, h('option', { value: '' }, 'Choose a folder…'),
         folders.map(function (f) { return h('option', { value: f.id }, f.name + ' (' + fmt.num(f.lead_count) + ')'); }));
       sel.value = st.folder_id ? String(st.folder_id) : '';
@@ -306,7 +306,7 @@
           h('div', { class: 'wz-row' }, h('div', { class: 'field' }, h('label', { for: 'wz-ws' }, 'From'), hourSel('wz-ws', ss.window_start_hour, 0, 23, function (x) { ss.window_start_hour = x; })),
             h('div', { class: 'field' }, h('label', { for: 'wz-we' }, 'Until'), hourSel('wz-we', ss.window_end_hour, 1, 24, function (x) { ss.window_end_hour = x; })),
             h('div', { class: 'field' }, h('label', { for: 'wz-tz' }, 'Time zone'), tz)),
-          toggle('wz-wd', 'weekdays_only', 'Weekdays only', W.weekdaysHint), toggle('wz-sr', 'stop_on_reply', 'Stop the sequence when someone replies', W.stopHint)),
+          toggle('wz-wd', 'weekdays_only', 'Weekdays only', W.weekdaysHint), toggle('wz-sr', 'stop_on_reply', 'Stop the sequence when someone replies', W.stopHint), toggle('wz-to', 'track_opens', 'Track opens (approximate)', W.opensHint)),
         h('div', { class: 'card' }, h('h2', null, 'Smart Split ', ui.info(W.splitTip)),
           h('div', { class: 'field check' }, useSplit, h('label', { for: 'wz-split' }, 'Split into smaller batches'), h('div', { class: 'hint', text: W.splitHint })), splitCtl, splitBox));
     }
@@ -326,14 +326,14 @@
       if (!st.sender_ids.length) p.push({ s: 2, t: 'Choose at least one sender account.' });
       if (st.settings.window_end_hour <= st.settings.window_start_hour) p.push({ s: 2, t: 'The sending window must end after it starts.' });
       if (st.split.enabled && !st.split.batch_size) p.push({ s: 2, t: 'Enter a batch size.' });
-      return p;
+      return editId ? p.filter(function (x) { return x.s !== 1; }) : p;
     }
     function stepReview() {
       var probs = problems(), out = h('div', { class: 'wz-narrow' });
       var folder = folders.filter(function (f) { return f.id === st.folder_id; })[0];
       var chosen = senders.filter(function (s) { return st.sender_ids.indexOf(s.id) !== -1; });
       var totalDays = 0; st.steps.forEach(function (s, i) { if (i) totalDays += s.delay_days || 0; });
-      var projSel = h('select', { class: 'input', id: 'wz-project', 'aria-label': 'Project' }, h('option', { value: '' }, 'New project named after this campaign'),
+      var projSel = h('select', { class: 'input', id: 'wz-project', 'aria-label': 'Project' }, projectId ? null : h('option', { value: '' }, 'New project named after this campaign'),
         projects.map(function (p) { return h('option', { value: p.id }, p.name); }));
       projSel.value = projectId ? String(projectId) : '';
       projSel.addEventListener('change', function () { projectId = projSel.value || null; });
@@ -341,14 +341,15 @@
       out.appendChild(h('div', { class: 'card' }, h('h2', { text: 'Review' }),
         probs.length ? h('div', { class: 'callout warn' }, h('b', { text: 'Fix these before launching:' }), h('ul', null, probs.map(function (p) { return h('li', null, p.t + ' ', h('a', { href: '#', on: { click: function (e) { e.preventDefault(); go(p.s); } } }, 'Go there')); }))) : h('p', { class: 'hint ok', text: 'Everything is filled in. Nothing is sent until you press Start.' }),
         row('Campaign', st.name || '-'), row('Emails', st.steps.length + ' (first email' + (st.steps.length > 1 ? ' + ' + (st.steps.length - 1) + ' follow-up' + (st.steps.length > 2 ? 's' : '') : '') + ')' + (totalDays ? ', over ' + totalDays + ' days' : '')),
-        row('Audience', folder ? folder.name : '-'), row('Senders', chosen.length ? chosen.map(function (s) { return s.label || s.email; }).join(', ') : '-'),
+        editId ? null : row('Audience', folder ? folder.name : '-'), row('Senders', chosen.length ? chosen.map(function (s) { return s.label || s.email; }).join(', ') : '-'),
         row('Window', pad(st.settings.window_start_hour) + ':00 to ' + pad(st.settings.window_end_hour % 24) + ':00, ' + (st.settings.weekdays_only ? 'weekdays' : 'every day')),
-        row('Smart Split', st.split.enabled ? 'Batches of ' + st.split.batch_size : 'Off'),
-        h('div', { class: 'field pad-t' }, h('label', { for: 'wz-project' }, 'Add to project'), projSel)));
+        editId ? null : row('Smart Split', st.split.enabled ? 'Batches of ' + st.split.batch_size : 'Off'),
+        editId ? null : h('div', { class: 'field pad-t' }, h('label', { for: 'wz-project' }, 'Add to project'), projSel)));
       out.appendChild(h('div', { class: 'actions wz-final' },
         h('button', { class: 'btn', type: 'button', id: 'wz-test-review', tip: W.testTip, on: { click: function () { testDialog(0); } } }, SB.icon('send'), 'Send me a test'),
-        h('button', { class: 'btn', type: 'button', id: 'wz-create', disabled: probs.length ? true : null, tip: W.createTip, on: { click: function () { launch(false); } } }, 'Create campaign'),
-        h('button', { class: 'btn btn-primary', type: 'button', id: 'wz-start', disabled: probs.length ? true : null, tip: W.startTip, on: { click: function () { launch(true); } } }, SB.icon('play'), 'Create and start')));
+        editId ? h('button', { class: 'btn btn-primary', type: 'button', id: 'wz-save-edit', disabled: probs.length ? true : null, on: { click: function () { launch(false); } } }, 'Save changes') : null,
+        editId ? null : h('button', { class: 'btn', type: 'button', id: 'wz-create', disabled: probs.length ? true : null, tip: W.createTip, on: { click: function () { launch(false); } } }, 'Create campaign'),
+        editId ? null : h('button', { class: 'btn btn-primary', type: 'button', id: 'wz-start', disabled: probs.length ? true : null, tip: W.startTip, on: { click: function () { launch(true); } } }, SB.icon('play'), 'Create and start')));
       return out;
     }
     function pad(n) { return (n < 10 ? '0' : '') + n; }
@@ -359,6 +360,11 @@
       body.window_start_hour = st.settings.window_start_hour; body.window_end_hour = st.settings.window_end_hour; body.utc_offset_min = st.settings.utc_offset_min;
       body.weekdays_only = st.settings.weekdays_only; body.stop_on_reply = st.settings.stop_on_reply; body.track_opens = st.settings.track_opens;
       if (st.split.enabled) body.split = { batch_size: st.split.batch_size, seed: st.split.seed === null ? undefined : st.split.seed };
+      if (editId) {
+        delete body.folder_id; delete body.exclude_role; delete body.lead_statuses; delete body.split;
+        SB.api.patch('/api/campaigns/' + editId, body).then(function () { dirty = false; ui.toast('Changes saved'); location.hash = '#/project/' + projectId; }, function (e) { launching = false; ui.toast(SB.api.friendly(e), true); });
+        return;
+      }
       if (projectId) body.project_id = Number(projectId);
       clearTimeout(saveTimer);
       SB.api.post('/api/campaigns', body).then(function (r) {
@@ -389,10 +395,20 @@
       SB.mount(root, h('div', { class: 'skeleton' }));
       var reqs = [SB.api.get('/api/folders'), SB.api.get('/api/senders'), SB.api.get('/api/projects')];
       if (params.draftId) reqs.push(SB.api.get('/api/drafts/' + params.draftId));
+      if (editId) reqs.push(SB.api.get('/api/campaigns/' + editId));
       Promise.all(reqs).then(function (r) {
         if (dead) return;
         folders = r[0].items; senders = r[1].items; projects = r[2].items.filter(function (p) { return !p.archived; });
-        if (r[3]) { draft = { id: r[3].draft.id, rev: r[3].draft.rev }; st = merge(blankState(), r[3].draft.data); st.name = st.name || r[3].draft.name; if (r[3].draft.project_id) projectId = String(r[3].draft.project_id); lastSaved = r[3].draft.updated_at; }
+        if (r[3] && !editId) { draft = { id: r[3].draft.id, rev: r[3].draft.rev }; st = merge(blankState(), r[3].draft.data); st.name = st.name || r[3].draft.name; if (r[3].draft.project_id) projectId = String(r[3].draft.project_id); lastSaved = r[3].draft.updated_at; }
+        else if (editId && r[3]) {
+          var cc = r[3].campaign;
+          if (cc.status !== 'draft' || cc.parent_id) { SB.mount(root, h('div', { class: 'card empty' }, h('h2', { text: 'This campaign can no longer be edited' }), h('p', { text: 'Only campaigns that have not been started can be edited.' }), h('a', { class: 'btn', href: '#/' }, 'Back to Home'))); return; }
+          st = blankState(); st.name = cc.name; projectId = String(cc.project_id);
+          st.steps = cc.steps.map(function (x, i) { return { subject: x.subject || '', body_html: x.body_html || '', delay_days: i === 0 ? null : x.delay_days }; });
+          st.sender_ids = cc.senders.map(function (x) { return x.id; });
+          Object.keys(st.settings).forEach(function (k) { if (cc.settings[k] !== undefined && cc.settings[k] !== null) st.settings[k] = k === 'weekdays_only' || k === 'stop_on_reply' || k === 'track_opens' ? !!cc.settings[k] : cc.settings[k]; });
+          dirty = false;
+        }
         else if (!projectId && projects.length === 1) { /* keep "new project" as default */ }
         if (st.folder_id && !folders.some(function (f) { return f.id === st.folder_id; })) st.folder_id = null;
         st.sender_ids = st.sender_ids.filter(function (id) { return senders.some(function (s) { return s.id === id; }); });

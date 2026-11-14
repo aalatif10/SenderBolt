@@ -61,7 +61,7 @@ h.test('existing campaigns get their own project; cap clamped to 400; triggers e
         .then(function () { return db.run("INSERT INTO campaigns (user_id, name, status, created_at, updated_at) VALUES (?, 'Old main', 'draft', 5, 5)", [uid]); })
         .then(function (m) { return db.run("INSERT INTO campaigns (user_id, parent_id, name, status, created_at, updated_at) VALUES (?, ?, 'Old part', 'draft', 5, 5)", [uid, m.lastID]); })
         .then(function () { return migrate(db); })
-        .then(function (applied) { assert.deepStrictEqual(applied, ['004_projects.sql', '005_warmup.sql', '006_wizard_drafts.sql', '007_user_settings.sql']); return Promise.all([db.get('SELECT daily_limit, warmup_days, warmup_penalty, warmup_pace FROM senders'), db.all('SELECT * FROM projects'), db.all('SELECT id, parent_id, project_id FROM campaigns ORDER BY id')]); })
+        .then(function (applied) { assert.deepStrictEqual(applied, ['004_projects.sql', '005_warmup.sql', '006_wizard_drafts.sql', '007_user_settings.sql', '008_scoping_tracking.sql']); return Promise.all([db.get('SELECT daily_limit, warmup_days, warmup_penalty, warmup_pace FROM senders'), db.all('SELECT * FROM projects'), db.all('SELECT id, parent_id, project_id FROM campaigns ORDER BY id')]); })
         .then(function (r) {
           assert.strictEqual(r[0].daily_limit, 400); assert.deepStrictEqual([r[0].warmup_days, r[0].warmup_penalty, r[0].warmup_pace], [0, 0, 'standard'], 'old senders get safe warm-up defaults'); assert.strictEqual(r[1].length, 1); assert.strictEqual(r[1][0].name, 'Old main');
           assert.strictEqual(r[2][0].project_id, r[1][0].id); assert.strictEqual(r[2][1].project_id, null, 'parts belong through their main campaign');
@@ -174,6 +174,109 @@ h.test('renaming and archiving an idle project works and archived projects leave
       assert.strictEqual(p.name, 'Renamed'); assert.strictEqual(p.archived, true);
       return Promise.all([c.projects.list(c.a), c.projects.list(c.a, { archived: '1' })]);
     }).then(function (r) { assert.strictEqual(r[0].items.length, 0); assert.strictEqual(r[1].items.length, 1); });
+  });
+});
+
+h.group('project scoping (database-enforced)');
+h.test('a campaign created inside a project stays in it (incl. split parts); no project is auto-created; nothing is loose', function () {
+  return setup().then(function (c) {
+    return c.projects.create(c.a, { name: 'P1' }).then(function (pr) {
+      var pid = pr.id;
+      return c.db.get('SELECT COUNT(*) AS n FROM projects WHERE user_id = ?', [c.a]).then(function (before) {
+        return mk(c, 'Inside', 5, { project_id: pid, split: { batch_size: 2 } }).then(function (camp) {
+          assert.strictEqual(camp.project_id, pid);
+          return Promise.all([c.db.get('SELECT COUNT(*) AS n FROM projects WHERE user_id = ?', [c.a]), c.db.all('SELECT parent_id, project_id FROM campaigns'),
+            c.projects.list(c.a), c.camps.list(c.a, { project_id: pid }), c.camps.list(c.a, {})]).then(function (r) {
+            assert.strictEqual(r[0].n, before.n, 'no extra project was created');
+            r[1].forEach(function (x) { assert.strictEqual(x.parent_id ? x.project_id === null : x.project_id === pid, true); });
+            assert.strictEqual(r[3].items.length, 1); assert.strictEqual(r[4].items.every(function (x) { return x.project_id; }), true);
+          });
+        });
+      });
+    });
+  });
+});
+h.test('database refuses loose main campaigns, detaching, parts with a project and cross-user projects', function () {
+  return setup().then(function (c) {
+    return mk(c, 'Solo', 3).then(function (camp) {
+      return c.projects.create(c.b, { name: 'Bs' }).then(function (bp) {
+        return h.expectReject(c.db.run('UPDATE campaigns SET project_id = NULL WHERE id = ?', [camp.id]))
+          .then(function () { return h.expectReject(c.db.run('UPDATE campaigns SET project_id = ? WHERE id = ?', [bp.id, camp.id])); })
+          .then(function () { return c.db.run("INSERT INTO campaigns (user_id, name, status, created_at, updated_at) VALUES (?, 'raw', 'draft', 1, 1)", [c.a]); })
+          .then(function (r) { return c.db.get('SELECT project_id FROM campaigns WHERE id = ?', [r.lastID]); })
+          .then(function (row) { assert.ok(row.project_id, 'a raw insert is auto-assigned a project, never left loose'); })
+          .then(function () { return h.expectReject(c.db.run("INSERT INTO campaigns (user_id, parent_id, project_id, name, status, created_at, updated_at) VALUES (?, ?, ?, 'p', 'draft', 1, 1)", [c.a, camp.id, camp.project_id])); });
+      });
+    });
+  });
+});
+
+h.group('batch operations');
+h.test('campaigns: move in/out of projects, delete many (running ones are refused, others still go), isolation', function () {
+  return setup().then(function (c) {
+    return Promise.all([c.projects.create(c.a, { name: 'P1' }), c.projects.create(c.a, { name: 'P2' }), c.projects.create(c.b, { name: 'Bs' })]).then(function (ps) {
+      return mk(c, 'One', 2, { project_id: ps[0].id }).then(function (c1) {
+        return mk(c, 'Two', 2, { project_id: ps[0].id }).then(function (c2) {
+          return mk(c, 'Three', 2, { project_id: ps[0].id }).then(function (c3) {
+            return c.camps.batch(c.a, { action: 'move', ids: [c1.id, c2.id], project_id: ps[1].id }).then(function (r) {
+              assert.deepStrictEqual(r.done, [c1.id, c2.id]); assert.strictEqual(r.failed.length, 0);
+              return c.camps.list(c.a, { project_id: ps[1].id });
+            }).then(function (l) {
+              assert.strictEqual(l.items.length, 2);
+              return c.camps.batch(c.a, { action: 'move', ids: [c1.id], new_project_name: 'Fresh' });
+            }).then(function (r) {
+              return c.camps.get(c.a, c1.id).then(function (g) { assert.strictEqual(g.project_id, r.project_id); assert.notStrictEqual(g.project_id, ps[0].id); });
+            }).then(function () { return h.expectReject(c.camps.batch(c.a, { action: 'move', ids: [c2.id], project_id: ps[2].id }), 'validation'); })
+              .then(function () { return c.camps.batch(c.b, { action: 'delete', ids: [c3.id] }); })
+              .then(function (r) { assert.strictEqual(r.done.length, 0); assert.strictEqual(r.failed.length, 1, 'other users\' campaigns are not found'); })
+              .then(function () { return c.camps.start(c.a, c3.id); })
+              .then(function () { return c.camps.batch(c.a, { action: 'delete', ids: [c1.id, c2.id, c3.id] }); })
+              .then(function (r) {
+                assert.deepStrictEqual(r.done, [c1.id, c2.id]); assert.strictEqual(r.failed.length, 1); assert.strictEqual(r.failed[0].id, c3.id);
+                return h.expectReject(c.camps.batch(c.a, { action: 'delete', ids: [] }), 'validation');
+              });
+          });
+        });
+      });
+    });
+  });
+});
+h.test('projects: batch archive / restore / delete; leads: move between folders skips duplicates', function () {
+  return setup().then(function (c) {
+    return Promise.all([c.projects.create(c.a, { name: 'A' }), c.projects.create(c.a, { name: 'B' })]).then(function (ps) {
+      var ids = [ps[0].id, ps[1].id];
+      return c.projects.batch(c.a, { action: 'archive', ids: ids }).then(function (r) { assert.strictEqual(r.done.length, 2); return c.projects.get(c.a, ids[0]); })
+        .then(function (p) { assert.strictEqual(p.archived, true); return c.projects.batch(c.a, { action: 'restore', ids: [ids[0]] }); })
+        .then(function () { return c.projects.batch(c.a, { action: 'delete', ids: ids.concat([99999]) }); })
+        .then(function (r) { assert.strictEqual(r.done.length, 2); assert.strictEqual(r.failed.length, 1); return h.expectReject(c.projects.batch(c.a, { action: 'nuke', ids: ids }), 'validation'); });
+    }).then(function () {
+      return Promise.all([c.leads.createFolder(c.a, 'F1'), c.leads.createFolder(c.a, 'F2')]);
+    }).then(function (fs) {
+      return c.leads.importLeads(c.a, fs[0].id, 'paste', 'a@one.com\nb@one.com').then(function () { return c.leads.importLeads(c.a, fs[1].id, 'paste', 'a@one.com'); }).then(function () {
+        return c.db.all('SELECT id FROM leads WHERE folder_id = ? ORDER BY id', [fs[0].id]);
+      }).then(function (rows) { return c.leads.moveLeads(c.a, rows.map(function (r) { return r.id; }), fs[1].id); })
+        .then(function (r) { assert.strictEqual(r.moved, 1); assert.strictEqual(r.skipped, 1); return h.expectReject(c.leads.moveLeads(c.b, [1], fs[1].id), 'not_found'); });
+    });
+  });
+});
+
+h.group('open metrics');
+h.test('opens appear only for campaigns that track them', function () {
+  return setup().then(function (c) {
+    return c.projects.create(c.a, { name: 'O' }).then(function (pr) {
+      return mk(c, 'Tracked', 2, { project_id: pr.id, track_opens: true }).then(function (camp) {
+        return c.camps.start(c.a, camp.id).then(function () { return armedSync(c); }).then(function () { c.clock.t += HOUR; return c.engine.tick(); }).then(function () {
+          return c.projects.get(c.a, pr.id);
+        }).then(function (p0) {
+          assert.strictEqual(p0.totals.opens_tracked, true); assert.strictEqual(p0.totals.opens, 0);
+          return c.db.run("UPDATE messages SET open_count = 2 WHERE direction = 'out'");
+        }).then(function () { return c.projects.get(c.a, pr.id); }).then(function (p1) {
+          assert.strictEqual(p1.totals.opens, 1, 'unique people, not raw hits'); assert.ok(p1.totals.open_rate > 0);
+          return mk(c, 'Plain', 1, { project_id: pr.id });
+        });
+      });
+    }).then(function () { return c.projects.create(c.a, { name: 'Q' }); }).then(function (q) { return mk(c, 'Untracked', 1, { project_id: q.id }).then(function () { return c.projects.get(c.a, q.id); }); })
+      .then(function (p2) { assert.strictEqual(p2.totals.opens_tracked, false); assert.strictEqual(p2.totals.opens, null); });
   });
 });
 

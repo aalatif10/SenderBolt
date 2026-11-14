@@ -9,14 +9,27 @@ config.loadEnvFile(path.join(process.cwd(), '.env'));
 var cfg;
 try { cfg = config.build(process.env); } catch (e) { console.error('Configuration error: ' + e.message); process.exit(1); }
 
+// A bad mail, a socket reset or a library error must never take the whole server down.
+var crashes = [];
+function guard(kind) {
+  return function (e) {
+    console.error('[' + kind + '] ' + String(e && e.stack || e).split('\n').slice(0, 6).join('\n'));
+    var now = Date.now(); crashes.push(now);
+    crashes = crashes.filter(function (t) { return now - t < 60000; });
+    if (crashes.length > 20) { console.error('Too many unexpected errors in one minute - exiting.'); process.exit(1); }
+  };
+}
+process.on('uncaughtException', guard('uncaughtException'));
+process.on('unhandledRejection', guard('unhandledRejection'));
+
 createApp(cfg).then(function (app) {
   var server = http.createServer(app.dispatch);
   server.headersTimeout = 20000;
   server.requestTimeout = 60000;
   server.listen(cfg.port, cfg.host, function () {
     console.log('SenderBolt listening on http://' + cfg.host + ':' + cfg.port + '  (db: ' + cfg.dbFile + ', driver: ' + app.db.driver + ')');
-    console.log('Sending mode: ' + cfg.sending + (cfg.sending === 'dry-run' ? '  (no real email is sent or read - set SENDERBOLT_SENDING=live to go live)' : cfg.sending === 'off' ? '  (engine stopped)' : ''));
-    if (cfg.sending === 'live' && !cfg.publicOrigin) console.warn('NOTE: SENDERBOLT_PUBLIC_ORIGIN is not set, so emails get a "reply to unsubscribe" footer instead of a one-click link.');
+    console.log(cfg.sending === 'off' ? 'Sending engine: STOPPED (SENDERBOLT_SENDING=off)' : 'Sending engine: running - emails are sent for real');
+    if (cfg.sending !== 'off' && !cfg.publicOrigin) console.warn('NOTE: SENDERBOLT_PUBLIC_ORIGIN is not set, so emails get a "reply to unsubscribe" footer instead of a one-click link.');
     app.scheduler.start();
     if (cfg.host !== '127.0.0.1' && !cfg.secureCookies) console.warn('WARNING: listening beyond localhost without SENDERBOLT_SECURE_COOKIES=1. Put HTTPS in front of it.');
   });

@@ -9,7 +9,7 @@
 //   replied   leads that wrote back (real replies only; out-of-office and bounces excluded)
 //   bounced   leads whose address bounced / was rejected          unsubscribed  leads that opted out
 //   rates     are percentages of `emailed`
-//   opens     NOT tracked yet (opens: null, opens_tracked: false); the UI must say so, never show 0
+//   opens     only for campaigns with track_opens (opens: null + opens_tracked: false otherwise); the UI must say 'not tracked', never show 0
 var AppError = require('../lib/errors').AppError;
 var v = require('../lib/validate');
 var state = require('./campaignState');
@@ -32,7 +32,7 @@ function cleanDesc(d) {
 }
 function pct(n, d) { return d ? Math.round(n / d * 1000) / 10 : 0; }
 
-function emptyMetrics() { return { emailed: 0, replied: 0, interested: 0, more_info: 0, not_interested: 0, neutral: 0 }; }
+function emptyMetrics() { return { emailed: 0, opened: 0, replied: 0, interested: 0, more_info: 0, not_interested: 0, neutral: 0 }; }
 function addMetrics(a, b) { Object.keys(a).forEach(function (k) { a[k] += b[k] || 0; }); return a; }
 
 function ProjectsService(db, deps) {
@@ -55,8 +55,11 @@ P._metrics = function (userId) {
   return db.all('SELECT cl.campaign_id AS cid, COUNT(*) AS n FROM campaign_leads cl JOIN campaigns c ON c.id = cl.campaign_id WHERE c.user_id = ? AND (cl.status = \'bounced\' OR EXISTS ' +
     "(SELECT 1 FROM messages m WHERE m.campaign_lead_id = cl.id AND m.direction = 'out' AND m.status = 'sent' AND m.step_no IS NOT NULL)) GROUP BY cl.campaign_id", [userId]).then(function (rows) {
     rows.forEach(function (r) { out[r.cid] = emptyMetrics(); out[r.cid].emailed = r.n; });
-    return db.all("SELECT cl.campaign_id AS cid, m.sentiment AS s, COUNT(*) AS n FROM (SELECT campaign_lead_id, MAX(id) AS mid FROM messages WHERE user_id = ? AND direction = 'in' AND kind = 'email' AND campaign_lead_id IS NOT NULL GROUP BY campaign_lead_id) x " +
+    return db.all("SELECT cl.campaign_id AS cid, COUNT(DISTINCT cl.id) AS n FROM messages m JOIN campaign_leads cl ON cl.id = m.campaign_lead_id WHERE m.user_id = ? AND m.direction = 'out' AND m.open_count > 0 GROUP BY cl.campaign_id", [userId]).then(function (op) {
+      op.forEach(function (r) { (out[r.cid] || (out[r.cid] = emptyMetrics())).opened = r.n; });
+      return db.all("SELECT cl.campaign_id AS cid, m.sentiment AS s, COUNT(*) AS n FROM (SELECT campaign_lead_id, MAX(id) AS mid FROM messages WHERE user_id = ? AND direction = 'in' AND kind = 'email' AND campaign_lead_id IS NOT NULL GROUP BY campaign_lead_id) x " +
       'JOIN messages m ON m.id = x.mid JOIN campaign_leads cl ON cl.id = x.campaign_lead_id GROUP BY cl.campaign_id, m.sentiment', [userId]);
+    });
   }).then(function (rows) {
     rows.forEach(function (r) {
       var m = out[r.cid] || (out[r.cid] = emptyMetrics());
@@ -72,7 +75,7 @@ P._load = function (userId) {
   var self = this;
   return Promise.all([
     this.db.all('SELECT * FROM projects WHERE user_id = ? ORDER BY created_at DESC, id DESC', [userId]),
-    this.db.all('SELECT id, parent_id, project_id, name, status, created_at, updated_at FROM campaigns WHERE user_id = ? ORDER BY id', [userId]),
+    this.db.all('SELECT id, parent_id, project_id, name, status, track_opens, created_at, updated_at FROM campaigns WHERE user_id = ? ORDER BY id', [userId]),
     this.campaigns._statsByCampaign(userId, null),
     this._metrics(userId)
   ]).then(function (r) {
@@ -102,7 +105,7 @@ function describeCampaign(main, L) {
   var done = s.replied + s.completed + s.bounced + s.unsubscribed;
   var status = state.deriveStatus(main.status, L.kids[main.id] || []);
   return {
-    id: main.id, name: main.name, status: status, created_at: main.created_at, batches: (L.kids[main.id] || []).length,
+    id: main.id, name: main.name, status: status, track_opens: main.track_opens ? 1 : 0, created_at: main.created_at, batches: (L.kids[main.id] || []).length,
     leads: s.total, sent: s.sent, progress_pct: s.total ? Math.round(done / s.total * 1000) / 10 : 0, next_send_at: status === 'active' ? s.next_send_at : null,
     stats: s, metrics: m
   };
@@ -110,8 +113,9 @@ function describeCampaign(main, L) {
 
 function rollUp(campaigns) {
   var t = { leads: 0, sent: 0, emailed: 0, replied: 0, interested: 0, more_info: 0, not_interested: 0, neutral: 0, bounced: 0, unsubscribed: 0, active: 0, completed: 0, error: 0, done: 0 };
-  var next = null;
+  var next = null, tracked = 0, opened = 0, trackedEmailed = 0;
   campaigns.forEach(function (c) {
+    if (c.track_opens) { tracked++; opened += c.metrics.opened; trackedEmailed += c.metrics.emailed; }
     t.leads += c.leads; t.sent += c.sent; t.bounced += c.stats.bounced; t.unsubscribed += c.stats.unsubscribed; t.active += c.stats.active; t.completed += c.stats.completed; t.error += c.stats.error;
     t.done += c.stats.replied + c.stats.completed + c.stats.bounced + c.stats.unsubscribed;
     ['emailed', 'replied', 'interested', 'more_info', 'not_interested', 'neutral'].forEach(function (k) { t[k] += c.metrics[k]; });
@@ -121,7 +125,7 @@ function rollUp(campaigns) {
     leads: t.leads, sent: t.sent, emailed: t.emailed, replied: t.replied, bounced: t.bounced, unsubscribed: t.unsubscribed, active: t.active, completed: t.completed, errors: t.error,
     sentiment: { interested: t.interested, more_info: t.more_info, not_interested: t.not_interested, neutral: t.neutral },
     reply_rate: pct(t.replied, t.emailed), bounce_rate: pct(t.bounced, t.emailed), unsubscribe_rate: pct(t.unsubscribed, t.emailed),
-    opens: null, opens_tracked: false, progress_pct: t.leads ? Math.round(t.done / t.leads * 1000) / 10 : 0, next_send_at: next
+    opens: tracked ? opened : null, opens_tracked: tracked > 0, open_rate: tracked ? pct(opened, trackedEmailed) : null, progress_pct: t.leads ? Math.round(t.done / t.leads * 1000) / 10 : 0, next_send_at: next
   };
 }
 
@@ -129,7 +133,7 @@ function describeProject(p, L) {
   var camps = (L.mains[p.id] || []).map(function (m) { return describeCampaign(m, L); });
   var status = camps.length ? state.deriveStatus('draft', camps) : 'empty';
   var totals = rollUp(camps);
-  return { id: p.id, name: p.name, description: p.description, archived: !!p.archived, created_at: p.created_at, status: status,
+  return { id: p.id, name: p.name, description: p.description, archived: !!p.archived, created_at: p.created_at, updated_at: p.updated_at, status: status,
     campaign_count: camps.length, totals: totals, campaigns: camps };
 }
 
@@ -219,6 +223,26 @@ P.remove = function (userId, id, ip) {
         .then(function () { return audit.log(tx, { userId: userId, action: 'project.delete', entity: 'project', entityId: id, ip: ip }, self.now); });
     });
   }).then(function () { return { ok: true }; });
+};
+
+// Batch: { action: 'archive' | 'restore' | 'delete', ids[] } -> { done: [ids], failed: [{id, message}] }
+P.batch = function (userId, input, ip) {
+  var self = this;
+  return Promise.resolve().then(function () {
+    input = input || {};
+    if (['archive', 'restore', 'delete'].indexOf(input.action) === -1) throw bad('action', 'Choose archive, restore or delete');
+    var ids = v.idArray(input.ids, 1, 200);
+    if (!ids) throw bad('ids', 'Select between 1 and 200 projects');
+    ids = ids.filter(function (x, i) { return ids.indexOf(x) === i; });
+    var res = { action: input.action, done: [], failed: [] }, p = Promise.resolve();
+    ids.forEach(function (id) {
+      p = p.then(function () {
+        var op = input.action === 'delete' ? self.remove(userId, id, ip) : self.update(userId, id, { archived: input.action === 'archive' }, ip);
+        return op.then(function () { res.done.push(id); }, function (e) { if (!(e instanceof AppError)) throw e; res.failed.push({ id: id, message: e.message }); });
+      });
+    });
+    return p.then(function () { return res; });
+  });
 };
 
 module.exports = { ProjectsService: ProjectsService };

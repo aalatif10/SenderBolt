@@ -29,6 +29,7 @@ module.exports = function register(router, d) {
 
   router.get('/api/stats', function (ctx) { return L.stats(ctx.user.id, null).then(function (s) { return { stats: s }; }); });
   router.post('/api/leads/delete', function (ctx) { return L.deleteLeads(ctx.user.id, ctx.body.ids, ctx.ip); });
+  router.post('/api/leads/move', function (ctx) { return L.moveLeads(ctx.user.id, ctx.body.ids, ctx.body.folder_id, ctx.ip); });
   router.post('/api/leads/verify', { limit: verifyLimit }, function (ctx) { return L.verifyLeads(ctx.user.id, ctx.body.ids, ctx.ip); });
 
   router.get('/api/suppression', function (ctx) { return L.listSuppression(ctx.user.id, ctx.query.page, ctx.query.pageSize); });

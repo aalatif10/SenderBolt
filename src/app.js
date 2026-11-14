@@ -12,6 +12,7 @@ var CampaignsService = require('./services/campaigns').CampaignsService;
 var RateLimiter = require('./security/rateLimiter').RateLimiter;
 var ProjectsService = require('./services/projects').ProjectsService;
 var TestSendService = require('./services/testSend').TestSendService;
+var TrackingService = require('./services/tracking').TrackingService;
 var SettingsService = require('./services/settings').SettingsService;
 var DraftsService = require('./services/drafts').DraftsService;
 var InboxService = require('./services/inbox').InboxService;
@@ -38,12 +39,12 @@ function createApp(config) {
         ipLimiter: new RateLimiter({ windowMs: 15 * 60 * 1000, max: 30 }),
         emailLimiter: new RateLimiter({ windowMs: 15 * 60 * 1000, max: 10 })
       });
-      var mode = config.sending || 'dry-run';
+      var mode = config.sending || 'live';
       var log = config.log || function (m) { if (mode !== 'off') console.log('[engine] ' + m); };
-      var mailer = config.mailer || (mode === 'live' ? mailerLib.createLive() : mailerLib.createDryRun(log));
-      var mailbox = config.mailbox || (mode === 'live' ? mailboxLib.createLive() : mailboxLib.createDryRun());
+      var mailer = config.mailer || mailerLib.createLive();
+      var mailbox = config.mailbox || mailboxLib.createLive();
       var engine = new SendEngine(db, { key: config.masterKey, mailer: mailer, now: config.now, unsubSecret: config.unsubSecret, publicOrigin: config.publicOrigin,
-        requireReplyTracking: mode === 'live', log: log });
+        requireReplyTracking: true, log: log });
       var inboxSync = new InboxSync(db, { key: config.masterKey, mailbox: mailbox, now: config.now, log: log });
       var scheduler = new Scheduler(db, engine, inboxSync, { mode: mode, log: log, tickMs: config.tickMs, syncMs: config.syncMs });
       var deps = {
@@ -57,6 +58,7 @@ function createApp(config) {
         senderTest: new SenderTest(db, { key: config.masterKey, mailer: mailer, mailbox: mailbox, inboxSync: inboxSync, now: config.now })
       };
       deps.testSend = new TestSendService(db, { engine: engine, mailer: mailer, now: config.now });
+      deps.tracking = new TrackingService(db, { secret: config.unsubSecret, now: config.now });
       deps.settings = new SettingsService(db, { now: config.now });
       deps.drafts = new DraftsService(db, { now: config.now });
       deps.projects = new ProjectsService(db, { campaigns: deps.campaigns, now: config.now });

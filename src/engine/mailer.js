@@ -6,9 +6,8 @@
 // creds = { host, port, secure, user, pass }
 // mail  = { from:{name,address}, to, subject, html, text, headers, messageId, inReplyTo, references[] }
 //
-// 'live'    uses nodemailer (npm install nodemailer). Plain-text SMTP is never allowed: ports that are
-//           not implicit-TLS must upgrade with STARTTLS (requireTLS) and certificates are verified.
-// 'dry-run' never touches the network; it pretends every send worked (safe for local testing).
+// Uses nodemailer (npm install nodemailer). Plain-text SMTP is never allowed: ports that are
+// not implicit-TLS must upgrade with STARTTLS (requireTLS) and certificates are verified.
 
 function createLive() {
   var nodemailer;
@@ -46,15 +45,4 @@ function createLive() {
   };
 }
 
-function createDryRun(log) {
-  return {
-    mode: 'dry-run',
-    send: function (creds, mail) {
-      if (log) log('[dry-run] would send "' + mail.subject + '" from ' + mail.from.address + ' to ' + mail.to);
-      return Promise.resolve({ messageId: mail.messageId });
-    },
-    verify: function () { return Promise.resolve(true); }
-  };
-}
-
-module.exports = { createLive: createLive, createDryRun: createDryRun };
+module.exports = { createLive: createLive };

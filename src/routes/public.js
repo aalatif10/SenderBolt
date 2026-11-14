@@ -4,6 +4,7 @@
 var reply = require('../http/router').reply;
 var RateLimiter = require('../security/rateLimiter').RateLimiter;
 var escapeHtml = require('../lib/html').escapeHtml;
+var track = require('../lib/track');
 
 var CSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
 function page(status, title, inner) {
@@ -22,6 +23,15 @@ module.exports = function register(router, d) {
     return U.lookup(ctx.params.token).then(function (r) {
       if (!r.valid) return page(404, 'Link not valid', '<h1>This link is not valid</h1><p>It may have expired or been copied incorrectly.</p>');
       return page(200, 'Unsubscribe', '<h1>Unsubscribe?</h1><p>Stop all emails to ' + escapeHtml(r.email) + '.</p><form method="post"><button type="submit">Yes, unsubscribe me</button></form>');
+    });
+  });
+
+  // Open-tracking pixel. Always answers with the same 1x1 image (valid token or not), never redirects, never caches.
+  var pixelLimit = { by: 'ip', limiter: new RateLimiter({ windowMs: 60000, max: 300 }) };
+  router.get('/t/o/:token', { external: true, limit: pixelLimit }, function (ctx) {
+    var tok = String(ctx.params.token || '').replace(/\.gif$/i, '');
+    return d.tracking.recordOpen(tok).then(function () {
+      return reply(200, track.PIXEL, { raw: true, headers: { 'Content-Type': 'image/gif', 'Content-Length': String(track.PIXEL.length), 'Content-Security-Policy': "default-src 'none'", 'X-Robots-Tag': 'noindex' } });
     });
   });
 

@@ -22,6 +22,7 @@ var throttle = require('../lib/throttle');
 var email = require('../lib/email');
 var html = require('../lib/html');
 var unsub = require('../lib/unsub');
+var track = require('../lib/track');
 var health = require('../lib/health');
 var classify = require('../lib/sendErrors').classify;
 var capacityToday = require('../services/senders').capacityToday;
@@ -158,7 +159,7 @@ E._processSender = function (sender, t, openIds, stats) {
 
 E._nextCandidate = function (senderId, t, openIds) {
   return this.db.get(
-    'SELECT cl.id AS cl_id, cl.campaign_id, cl.lead_id, cl.current_step, c.user_id, l.email, l.domain, l.first_name, l.last_name, l.company, l.custom ' +
+    'SELECT cl.id AS cl_id, cl.campaign_id, cl.lead_id, cl.current_step, c.user_id, c.track_opens, l.email, l.domain, l.first_name, l.last_name, l.company, l.custom ' +
     "FROM campaign_leads cl JOIN leads l ON l.id = cl.lead_id JOIN campaigns c ON c.id = cl.campaign_id " +
     "WHERE cl.sender_id = ? AND cl.status = 'active' AND cl.next_send_at <= ? AND c.status = 'active' AND c.id IN (" + openIds.map(function () { return '?'; }).join(',') + ') ' +
     'ORDER BY cl.next_send_at, cl.position, cl.id LIMIT 1', [senderId, t].concat(openIds));
@@ -194,10 +195,12 @@ E._compose = function (sender, c, step, history) {
 
   var link = !c.test && this.publicOrigin && this.secret ? unsub.url(this.publicOrigin, unsub.make(this.secret, c.cl_id)) : null;
   var footer = link
-    ? '<p style="font-size:12px;color:#777">If you would rather not receive these emails, <a href="' + link + '">unsubscribe</a>.</p>'
-    : '<p style="font-size:12px;color:#777">Not interested? Reply with "unsubscribe" and I will not contact you again.</p>';
-  var bodyHtml = b.text + (sender.signature_html ? '<br>' + sanitize.clean(sender.signature_html) : '') + footer;
-  var mailto = '<mailto:' + sender.email + '?subject=unsubscribe>';
+    ? '<p style="font-size:12px;color:#777">If you would rather not receive these emails, <a href="' + link + '">unsubscribe</a> or reply with the words stop campaign.</p>'
+    : '<p style="font-size:12px;color:#777">If you would rather not receive these emails, reply with the words stop campaign and I will not contact you again.</p>';
+  var pixel = c.track_opens && !c.test && this.publicOrigin && this.secret
+    ? '<img src="' + track.url(this.publicOrigin, track.make(this.secret, c.cl_id, c.current_step)) + '" width="1" height="1" alt="" style="display:none;border:0">' : '';
+  var bodyHtml = b.text + (sender.signature_html ? '<br>' + sanitize.clean(sender.signature_html) : '') + footer + pixel;
+  var mailto = '<mailto:' + sender.email + '?subject=stop%20campaign>';
   var headers = { 'List-Unsubscribe': link ? '<' + link + '>, ' + mailto : mailto };
   if (link) headers['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click';
   var ids = history.map(function (h) { return h.message_id_hdr; }).filter(Boolean);

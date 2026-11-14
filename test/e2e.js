@@ -43,6 +43,7 @@ h.test('boot server', function () {
   });
   // fake DNS so the test never touches the network
   cfg.resolver = { resolveMx: function (d) { return d === 'good.com' ? Promise.resolve([{ exchange: 'mx.good.com', priority: 1 }]) : Promise.reject(Object.assign(new Error('x'), { code: 'ENOTFOUND' })); }, resolveAddr: function () { return Promise.resolve([]); } };
+  var io = h.fakeIO(); cfg.mailer = io.mailer; cfg.mailbox = io.mailbox;
   return createApp(cfg).then(function (app) {
     state.app = app;
     state.server = http.createServer(app.dispatch);
@@ -71,6 +72,7 @@ h.test('configure allowed hosts for the ephemeral port', function () {
       PORT: String(state.port), HOST: '127.0.0.1', SENDERBOLT_DB_FILE: ':memory:', SENDERBOLT_SETUP_TOKEN: 'setup-token-123'
     });
     cfg.resolver = { resolveMx: function (d) { return d === 'good.com' ? Promise.resolve([{ exchange: 'mx.good.com', priority: 1 }]) : Promise.reject(Object.assign(new Error('x'), { code: 'ENOTFOUND' })); }, resolveAddr: function () { return Promise.resolve([]); } };
+    var io = h.fakeIO(); cfg.mailer = io.mailer; cfg.mailbox = io.mailbox;
     return createApp(cfg).then(function (app) {
       state.app = app; state.host = '127.0.0.1:' + state.port; state.origin = 'http://' + state.host;
       state.server.on('request', app.dispatch);

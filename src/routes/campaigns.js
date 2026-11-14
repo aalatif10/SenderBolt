@@ -19,6 +19,7 @@ module.exports = function register(router, d) {
   router.post('/api/campaigns/test-send', { maxBody: 200000, limit: testLimit }, function (ctx) { return d.testSend.send(ctx.user, ctx.body, ctx.ip); });
   router.post('/api/templates/preview', { maxBody: 200000 }, function (ctx) { return S.previewTemplate(ctx.user.id, ctx.body); });
 
+  router.post('/api/campaigns/batch', function (ctx) { return S.batch(ctx.user.id, ctx.body, ctx.ip); });
   router.get('/api/campaigns/:id', function (ctx) { return S.get(ctx.user.id, parseId(ctx.params.id)).then(function (c) { return { campaign: c }; }); });
   router.patch('/api/campaigns/:id', { maxBody: BODY }, function (ctx) {
     return S.update(ctx.user.id, parseId(ctx.params.id), ctx.body, ctx.ip).then(function (c) { return { campaign: c }; });

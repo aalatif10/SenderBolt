@@ -7,6 +7,12 @@
   SB.screens = SB.screens || {};
 
   var EMAIL_RE = /[^\s,;<>"'()\[\]]+@[^\s,;<>"'()\[\]]+/g;   // same shape the server uses for pasted text
+  var MAX_XLSX = 8 * 1024 * 1024;
+  function toBase64(buf) {
+    var bytes = new Uint8Array(buf), bin = '', i;
+    for (i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return btoa(bin);
+  }
   var MAX_FILE = 12 * 1000 * 1000;                            // the server accepts 12M characters per import
   var CHUNK = 500;                                            // the server checks at most 500 emails per request
   var selectedFolder = null;                                  // remembered while the app is open (no browser storage is used)
@@ -62,7 +68,7 @@
 
   // ---- import ------------------------------------------------------------------------------------
   function importModal(folders, currentId, onDone) {
-    var format = 'csv', fileText = '', fileName = '', createdId = null;
+    var format = 'csv', fileKind = 'csv', fileText = '', fileName = '', createdId = null;
     var err = h('div', { class: 'form-error hidden', role: 'alert' });
     var folderSel = h('select', { class: 'input', id: 'im-folder' });
     folders.forEach(function (f) { folderSel.appendChild(h('option', { value: String(f.id) }, f.name + ' (' + fmt.num(f.lead_count) + ')')); });
@@ -73,10 +79,10 @@
     function syncFolder() { newBox.classList.toggle('hidden', folderSel.value !== 'new'); }
     folderSel.addEventListener('change', syncFolder); syncFolder();
 
-    var tabCsv = h('button', { class: 'seg active', type: 'button' }, 'Upload CSV file'), tabPaste = h('button', { class: 'seg', type: 'button' }, 'Paste emails');
-    var picker = h('input', { type: 'file', accept: '.csv,.tsv,.txt,text/csv,text/plain', class: 'hidden', id: 'im-file' });
-    var dropMsg = h('div', { class: 'drop-msg' }, h('b', { text: 'Drop a CSV file here' }), h('div', { class: 'small muted', text: 'or click to choose one' }));
-    var drop = h('div', { class: 'dropzone', tabindex: '0', role: 'button', 'aria-label': 'Choose a CSV file' }, SB.icon('upload', 'icon-lg'), dropMsg);
+    var tabCsv = h('button', { class: 'seg active', type: 'button' }, 'Upload CSV or Excel file'), tabPaste = h('button', { class: 'seg', type: 'button' }, 'Paste emails');
+    var picker = h('input', { type: 'file', accept: '.csv,.tsv,.txt,.xlsx,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', class: 'hidden', id: 'im-file' });
+    var dropMsg = h('div', { class: 'drop-msg' }, h('b', { text: 'Drop a CSV or Excel (.xlsx) file here' }), h('div', { class: 'small muted', text: 'or click to choose one' }));
+    var drop = h('div', { class: 'dropzone', tabindex: '0', role: 'button', 'aria-label': 'Choose a CSV or Excel file' }, SB.icon('upload', 'icon-lg'), dropMsg);
     var csvBox = h('div', null, drop, picker,
       h('div', { class: 'hint', text: 'Needs a column named "email". Optional columns: first name, last name, company. Any other columns are kept and can be used in your email text. Using Excel? Choose File → Save As → CSV first.' }));
     var paste = h('textarea', { class: 'input', id: 'im-paste', rows: 8, placeholder: 'alex@acme.com\njamie@globex.com, sam@initech.io' });
@@ -91,15 +97,17 @@
     function takeFile(file) {
       err.classList.add('hidden');
       if (!file) return;
-      if (/\.(xlsx|xls|xlsm|ods)$/i.test(file.name)) { err.textContent = 'Excel files are not supported yet. In Excel choose File → Save As → CSV, then upload that file.'; err.classList.remove('hidden'); return; }
-      if (file.size > MAX_FILE) { err.textContent = 'That file is larger than 12 MB. Split it into smaller files and import them one by one.'; err.classList.remove('hidden'); return; }
+      var isX = /\.xlsx$/i.test(file.name);
+      if (/\.(xls|xlsm|xlsb|ods)$/i.test(file.name)) { err.textContent = 'Only .xlsx and .csv files can be imported. In Excel choose File → Save As → Excel Workbook (.xlsx) or CSV.'; err.classList.remove('hidden'); return; }
+      if (isX && file.size > MAX_XLSX) { err.textContent = 'That Excel file is larger than 8 MB. Save it as CSV, or split it into smaller files.'; err.classList.remove('hidden'); return; }
+      if (!isX && file.size > MAX_FILE) { err.textContent = 'That file is larger than 12 MB. Split it into smaller files and import them one by one.'; err.classList.remove('hidden'); return; }
       var rd = new FileReader();
       rd.onload = function () {
-        fileText = String(rd.result || ''); fileName = file.name;
+        fileKind = isX ? 'xlsx' : 'csv'; fileText = isX ? toBase64(rd.result) : String(rd.result || ''); fileName = file.name;
         SB.clear(dropMsg); dropMsg.appendChild(h('b', { text: file.name })); dropMsg.appendChild(h('div', { class: 'small muted', text: (file.size / 1024 < 1000 ? Math.max(1, Math.round(file.size / 1024)) + ' KB' : (file.size / 1048576).toFixed(1) + ' MB') + ' · click to choose another' }));
       };
       rd.onerror = function () { err.textContent = 'Could not read that file.'; err.classList.remove('hidden'); };
-      rd.readAsText(file);
+      if (isX) rd.readAsArrayBuffer(file); else rd.readAsText(file);
     }
     drop.addEventListener('click', function () { picker.click(); });
     drop.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); picker.click(); } });
@@ -114,8 +122,8 @@
       { label: 'Cancel' },
       { label: 'Import', kind: 'primary', onClick: function (close) {
         err.classList.add('hidden');
-        var data = format === 'csv' ? fileText : paste.value;
-        if (format === 'csv' && !data) { err.textContent = 'Choose a CSV file first.'; err.classList.remove('hidden'); return Promise.reject(new Error('v')); }
+        var data = format === 'csv' ? fileText : paste.value, sendFormat = format === 'csv' ? fileKind : format;
+        if (format === 'csv' && !data) { err.textContent = 'Choose a CSV or Excel file first.'; err.classList.remove('hidden'); return Promise.reject(new Error('v')); }
         if (format === 'paste' && !countEmails(data)) { err.textContent = 'No email addresses found in the text you pasted.'; err.classList.remove('hidden'); return Promise.reject(new Error('v')); }
         var prep;
         if (folderSel.value === 'new') {
@@ -123,7 +131,7 @@
           prep = createdId ? Promise.resolve(createdId) : SB.api.post('/api/folders', { name: newName.value }).then(function (r) { createdId = r.folder.id; return createdId; });
         } else prep = Promise.resolve(parseInt(folderSel.value, 10));
         return prep.then(function (folderId) {
-          return SB.api.post('/api/folders/' + folderId + '/import', { format: format, data: data }).then(function (r) { close(); onDone(folderId); importResult(r.result, folderId); });
+          return SB.api.post('/api/folders/' + folderId + '/import', { format: sendFormat, data: data }).then(function (r) { close(); onDone(folderId); importResult(r.result, folderId); });
         }).catch(function (e) { showErr(err, e); throw e; });
       } }
     ] });
@@ -233,7 +241,7 @@
 
   // ---- lists tab -------------------------------------------------------------------------------
   function listsTab(box, shared) {
-    var st = { folders: [], id: null, stats: null, rows: [], total: 0, page: 1, size: 50, q: '', status: 'all', sort: 'created_at', dir: 'desc', sel: {}, req: 0 };
+    var st = { folders: [], id: null, stats: null, rows: [], total: 0, page: 1, size: 50, q: '', status: 'all', sort: 'created_at', dir: 'desc', sel: {}, req: 0, f: { role: '', missing: '', in_campaign: '', domain: '' } };
     var foldersBox = h('div', { class: 'folder-list' }), main = h('div', { class: 'leads-main' });
     var headBox = h('div'), statsBox = h('div'), toolBox = h('div'), tableBox = h('div');
     main.appendChild(headBox); main.appendChild(statsBox); main.appendChild(toolBox); main.appendChild(tableBox);
@@ -288,7 +296,7 @@
     }
 
     function selectFolder(id) {
-      st.id = id; selectedFolder = id; st.page = 1; st.q = ''; st.status = 'all'; st.sort = 'created_at'; st.dir = 'desc'; st.sel = {};
+      st.id = id; selectedFolder = id; st.page = 1; st.q = ''; st.status = 'all'; st.sort = 'created_at'; st.dir = 'desc'; st.sel = {}; st.f = { role: '', missing: '', in_campaign: '', domain: '' };
       renderFolders(); renderHead(); renderToolbar();
       return refresh();
     }
@@ -331,7 +339,7 @@
 
     function renderToolbar() {
       var search = h('input', { class: 'input', type: 'search', placeholder: 'Search email, name or company', maxlength: 100, 'aria-label': 'Search leads' });
-      var timer = null;
+      search.value = st.q || ''; var timer = null;
       search.addEventListener('input', function () { clearTimeout(timer); timer = setTimeout(function () { st.q = search.value.trim(); st.page = 1; loadLeads(); }, 300); });
       var sel = h('select', { class: 'input', 'aria-label': 'Filter by status' },
         h('option', { value: 'all' }, 'All statuses'), h('option', { value: 'valid' }, 'Valid'), h('option', { value: 'invalid' }, 'Invalid'),
@@ -340,12 +348,56 @@
       sel.addEventListener('change', function () { st.status = sel.value; st.page = 1; st.sel = {}; loadLeads(); renderStats(); });
       var check = h('button', { class: 'btn btn-primary', type: 'button', tip: S.verifyNote, on: { click: function () { if (st.stats) checkModal(st.id, st.stats, selIds(), afterCheck); } } }, SB.icon('shield'), 'Check emails');
       var imp = h('button', { class: 'btn', type: 'button', on: { click: function () { openImport(); } } }, SB.icon('upload'), 'Import');
-      st.bulkBox = h('div');
-      SB.mount(toolBox, h('div', null, h('div', { class: 'toolbar' }, h('div', { class: 'search' }, SB.icon('search'), search), sel, h('div', { class: 'actions' }, imp, check)), st.bulkBox));
+      function pickSel(label, key, opts) {
+        var el = h('select', { class: 'input', 'aria-label': label }, opts.map(function (o) { return h('option', { value: o[0] }, o[1]); }));
+        el.value = st.f[key]; el.addEventListener('change', function () { st.f[key] = el.value; st.page = 1; st.sel = {}; loadLeads(); renderFilterTags(); }); return el;
+      }
+      var SORT_OPTS = [['created_at|desc', 'Newest first'], ['created_at|asc', 'Oldest first'], ['email|asc', 'Email (A-Z)'], ['domain|asc', 'Domain (A-Z)'], ['company|asc', 'Company (A-Z)'], ['name|asc', 'Name (A-Z)'], ['verify_status|asc', 'Status'], ['verified_at|desc', 'Recently checked']];
+      var sortSel = h('select', { class: 'input', 'aria-label': 'Sort by' }, SORT_OPTS.map(function (o) { return h('option', { value: o[0] }, o[1]); }));
+      sortSel.value = st.sort + '|' + st.dir; if (sortSel.value !== st.sort + '|' + st.dir) sortSel.value = 'created_at|desc';
+      sortSel.addEventListener('change', function () { var p = sortSel.value.split('|'); st.sort = p[0]; st.dir = p[1]; st.page = 1; loadLeads(); });
+      st.sortSel = sortSel;
+      var domain = h('input', { class: 'input', type: 'search', placeholder: 'Domain contains...', maxlength: 100, 'aria-label': 'Filter by domain' }); domain.value = st.f.domain;
+      var dt = null; domain.addEventListener('input', function () { clearTimeout(dt); dt = setTimeout(function () { st.f.domain = domain.value.trim().replace(/^@/, ''); st.page = 1; loadLeads(); renderFilterTags(); }, 300); });
+      st.domainEl = domain;
+      var filters = h('div', { class: 'toolbar filter-row' },
+        pickSel('Mailbox type', 'role', [['', 'All mailboxes'], ['exclude', 'Personal mailboxes only'], ['only', 'Shared mailboxes (info@, sales@)']]),
+        pickSel('Missing information', 'missing', [['', 'Any details'], ['name', 'Missing first name'], ['company', 'Missing company'], ['any', 'Missing name or company']]),
+        pickSel('Campaign usage', 'in_campaign', [['', 'In any campaign or not'], ['0', 'Not in a campaign'], ['1', 'In a campaign']]),
+        domain, sortSel);
+      st.bulkBox = h('div'); st.tagBox = h('div');
+      SB.mount(toolBox, h('div', null, h('div', { class: 'toolbar' }, h('div', { class: 'search' }, SB.icon('search'), search), sel, h('div', { class: 'actions' }, imp, check)), filters, st.tagBox, st.bulkBox));
+      renderFilterTags();
     }
 
+    var FLABEL = { role: { exclude: 'Personal mailboxes', only: 'Shared mailboxes' }, missing: { name: 'Missing first name', company: 'Missing company', any: 'Missing name or company' }, in_campaign: { '0': 'Not in a campaign', '1': 'In a campaign' } };
+    function activeFilters() {
+      var out = [];
+      ['role', 'missing', 'in_campaign'].forEach(function (k) { if (st.f && st.f[k]) out.push({ key: k, label: FLABEL[k][st.f[k]] }); });
+      if (st.f && st.f.domain) out.push({ key: 'domain', label: 'Domain: ' + st.f.domain });
+      return out;
+    }
+    function renderFilterTags() {
+      if (!st.tagBox) return;
+      var tags = activeFilters().map(function (f) { return { label: f.label, onRemove: function () { st.f[f.key] = ''; if (f.key === 'domain' && st.domainEl) st.domainEl.value = ''; renderToolbar(); st.page = 1; loadLeads(); } }; });
+      SB.mount(st.tagBox, h('div', null, SB.lists.tags(tags, function () { st.f = { role: '', missing: '', in_campaign: '', domain: '' }; renderToolbar(); st.page = 1; loadLeads(); })));
+    }
     function afterCheck() { if (shared.destroyed) return; st.sel = {}; refresh(); loadFoldersQuiet(); }
     function loadFoldersQuiet() { return SB.api.get('/api/folders').then(function (r) { st.folders = r.items; renderFolders(); }, function () {}); }
+
+    function moveModal(ids) {
+      var others = st.folders.filter(function (f) { return f.id !== st.id; });
+      if (!others.length) { ui.toast('Create another list first (use the + next to Lists).', true); return; }
+      var sel = h('select', { class: 'input', id: 'mvl-folder', 'aria-label': 'Destination list' }, others.map(function (f) { return h('option', { value: f.id }, f.name + ' (' + fmt.num(f.lead_count) + ')'); }));
+      var err = h('div', { class: 'form-error hidden', role: 'alert' });
+      ui.modal({ title: 'Move ' + fmt.num(ids.length) + ' lead' + (ids.length === 1 ? '' : 's'), body: h('div', null, err, h('div', { class: 'field' }, h('label', { for: 'mvl-folder' }, 'Move to'), sel)),
+        actions: [{ label: 'Cancel' }, { label: 'Move', kind: 'primary', onClick: function (close) {
+          return SB.api.post('/api/leads/move', { ids: ids, folder_id: Number(sel.value) }).then(function (r) {
+            close(); ui.toast(fmt.num(r.moved) + ' moved' + (r.skipped ? '. ' + fmt.num(r.skipped) + ' skipped because the email is already in that list.' : ''));
+            st.sel = {}; return refresh().then(loadFoldersQuiet);
+          }, function (e) { err.textContent = SB.api.friendly(e); err.classList.remove('hidden'); throw e; });
+        } }] });
+    }
 
     function renderBulk() {
       var ids = selIds(); SB.clear(st.bulkBox); if (!ids.length) return;
@@ -358,7 +410,8 @@
         ui.confirm({ title: 'Delete ' + fmt.num(ids.length) + ' lead' + (ids.length === 1 ? '' : 's') + '?', message: 'They are removed from this list permanently. Leads that are waiting in a running or paused campaign cannot be deleted.', confirmLabel: 'Delete', danger: true,
           onConfirm: function () { return SB.api.post('/api/leads/delete', { ids: ids }).then(function (r) { ui.toast(fmt.num(r.deleted) + ' deleted'); st.sel = {}; return refresh().then(loadFoldersQuiet); }); } });
       } } }, SB.icon('trash'), 'Delete');
-      st.bulkBox.appendChild(h('div', { class: 'bulk' }, h('b', { text: fmt.num(ids.length) + ' selected' }), h('div', { class: 'actions' }, sup, del,
+      var mv = h('button', { class: 'btn btn-sm', type: 'button', tip: 'Move the selected people into another list. People already in that list are left where they are.', on: { click: function () { moveModal(ids); } } }, 'Move to list');
+      st.bulkBox.appendChild(h('div', { class: 'bulk' }, h('b', { text: fmt.num(ids.length) + ' selected' }), h('div', { class: 'actions' }, mv, sup, del,
         h('button', { class: 'btn btn-ghost btn-sm', type: 'button', on: { click: function () { st.sel = {}; renderTable(); renderBulk(); } } }, 'Clear'))));
     }
 
@@ -366,14 +419,14 @@
       var on = st.sort === key;
       return h('th', null, h('button', { class: 'th-sort' + (on ? ' on' : ''), type: 'button', on: { click: function () {
         if (on) st.dir = st.dir === 'asc' ? 'desc' : 'asc'; else { st.sort = key; st.dir = key === 'created_at' ? 'desc' : 'asc'; }
-        st.page = 1; loadLeads();
+        st.page = 1; loadLeads(); if (st.sortSel) st.sortSel.value = st.sort + '|' + st.dir;
       } } }, label, on ? h('span', { text: st.dir === 'asc' ? ' ↑' : ' ↓' }) : null));
     }
 
     function renderTable() {
       var f = current();
       if (!st.rows.length) {
-        var filtered = st.q || st.status !== 'all';
+        var filtered = st.q || st.status !== 'all' || activeFilters().length;
         SB.mount(tableBox, filtered
           ? h('div', { class: 'card empty' }, h('h2', { text: 'No leads match' }), h('p', { text: 'Try a different search or status.' }))
           : h('div', { class: 'card empty' }, h('h2', { text: 'This list is empty' }), h('p', { text: 'Import a CSV file or paste emails to add people to "' + (f ? f.name : 'this list') + '".' }),
@@ -408,7 +461,7 @@
 
     function loadLeads() {
       var my = ++st.req;
-      return SB.api.get('/api/folders/' + st.id + '/leads?' + qs({ page: st.page, pageSize: st.size, search: st.q, status: st.status === 'all' ? '' : st.status, sort: st.sort, dir: st.dir })).then(function (r) {
+      return SB.api.get('/api/folders/' + st.id + '/leads?' + qs({ page: st.page, pageSize: st.size, search: st.q, status: st.status === 'all' ? '' : st.status, role: st.f.role, missing: st.f.missing, in_campaign: st.f.in_campaign, domain: st.f.domain, sort: st.sort, dir: st.dir })).then(function (r) {
         if (my !== st.req || shared.destroyed) return;
         if (!r.items.length && r.total > 0 && st.page > 1) { st.page = Math.ceil(r.total / st.size); return loadLeads(); }   // rows were deleted from the last page
         st.rows = r.items; st.total = r.total; renderTable(); renderBulk();

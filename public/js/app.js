@@ -34,6 +34,7 @@
     else if (key === 'project' && /^\d{1,15}$/.test(parts[1] || '')) screen = SB.screens.project({ id: parts[1] });
     else if (key === 'campaign' && parts[1] === 'new' && (!parts[2] || /^\d{1,15}$/.test(parts[2])) && parts.length < 4) screen = SB.screens.wizard({ projectId: parts[2] || null, userEmail: user.email });
     else if (key === 'campaign' && parts[1] === 'draft' && /^\d{1,15}$/.test(parts[2] || '') && parts.length < 4) screen = SB.screens.wizard({ draftId: parts[2], userEmail: user.email });
+    else if (key === 'campaign' && parts[1] === 'edit' && /^\d{1,15}$/.test(parts[2] || '') && parts.length < 4) screen = SB.screens.wizard({ editId: parts[2], userEmail: user.email });
     else if (key === 'inbox' && parts.length < 2) screen = SB.screens.inbox();
     else if (key === 'senders') screen = SB.screens.senders();
     else if (key === 'leads' && (!parts[1] || parts[1] === 'suppression') && parts.length < 3) screen = SB.screens.leads({ tab: parts[1] === 'suppression' ? 'suppression' : 'lists' });
@@ -56,7 +57,7 @@
   function refreshStatus() {
     return Promise.all([SB.api.get('/api/engine/status'), SB.api.get('/api/inbox?limit=1')]).then(function (r) {
       var mode = r[0].mode;
-      setBanner('mode', mode === 'dry-run' ? banner('banner-test', 'info', SB.S.testMode) : mode === 'off' ? banner('banner-off', 'alert', SB.S.engineOff) : null);
+      setBanner('mode', mode === 'off' ? banner('banner-off', 'alert', SB.S.engineOff) : null);
       SB.clear(badgeEl);
       if (r[1].unread) { badgeEl.appendChild(h('span', { class: 'pill pill-active', text: String(r[1].unread) })); }
     }, function () {});

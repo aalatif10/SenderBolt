@@ -121,8 +121,15 @@ h.test('quoted text does not decide the sentiment; "?" means more_info', functio
   assert.strictEqual(sentiment.classify('> I am not interested\nSounds great, call me').sentiment, 'interested');
   assert.strictEqual(sentiment.classify('Not interested, thanks.').sentiment, 'not_interested');
   assert.strictEqual(sentiment.classify('Ok').sentiment, 'neutral');
-  assert.deepStrictEqual(sentiment.classify('Please remove me from your list'), { sentiment: 'not_interested', stop: true });
+  assert.deepStrictEqual(sentiment.classify('Please remove me from your list'), { sentiment: 'neutral' });
 });
+h.test('opt-out phrase is exactly "stop campaign" (any case, subject or new text); single words and quoted footer never count', function () {
+  var yes = [['', 'stop campaign'], ['', 'STOP CAMPAIGN please'], ['Re: Stop  Campaign', 'ok'], ['', 'Hello,\nStop\u00a0campaign.\nThanks'], ['', '(stop campaign)']];
+  var no = [['', 'stop'], ['', 'unsubscribe'], ['', 'Stop emailing me.'], ['', 'remove me from your list'], ['', 'please stop the campaign'], ['', 'stop campaigns now'], ['', 'nonstop campaign'],
+    ['', 'ok thanks\n\nOn Tue, Sam wrote:\n> reply with the words stop campaign'], ['', 'thanks\n> stop campaign'],
+    ['', 'Thanks!\nIf you would rather not receive these emails, reply with the words stop campaign and I will not contact you again.'], ['Re: Question', 'Not interested']];
+  yes.forEach(function (c) { assert.strictEqual(sentiment.isStopRequest(c[0], c[1]), true, 'should stop: ' + JSON.stringify(c)); });
+  no.forEach(function (c) { assert.strictEqual(sentiment.isStopRequest(c[0], c[1]), false, 'must NOT stop: ' + JSON.stringify(c)); });});
 h.test('stop_on_reply = off keeps the sequence running', function () {
   return setup().then(function (c) {
     return launch(c, 1, { stop_on_reply: 0 }).then(function () { return armed(c); }).then(function () { return sendAll(c); }).then(function () {
@@ -130,19 +137,30 @@ h.test('stop_on_reply = off keeps the sequence running', function () {
     }).then(function () { return clOf(c, 'p0@co0.com'); }).then(function (cl) { assert.strictEqual(cl.status, 'active'); });
   });
 });
-h.test('"stop emailing me" suppresses the address and ends every other sequence aimed at it', function () {
+h.test('"stop campaign" unsubscribes ONLY that person (suppression + unsubscribed); the rest of the campaign keeps running', function () {
   return setup().then(function (c) {
-    return launch(c, 1).then(function () { return armed(c); }).then(function () { return sendAll(c); }).then(function () {
-      var first = c.camp;
-      return c.leads.createFolder(c.a, 'G').then(function (f) { return c.leads.importLeads(c.a, f.id, 'paste', 'p0@co0.com'); })
-        .then(function () { return c.db.get('SELECT id FROM folders WHERE name = ?', ['G']); }).then(function (f) {
-          return c.camps.create(c.a, { name: 'C2', steps: JSON.parse(JSON.stringify(STEPS)), sender_ids: [c.sid], folder_id: f.id, allow_active_overlap: true });
-        }).then(function () { return first; });
-    }).catch(function () { return null; }).then(function () {
-      incoming(c, { from: 'p0@co0.com', inReplyTo: firstSent(c).messageId, text: 'Stop emailing me.' }); return sync(c);
-    }).then(function () { return Promise.all([c.db.get("SELECT reason FROM suppression WHERE email = 'p0@co0.com'"), clOf(c, 'p0@co0.com')]); }).then(function (r) {
-      assert.strictEqual(r[0].reason, 'replied_stop'); assert.strictEqual(r[1].status, 'replied');
+    return launch(c, 2).then(function () { return armed(c); }).then(function () { return sendAll(c, 6); }).then(function () {
+      var mine = c.sent.filter(function (x) { return x.to === 'p0@co0.com'; })[0];
+      incoming(c, { from: 'p0@co0.com', inReplyTo: mine.messageId, text: 'Stop emailing me, please.' }); return sync(c);      // NOT the phrase
+    }).then(function () { return Promise.all([c.db.get("SELECT COUNT(*) AS n FROM suppression"), clOf(c, 'p0@co0.com')]); }).then(function (r) {
+      assert.strictEqual(r[0].n, 0, 'other words never opt out'); assert.strictEqual(r[1].status, 'replied');
+      var mine = c.sent.filter(function (x) { return x.to === 'p1@co1.com'; })[0];
+      incoming(c, { from: 'p1@co1.com', inReplyTo: mine.messageId, text: 'STOP CAMPAIGN' }); return sync(c);
+    }).then(function () { return Promise.all([c.db.get("SELECT reason FROM suppression WHERE email = 'p1@co1.com'"), clOf(c, 'p1@co1.com'), clOf(c, 'p0@co0.com'), c.db.get("SELECT sentiment FROM messages WHERE from_addr = 'p1@co1.com'")]); }).then(function (r) {
+      assert.strictEqual(r[0].reason, 'replied_stop'); assert.strictEqual(r[1].status, 'unsubscribed'); assert.strictEqual(r[1].next_send_at, null);
+      assert.strictEqual(r[2].status, 'replied', 'the other person is untouched'); assert.strictEqual(r[3].sentiment, 'not_interested');
     });
+  });
+});
+h.test('"stop campaign" keeps the rest of the campaign active', function () {
+  return setup().then(function (c) {
+    return launch(c, 3).then(function () { return armed(c); }).then(function () { return sendAll(c, 6); }).then(function () {
+      var mine = c.sent.filter(function (x) { return x.to === 'p0@co0.com'; })[0];
+      incoming(c, { from: 'p0@co0.com', inReplyTo: mine.messageId, text: 'stop campaign' }); return sync(c);
+    }).then(function () { return c.db.all("SELECT status FROM campaign_leads ORDER BY id"); }).then(function (rows) {
+      assert.strictEqual(rows.filter(function (x) { return x.status === 'unsubscribed'; }).length, 1); assert.strictEqual(rows.filter(function (x) { return x.status === 'active'; }).length, 2);
+      return c.camps.get(c.a, c.camp.id);
+    }).then(function (camp) { assert.notStrictEqual(camp.status, 'completed'); });
   });
 });
 h.test('out-of-office auto-reply does NOT stop the sequence; next email is pushed back 3 days', function () {

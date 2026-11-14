@@ -1,6 +1,6 @@
 {
   "name": "senderbolt",
-  "version": "0.10.0",
+  "version": "1.0.0",
   "private": true,
   "description": "SenderBolt - B2B email outreach and campaign management platform",
   "main": "src/server.js",
@@ -9,9 +9,9 @@
   },
   "scripts": {
     "init": "node scripts/init.js",
-    "demo": "node scripts/demo.js",
+    "doctor": "node scripts/doctor.js",
     "start": "node src/server.js",
-    "test": "node test/run.js && node test/sanitize.js && node test/integration.js && node test/leads.js && node test/campaigns.js && node test/drafts.js && node test/testsend.js && node test/settings.js && node test/projects.js && node test/engine.js && node test/inbox.js && node test/e2e.js && node test/e2e_engine.js && node test/ui.js"
+    "test": "node test/run.js && node test/sanitize.js && node test/integration.js && node test/leads.js && node test/campaigns.js && node test/drafts.js && node test/testsend.js && node test/mailbox.js && node test/xlsx.js && node test/settings.js && node test/projects.js && node test/engine.js && node test/inbox.js && node test/e2e.js && node test/e2e_engine.js && node test/ui.js"
   },
   "dependencies": {
     "nodemailer": "6.9.1",
@@ -20,6 +20,6 @@
   "license": "UNLICENSED",
   "optionalDependencies": {
     "imap": "0.8.19",
-    "mailparser": "3.6.4"
+    "mailparser": "3.5.0"
   }
 }

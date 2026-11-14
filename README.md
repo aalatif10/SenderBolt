@@ -30,13 +30,11 @@ curl -X POST http://127.0.0.1:3000/api/auth/setup -H "Content-Type: application/
 
 Login returns a `csrfToken` and sets a session cookie. Send both on later POST/PATCH/DELETE calls.
 
-## Sending modes
+## Sending
 
-`SENDERBOLT_SENDING` in `.env`:
+SenderBolt always sends for real (SMTP) and reads replies (IMAP). There is no test or simulation mode. Before a real campaign, use **Send me a test email** in the campaign wizard and `POST /api/senders/:id/test`, and start with ONE sender and a lead that is your own address.
 
-- `dry-run` (default): the engine runs the whole flow (throttling, follow-ups, replies tables) but **no email is sent and no mailbox is read**. Safe for testing; the console prints what it would send.
-- `live`: real SMTP/IMAP. First test with ONE sender and a lead that is your own address. Use `POST /api/senders/:id/test` first.
-- `off`: engine stopped.
+`SENDERBOLT_SENDING=off` in `.env` is an emergency kill switch that stops the engine. If something fails to load, run `npm run doctor`.
 
 Set `SENDERBOLT_PUBLIC_ORIGIN=https://your-domain` to get one-click unsubscribe links in emails.
 
@@ -49,15 +47,6 @@ Set `SENDERBOLT_PUBLIC_ORIGIN=https://your-domain` to get one-click unsubscribe 
 2. Enter your email, a password of 12+ characters, and the setup token from your `.env` (`SENDERBOLT_SETUP_TOKEN`).
 3. You land on **Home**. From now on the same address shows the sign-in screen.
 
-**Try it with sample data (optional, safe)**
-Use a separate database so your real data is untouched. In Command Prompt:
-```
-set SENDERBOLT_DB_FILE=data\demo.db
-npm run demo
-npm start
-```
-`npm run demo` prints a demo email and a **random one-time password** (there is no built-in password anywhere). It creates two fake Gmail senders, 40 fake leads on reserved `.example` domains and a project with two campaigns, one already running. It refuses to run in `live` mode, when the server is open to the network, or on a database that already holds a real account. To get a new demo password later: `npm run demo -- --reset-password`.
-Close the window and start normally (without the `set` line) to go back to your real data.
 
 **Home**
 - A blue **Test mode** strip means nothing real is sent (see "Sending modes"). It disappears in live mode.
@@ -81,7 +70,7 @@ Close the window and start normally (without the `set` line) to go back to your 
 
 **Leads** (menu: Leads)
 1. **Lists** are folders for your contacts (a niche, market or location). Create one with **New list**, or choose **＋ New list…** while importing. Rename, **Export** (CSV) and **Delete** are at the top of each list.
-2. **Import leads** takes a **CSV file** (drag it in or click; needs a column called "email", optional first name / last name / company, any other columns are kept for your email text) or **pasted emails** in any mix of commas, spaces and lines. Using Excel? Save as CSV first. Duplicates, badly written addresses and people on the do-not-email list are skipped, and a report shows every skipped row and why.
+2. **Import leads** takes a **CSV or Excel (.xlsx) file** (drag it in or click; needs a column called "email", optional first name / last name / company, any other columns are kept for your email text) or **pasted emails** in any mix of commas, spaces and lines. Using Excel? Save as CSV first. Duplicates, badly written addresses and people on the do-not-email list are skipped, and a report shows every skipped row and why.
 3. **Check emails** verifies on demand (nothing runs in the background): choose only the unchecked ones, the whole list, or your selection. It confirms the address is written correctly and the domain has a mail server; it cannot prove the mailbox exists. A progress window shows the run and you can stop it any time.
 4. The **stats bar** shows total, valid rate, valid, invalid, risky and not checked. Click a figure to filter the table. The **Details** column explains each result in plain words; "Role" marks shared mailboxes like info@.
 5. Select rows to **Delete** them or put them on the do-not-email list. Leads that are waiting in a running or paused campaign cannot be deleted.

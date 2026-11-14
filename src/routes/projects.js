@@ -10,5 +10,6 @@ module.exports = function register(router, d) {
   router.get('/api/projects/:id', function (ctx) { return P.get(ctx.user.id, parseId(ctx.params.id)).then(function (p) { return { project: p }; }); });
   router.patch('/api/projects/:id', function (ctx) { return P.update(ctx.user.id, parseId(ctx.params.id), ctx.body, ctx.ip).then(function (p) { return { project: p }; }); });
   router.delete('/api/projects/:id', function (ctx) { return P.remove(ctx.user.id, parseId(ctx.params.id), ctx.ip); });
+  router.post('/api/projects/batch', function (ctx) { return P.batch(ctx.user.id, ctx.body, ctx.ip); });
   router.get('/api/campaigns/:id/analytics', function (ctx) { return P.campaignAnalytics(ctx.user.id, parseId(ctx.params.id)); });
 };

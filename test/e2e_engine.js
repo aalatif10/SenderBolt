@@ -35,14 +35,15 @@ function request(method, path, opts) {
 }
 
 h.group('e2e (engine routes)');
-h.test('boot in dry-run mode, create account, sign in', function () {
+h.test('boot, create account, sign in', function () {
   var probe = http.createServer();
   return new Promise(function (resolve) { probe.listen(0, '127.0.0.1', resolve); }).then(function () {
     S.port = probe.address().port; return new Promise(function (r) { probe.close(r); });
   }).then(function () {
     var cfg = config.build({ SENDERBOLT_MASTER_KEY: crypto.randomBytes(32).toString('hex'), SENDERBOLT_SESSION_SECRET: crypto.randomBytes(32).toString('hex'),
-      PORT: String(S.port), HOST: '127.0.0.1', SENDERBOLT_DB_FILE: ':memory:', SENDERBOLT_SETUP_TOKEN: 'tok-123', SENDERBOLT_SENDING: 'dry-run' });
-    assert.strictEqual(cfg.sending, 'dry-run');
+      PORT: String(S.port), HOST: '127.0.0.1', SENDERBOLT_DB_FILE: ':memory:', SENDERBOLT_SETUP_TOKEN: 'tok-123', SENDERBOLT_SENDING: 'live' });
+    assert.strictEqual(cfg.sending, 'live');
+    var io = h.fakeIO(); cfg.mailer = io.mailer; cfg.mailbox = io.mailbox;
     return createApp(cfg);
   }).then(function (app) {
     S.app = app; S.host = '127.0.0.1:' + S.port;
@@ -55,8 +56,9 @@ h.test('boot in dry-run mode, create account, sign in', function () {
 h.test('config rejects bad sending mode and bad public origin', function () {
   var base = { SENDERBOLT_MASTER_KEY: crypto.randomBytes(32).toString('hex'), SENDERBOLT_SESSION_SECRET: crypto.randomBytes(32).toString('hex') };
   assert.throws(function () { config.build(Object.assign({ SENDERBOLT_SENDING: 'yes' }, base)); }, /SENDERBOLT_SENDING/);
+  assert.throws(function () { config.build(Object.assign({ SENDERBOLT_SENDING: 'dry-run' }, base)); }, /no longer exists/);
   assert.throws(function () { config.build(Object.assign({ SENDERBOLT_PUBLIC_ORIGIN: 'ftp://x.com' }, base)); }, /http/);
-  assert.strictEqual(config.build(base).sending, 'dry-run');
+  assert.strictEqual(config.build(base).sending, 'live', 'real sending is the default');
   assert.strictEqual(config.build(Object.assign({ SENDERBOLT_PUBLIC_ORIGIN: 'https://app.example.com/path/' }, base)).publicOrigin, 'https://app.example.com');
 });
 h.test('inbox and engine routes require a session', function () {
@@ -65,12 +67,12 @@ h.test('inbox and engine routes require a session', function () {
   return paths.reduce(function (p, path) { return p.then(function () { return request('GET', path); }).then(function (r) { assert.strictEqual(r.status, 401, path); }); }, Promise.resolve())
     .then(function () { return request('POST', '/api/inbox/sync', { json: {} }); }).then(function (r) { assert.strictEqual(r.status, 401); S.cookie = saved; });
 });
-h.test('sender test-connection (dry-run) succeeds, arms reply tracking; engine status reflects it', function () {
+h.test('sender test-connection succeeds, arms reply tracking; engine status reflects it', function () {
   return request('POST', '/api/senders', { json: { label: 'G1', email: 'g1@gmail.com', provider: 'gmail', password: 'abcdefghijklmnop' } }).then(function (r) {
     assert.strictEqual(r.status, 201); S.sid = r.body.sender.id;
     return request('GET', '/api/engine/status');
   }).then(function (r) {
-    assert.strictEqual(r.body.mode, 'dry-run'); assert.strictEqual(r.body.senders[0].reply_tracking, 'pending');
+    assert.strictEqual(r.body.mode, 'live'); assert.strictEqual(r.body.senders[0].reply_tracking, 'pending');
     return request('POST', '/api/senders/' + S.sid + '/test', { json: {} });
   }).then(function (r) {
     assert.strictEqual(r.status, 200); assert.strictEqual(r.body.smtp.ok, true); assert.strictEqual(r.body.imap.ok, true);
@@ -128,13 +130,20 @@ h.test('project routes: CRUD over HTTP, CSRF enforced, unknown ids 404, campaign
   }).then(function (r) {
     assert.strictEqual(r.body.project.name, 'P1b'); return request('GET', '/api/projects');
   }).then(function (r) {
-    assert.strictEqual(r.body.items.length, 1); assert.strictEqual(r.body.items[0].totals.opens_tracked, false);
+    var mine = r.body.items.filter(function (x) { return x.id === S.pid; });
+    assert.strictEqual(mine.length, 1); assert.strictEqual(mine[0].totals.opens_tracked, false);
     return request('GET', '/api/projects/9999');
   }).then(function (r) { assert.strictEqual(r.status, 404); return request('GET', '/api/campaigns/9999/analytics'); })
     .then(function (r) { assert.strictEqual(r.status, 404); return request('POST', '/api/projects', { json: { name: '' } }); })
     .then(function (r) { assert.strictEqual(r.status, 400); return request('DELETE', '/api/projects/' + S.pid); })
     .then(function (r) { assert.strictEqual(r.status, 200); return request('GET', '/api/projects/' + S.pid); })
     .then(function (r) { assert.strictEqual(r.status, 404); });
+});
+h.test('open-tracking pixel is public, always returns the same GIF (even for forged tokens) and is never cached', function () {
+  return request('GET', '/t/o/1.0.forgedforgedforgedforgedforged.gif', { auth: false }).then(function (r) {
+    assert.strictEqual(r.status, 200); assert.strictEqual(r.headers['content-type'], 'image/gif'); assert.ok(/no-store/.test(r.headers['cache-control']));
+    assert.strictEqual(r.text.slice(0, 3), 'GIF');
+  });
 });
 h.test('shutdown', function () { return new Promise(function (r) { S.server.close(r); }).then(function () { return S.app.close(); }); });
 

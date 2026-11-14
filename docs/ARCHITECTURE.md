@@ -15,11 +15,12 @@ Target runtime: **Node.js 12.22.x on Windows 7 (64-bit)**. Code is written in ES
 | Projects: Project > Campaign > Batch hierarchy with roll-up analytics (backend + API) | Done |
 | Web UI: login/setup, Home, Project drill-down, Senders, Leads, Campaign Builder, Inbox, Settings (vanilla JS, no build step) | Done |
 | Email templates (variables, fallbacks, spintax, safe escaping) | Done |
-| Sending engine + scheduler (dry-run / live modes) | Done (live SMTP adapter not yet run against a real server) |
+| Sending engine + scheduler (live only) | Done (live SMTP adapter not yet run against a real server) |
 | Reply + bounce sync (IMAP), unified inbox, sentiment, manual reply, unsubscribe | Done (live IMAP adapter not yet run against a real mailbox) |
 | Web UI (all screens) | Not started |
 | Own allowlist HTML sanitizer for email bodies (`src/lib/sanitize.js`) | Done (DOMPurify not used, see Campaign Builder) |
-| Excel import, open tracking, Inbox HTML rendering | Not started |
+| Excel (.xlsx) import, open tracking, campaign edit (drafts), batch actions, filters | Done (v1.0) |
+| Inbox HTML rendering | Not started (plain text only) |
 
 ## 2. Folder structure
 
@@ -90,14 +91,14 @@ Order per request: security headers (CSP, nosniff, DENY framing, no-referrer, CO
 | `src/engine/sendEngine.js` | `tick()`: for every usable sender (active, healthy, not throttled, reply tracking OK) sends at most ONE due email. At-most-once delivery: a `sending` row with unique key `cl:<lead>:s:<step>` is written before SMTP; leftovers after a crash are marked failed and NOT retried. Errors are classified (`lib/sendErrors.js`): auth -> pause sender; quota -> sender waits; bad recipient -> bounce + suppress; policy -> stop lead; transient -> backoff 5/15/60/240/720 min, 5 attempts. Handles window, weekdays, UTC offset, daily limit, warm-up, merge-field check, threading (`Re:`, In-Reply-To, References), signature, unsubscribe footer + headers |
 | `src/engine/inboxSync.js` | reads each sender's mailbox read-only: first sync only baselines (no history import); matches replies/bounces to OUR sent emails by Message-ID (fallback: sender address); reply -> stop sequence + sentiment; "stop" phrases -> suppression + end other sequences; out-of-office -> keep going, push next email +3 days; hard bounce -> bounced + suppressed + invalid; policy -> lead error; soft -> ignored; UIDVALIDITY reset handled |
 | `src/engine/scheduler.js` | timers: send tick 5 s, reply sync 60 s, health hourly; recovers interrupted sends at start; nothing starts in mode `off` |
-| `src/engine/mailer.js`, `mailbox.js` | SMTP (nodemailer, TLS enforced, cert verified) and IMAP (`imap` + `mailparser`, INBOX read-only) adapters, each with a no-network dry-run twin |
+| `src/engine/mailer.js`, `mailbox.js` | SMTP (nodemailer, TLS enforced, cert verified) and IMAP (`imap` + `mailparser`, INBOX read-only) adapters; library loading is all-or-nothing (`npm run doctor` checks it) |
 | `src/services/inbox.js`, `routes/inbox.js` | conversations list (sentiment / unread / campaign / sender / search filters), thread, mark read, manual sentiment, manual reply (same sender, threaded, refused for suppressed contacts). Plain text only |
 | `src/services/unsubscribe.js`, `routes/public.js` | public `/u/:token`: GET shows a confirm page (scanners prefetch links), POST (button or RFC 8058 one-click) suppresses the address everywhere |
 | `src/services/senderTest.js` | "Test connection": SMTP + IMAP login with friendly errors; arms reply tracking |
 | `src/services/campaignState.js`, `senderHealth.js` | derived campaign status + auto-complete; 30-day health score with auto-pause below 50 |
 | `src/lib/sentiment.js`, `bounce.js`, `sendErrors.js`, `unsub.js`, `html.js` | reply classifier (quoted text stripped), DSN parser, SMTP error classifier, signed unsubscribe tokens, html<->text helpers |
 
-**Sending modes** (`SENDERBOLT_SENDING` in `.env`): `off` (engine stopped), `dry-run` (default: the whole flow runs, the mailer only logs; mailbox returns nothing), `live` (real SMTP + IMAP; sending is blocked for a sender until its mailbox is armed and synced in the last 15 minutes, because replies must be detectable).
+**Sending**: always real. `SENDERBOLT_SENDING=off` is a kill switch that stops the engine. Sending is blocked for a sender until its mailbox is armed and synced in the last 15 minutes, because replies must be detectable. Tests inject fake mailers/mailboxes through `config.mailer` / `config.mailbox`.
 
 ### Projects (v0.5)
 | File | Role |
@@ -152,8 +153,8 @@ The API adds read-only `warmup_day`, `warmup_reaches_day`, `warmup_slowed` (null
 | `src/services/senders.js` (v0.7) | `list/get` now add read-only `sent_today` (today UTC only), `limit_today` (warm-up aware), `remaining_today`, `warmup_day`, `hard_cap`; the password is still never returned |
 | `public/js/screens/leads.js` (v0.8) | Leads screen, routes `#/leads` (lists) and `#/leads/suppression`. Folder list; import dialog (CSV file via FileReader with drag and drop, or pasted text; Excel is refused with instructions); stats strip whose tiles filter the table; searchable, sortable, paged table with plain-language verifier notes; bulk delete / do-not-email; "Check emails" scope dialog + progress run (500 per request, honours 429 Retry-After, stoppable, one run at a time); do-not-email tab (paged, add by paste, remove with warning). Display only: the server stays the authority for validity and limits |
 | `public/js/app.js` | boot, auth flow, sidebar, hash router, test-mode / offline banners, unread badge |
-| `scripts/demo.js` (`npm run demo`) | opt-in sample data with a RANDOM one-time password; refuses live mode, non-localhost binding and databases with a real account |
-| `test/ui.js` | static-serving traversal attacks, header checks, source scan forbidding unsafe DOM APIs / inline code / external resources, demo-script safety |
+| `scripts/doctor.js` (`npm run doctor`) | checks sqlite3, nodemailer, imap and mailparser and prints the real load error if one fails |
+| `test/ui.js` | static-serving traversal attacks, header checks, source scan forbidding unsafe DOM APIs / inline code / external resources |
 
 DOMPurify is needed only when the Inbox screen renders reply HTML (planned: sanitize in the browser, show in a sandboxed iframe); the UI built so far renders no server HTML at all.
 
@@ -204,19 +205,30 @@ Every state-changing call needs headers `X-SB-Client: 1` and `X-CSRF-Token: <fro
 ## 6. Known gaps (honest list)
 
 1. **Campaign work has not yet been run on Node 12 + `sqlite3`.** Foundation, senders and leads were confirmed on Windows 7 / Node 12.22 by the project owner. The campaign module is new: run `npm test` again after pulling.
-2. **Live SMTP/IMAP adapters are untested against real servers.** The engine, sync and every failure path are tested with fakes; `nodemailer`, `imap` and `mailparser` calls follow their docs but have not been run against Gmail. Start with dry-run, then one sender and one lead to yourself. Their exact versions in `package.json` also need confirming on Node 12 (`npm install`).
+2. **Live SMTP/IMAP adapters are untested against real servers.** The engine, sync and every failure path are tested with fakes; `nodemailer`, `imap` and `mailparser` calls follow their docs but have not been run against Gmail; `npm run doctor` reports library load problems. Start with one sender and one lead to yourself. Their exact versions in `package.json` also need confirming on Node 12 (`npm install`).
 3. **Outgoing HTML is sanitized (own allowlist), inbound reply HTML is not rendered yet.** Campaign bodies and signatures go through `lib/sanitize.js`. Reply HTML is stored but never shown; when the Inbox renders it, run it through the same sanitizer client-side plus a sandboxed iframe. Older campaigns created before v0.9 are cleaned at send time.
 3b. Windows/time zones are enforced; "weekdays only" means Mon-Fri in the campaign's UTC offset. Daily limits reset at UTC midnight.
-3c. Open tracking (`track_opens`) is stored but not implemented. Unsubscribe links use the app's public origin, not the tracking domain. Replies landing in Gmail's Spam folder are not seen (INBOX only). If a sender goes down, its assigned leads wait for it (the campaign shows `error` only when no waiting lead has a usable sender).
+3c. Open tracking is opt-in per campaign (pixel `/t/o/<token>.gif`, needs `SENDERBOLT_PUBLIC_ORIGIN`); counts are approximate (mail-app prefetch inflates, blocked images undercount). Campaign sender filter is not built on the project page. Unsubscribe links use the app's public origin, not the tracking domain. Replies landing in Gmail's Spam folder are not seen (INBOX only). If a sender goes down, its assigned leads wait for it (the campaign shows `error` only when no waiting lead has a usable sender).
 3d. Inbox shows plain text only; HTML replies are stored but never exposed until DOMPurify is added.
 4. **Connect-time DNS check for hosts** (anti-rebinding) is not done; only the hostname format is validated.
 5. Follow-up waits are capped at 60 days.
 6. Verification means "domain can receive mail", not "mailbox exists" (by design; see leads.js header). The checker never produces `catch_all`, so the Leads screen's Risky tile (risky + catch-all) is effectively risky only.
-6b. Imports are CSV or pasted text only; Excel files must be saved as CSV (Excel import is not built).
+6b. Imports: CSV, pasted text or .xlsx (first sheet, values only, 8 MB / 60,000 rows; no .xls/.ods). Parsed by `src/lib/xlsx.js` with zip-bomb and encryption guards.
 7. Login rate limits are in memory (reset on restart); fine for one user, swap for a shared store before multi-node SaaS.
 8. Run behind HTTPS (and set `SENDERBOLT_SECURE_COOKIES=1`) before exposing beyond localhost.
 
 ## 7. Next steps (suggested order)
 
-1. Live test with one real Gmail App Password (dry-run first).
-2. Open tracking, Excel import, a campaign edit screen (campaigns can be edited via the API while they are drafts) (vanilla JS + clean CSS, tooltips) served with the existing CSP.
+1. Live test with one real Gmail App Password .
+2. Inbox HTML rendering (DOMPurify + sandboxed iframe) (vanilla JS + clean CSS, tooltips) served with the existing CSP.
+
+
+## v1.0 additions
+| Path | Role |
+|---|---|
+| `src/db/migrations/008_scoping_tracking.sql` | triggers enforcing project scoping (no loose main campaigns, parts never carry a project, no cross-user projects); `messages.opened_at/open_count` |
+| `src/lib/xlsx.js`, `test/xlsx.js` | hardened .xlsx reader |
+| `src/lib/track.js`, `src/services/tracking.js`, `src/routes/public.js` | signed open-tracking pixel |
+| `src/services/campaigns.js` `batch`, `projects.js` `batch`, `leads.js` `moveLeads` | batch delete/move/archive endpoints: `POST /api/campaigns/batch`, `/api/projects/batch`, `/api/leads/move` |
+| `public/js/lists.js` | shared filter chips, tags, selection bar |
+| `scripts/doctor.js` | `npm run doctor` library check |

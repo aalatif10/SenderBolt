@@ -1,7 +1,7 @@
 'use strict';
 // Reads each sender's mailbox (read-only) and turns what it finds into campaign events:
 //   reply            -> store it, classify sentiment, STOP the lead's sequence (if the campaign says so)
-//   "stop/unsubscribe" reply -> also suppress the address everywhere
+//   reply containing "stop campaign" -> that person only: unsubscribed + do-not-email list
 //   auto-reply (out of office) -> store it, do NOT stop; push the next email back 3 days
 //   hard bounce      -> lead 'bounced', address suppressed + marked invalid, sender health recomputed
 //   policy bounce    -> lead 'error' (address may be fine), hurts sender health
@@ -128,6 +128,8 @@ S.processMessage = function (sender, m) {
         var text = String(m.text || '');
         var kind = bounce ? 'bounce' : (auto ? 'auto_reply' : 'email');
         var cls = kind === 'email' ? sentiment.classify(text) : null;
+        var stop = kind === 'email' && sentiment.isStopRequest(m.subject, text);
+        if (stop) cls = { sentiment: 'not_interested' };
         var sent = kind === 'email' ? cls.sentiment : (kind === 'auto_reply' ? 'out_of_office' : null);
         var cat = bounce ? bounce.kind : null;
         return self.db.transaction(function (tx) {
@@ -139,7 +141,7 @@ S.processMessage = function (sender, m) {
               if (cl.status !== 'active') return null;
               return tx.run("UPDATE campaign_leads SET next_send_at = ? WHERE id = ? AND status = 'active' AND next_send_at < ?", [t + OOO_DELAY_MS, cl.id, t + OOO_DELAY_MS]);
             }
-            return self._applyReply(tx, cl, cls, t);
+            return self._applyReply(tx, cl, stop, t);
           });
         }).then(function () {
           if (bounce && (bounce.kind === 'hard' || bounce.kind === 'policy')) return senderHealth.recompute(self.db, sender.id, t);
@@ -165,19 +167,23 @@ S._applyBounce = function (tx, cl, bounce, t) {
   return null;     // soft bounce: the original server keeps retrying; nothing to do
 };
 
-S._applyReply = function (tx, cl, cls, t) {
-  var p = Promise.resolve();
-  if (cl.stop_on_reply === 1 && STOPPABLE.indexOf(cl.status) !== -1) {
-    p = tx.run("UPDATE campaign_leads SET status = 'replied', next_send_at = NULL, status_note = NULL WHERE id = ? AND status IN ('active','pending','paused','completed')", [cl.id])
-      .then(function () { return state.completeIfDone(tx, cl.campaign_id, t); });
+// stop = the reply contains the exact phrase "stop campaign" (see lib/sentiment.js isStopRequest).
+//  - normal reply: the lead's own sequence ends as 'replied' (when the campaign has stop_on_reply);
+//  - stop request: THIS person only: status 'unsubscribed' in every sequence aimed at their address, address added to the
+//    do-not-email list. Everybody else in the campaign keeps going.
+S._applyReply = function (tx, cl, stop, t) {
+  if (!stop) {
+    if (cl.stop_on_reply === 1 && STOPPABLE.indexOf(cl.status) !== -1) {
+      return tx.run("UPDATE campaign_leads SET status = 'replied', next_send_at = NULL, status_note = NULL WHERE id = ? AND status IN ('active','pending','paused','completed')", [cl.id])
+        .then(function () { return state.completeIfDone(tx, cl.campaign_id, t); });
+    }
+    return Promise.resolve();
   }
-  if (!cls.stop) return p;
-  // An explicit "stop emailing me": suppress the address and end every other sequence aimed at it.
-  return p.then(function () { return tx.run("INSERT OR IGNORE INTO suppression (user_id, email, reason, created_at) VALUES (?,?,'replied_stop',?)", [cl.user_id, cl.lead_email, t]); })
-    .then(function () {
-      return tx.all("SELECT DISTINCT campaign_id FROM campaign_leads WHERE status IN ('pending','active','paused') AND lead_id IN (SELECT id FROM leads WHERE user_id = ? AND email = ?)", [cl.user_id, cl.lead_email]);
-    }).then(function (camps) {
-      return tx.run("UPDATE campaign_leads SET status = 'unsubscribed', next_send_at = NULL, status_note = 'Asked to stop' WHERE status IN ('pending','active','paused') AND lead_id IN (SELECT id FROM leads WHERE user_id = ? AND email = ?)", [cl.user_id, cl.lead_email])
+  var same = "lead_id IN (SELECT id FROM leads WHERE user_id = ? AND email = ?)";
+  return tx.run("INSERT OR IGNORE INTO suppression (user_id, email, reason, created_at) VALUES (?,?,'replied_stop',?)", [cl.user_id, cl.lead_email, t])
+    .then(function () { return tx.all("SELECT DISTINCT campaign_id FROM campaign_leads WHERE (id = ? OR status IN ('pending','active','paused')) AND " + same, [cl.id, cl.user_id, cl.lead_email]); })
+    .then(function (camps) {
+      return tx.run("UPDATE campaign_leads SET status = 'unsubscribed', next_send_at = NULL, status_note = 'Replied \"stop campaign\"' WHERE (id = ? OR status IN ('pending','active','paused')) AND " + same, [cl.id, cl.user_id, cl.lead_email])
         .then(function () { return camps.reduce(function (q, c) { return q.then(function () { return state.completeIfDone(tx, c.campaign_id, t); }); }, Promise.resolve()); });
     });
 };

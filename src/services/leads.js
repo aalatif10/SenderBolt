@@ -8,6 +8,7 @@
 // from counts only, and sort columns come from a fixed whitelist).
 var dns = require('dns');
 var csv = require('../lib/csv');
+var xlsx = require('../lib/xlsx');
 var email = require('../lib/email');
 var text = require('../lib/text');
 var AppError = require('../lib/errors').AppError;
@@ -20,7 +21,7 @@ var MAX_DELETE_BATCH = 1000;
 var MAX_EXPORT_ROWS = 100000;
 var DNS_TIMEOUT_MS = 5000;
 var STATUSES = ['unverified', 'valid', 'invalid', 'catch_all', 'risky'];
-var SORTS = { created_at: 'l.created_at', email: 'l.email', company: 'l.company', verify_status: 'l.verify_status' };
+var SORTS = { created_at: 'l.created_at', email: 'l.email', company: 'l.company', verify_status: 'l.verify_status', domain: 'l.domain', name: 'l.first_name', verified_at: 'l.verified_at' };
 
 var DISPOSABLE = {};
 ['mailinator.com', 'guerrillamail.com', '10minutemail.com', 'tempmail.com', 'yopmail.com', 'trashmail.com',
@@ -51,9 +52,17 @@ function parseInput(format, data) {
     while ((m = re.exec(data)) !== null) { out.push({ email: m[0].replace(/[.:]+$/, ''), row: ++n }); if (out.length > MAX_IMPORT_ROWS) break; }
     return out;
   }
-  if (format !== 'csv') throw new AppError('validation', 'Format must be csv or paste', 400, { format: 'Unsupported format' });
+  if (format !== 'csv' && format !== 'xlsx') throw new AppError('validation', 'Format must be csv, xlsx or paste', 400, { format: 'Unsupported format' });
   var rows;
-  try { rows = csv.parse(data); } catch (e) { throw new AppError('validation', 'Could not read the CSV: ' + e.message, 400, { data: e.message }); }
+  if (format === 'xlsx') {
+    if (!/^[A-Za-z0-9+\/=\r\n]+$/.test(data)) throw new AppError('validation', 'The Excel file was not uploaded correctly', 400, { data: 'Invalid upload' });
+    try { rows = xlsx.readRows(Buffer.from(data, 'base64')); } catch (e) {
+      if (e.code === 'xlsx') throw new AppError('validation', e.message, 400, { data: e.message });
+      throw new AppError('validation', 'Could not read this Excel file. Save it as CSV and try again.', 400, { data: 'Unreadable file' });
+    }
+  } else {
+    try { rows = csv.parse(data); } catch (e) { throw new AppError('validation', 'Could not read the CSV: ' + e.message, 400, { data: e.message }); }
+  }
   if (!rows.length) throw new AppError('validation', 'The CSV is empty', 400, { data: 'Empty file' });
   var map = {}, hasHeader = false, first = rows[0];
   first.forEach(function (cell, i) {
@@ -262,6 +271,22 @@ function leadFilter(userId, folderId, o) {
     where.push("(l.email LIKE ? ESCAPE '\\' OR l.company LIKE ? ESCAPE '\\' OR l.first_name LIKE ? ESCAPE '\\' OR l.last_name LIKE ? ESCAPE '\\')");
     params.push(like, like, like, like);
   }
+  // Smart filters (all optional, combinable)
+  if (o.role === 'only') where.push('l.is_role = 1'); else if (o.role === 'exclude') where.push('l.is_role = 0');
+  else if (o.role && o.role !== 'all') throw new AppError('validation', 'Invalid mailbox filter', 400, { role: 'Invalid filter' });
+  if (o.missing) {
+    var miss = { name: "(COALESCE(l.first_name,'') = '')", company: "(COALESCE(l.company,'') = '')", any: "(COALESCE(l.first_name,'') = '' OR COALESCE(l.company,'') = '')" }[o.missing];
+    if (!miss) throw new AppError('validation', 'Invalid missing-field filter', 400, { missing: 'Invalid filter' });
+    where.push(miss);
+  }
+  if (o.domain) {
+    var dom = String(o.domain).trim().toLowerCase().slice(0, 100).replace(/^@/, '');
+    if (!/^[a-z0-9.\-]+$/.test(dom)) throw new AppError('validation', 'Invalid domain', 400, { domain: 'Use letters, numbers, dots and dashes' });
+    where.push("l.domain LIKE ? ESCAPE '\\'"); params.push('%' + dom.replace(/[\\%_]/g, '\\$&') + '%');
+  }
+  if (o.in_campaign === '1' || o.in_campaign === '0') {
+    where.push((o.in_campaign === '1' ? '' : 'NOT ') + 'EXISTS (SELECT 1 FROM campaign_leads cl WHERE cl.lead_id = l.id)');
+  } else if (o.in_campaign && o.in_campaign !== 'all') throw new AppError('validation', 'Invalid campaign filter', 400, { in_campaign: 'Invalid filter' });
   return { sql: where.join(' AND '), params: params };
 }
 
@@ -318,6 +343,19 @@ Leads.prototype.deleteLeads = function (userId, ids, ip) {
   }).then(function (r) {
     return audit.log(self.db, { userId: userId, action: 'leads.delete', ip: ip, meta: { requested: list.length, deleted: r.changes } }, self.now)
       .then(function () { return { deleted: r.changes }; });
+  });
+};
+
+// Move leads to another folder (leads already in that folder with the same email stay where they are).
+Leads.prototype.moveLeads = function (userId, ids, folderId, ip) {
+  var self = this, list, fid = Number(folderId);
+  try { list = idList(ids, MAX_DELETE_BATCH); } catch (e) { return Promise.reject(e); }
+  if (!isFinite(fid) || fid < 1 || Math.floor(fid) !== fid) return Promise.reject(new AppError('validation', 'Choose a folder', 400, { folder_id: 'Choose a folder' }));
+  return this._folder(userId, fid).then(function () {
+    return self.db.run('UPDATE OR IGNORE leads SET folder_id = ? WHERE user_id = ? AND id IN (' + placeholders(list.length) + ')', [fid, userId].concat(list));
+  }).then(function (r) {
+    return audit.log(self.db, { userId: userId, action: 'leads.move', ip: ip, meta: { requested: list.length, moved: r.changes, folder_id: fid } }, self.now)
+      .then(function () { return { moved: r.changes, skipped: list.length - r.changes }; });
   });
 };
 

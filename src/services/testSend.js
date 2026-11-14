@@ -8,7 +8,6 @@
 //    and is limited by the route rate limit (10 per 10 minutes per user);
 //  - only an ACTIVE sender owned by the user can be used; its limit for today must not be used up;
 //  - subject is prefixed "[TEST]"; the unsubscribe link is NOT generated (it could not work for a test);
-//  - in dry-run mode nothing is sent and the answer says so;
 //  - errors are reduced to friendly text (no server responses, never the password).
 var AppError = require('../lib/errors').AppError;
 var email = require('../lib/email');
@@ -66,10 +65,8 @@ T.send = function (user, input, ip) {
       var mail = composed.mail;
       mail.to = to; mail.subject = '[TEST] ' + mail.subject.replace(/[\r\n]+/g, ' ');
       mail.inReplyTo = null; mail.references = [];
-      var live = self.mailer.mode === 'live';
-      var out = { to: to, sender: snd.email, subject: mail.subject, delivered: live, dry_run: !live, missing: composed.missing, used_lead: usedLead };
-      return audit.log(self.db, { userId: user.id, action: 'test_email.send', entity: 'sender', entityId: snd.id, ip: ip, meta: { to: to, live: live } }, self.now).then(function () {
-        if (!live) return out;
+      var out = { to: to, sender: snd.email, subject: mail.subject, delivered: true, missing: composed.missing, used_lead: usedLead };
+      return audit.log(self.db, { userId: user.id, action: 'test_email.send', entity: 'sender', entityId: snd.id, ip: ip, meta: { to: to } }, self.now).then(function () {
         return self.engine.deliver(snd, mail).then(function () { return out; }, function (err) {
           throw new AppError('conflict', 'The test email was not sent: ' + sendErrors.classify(err).message, 502);
         });

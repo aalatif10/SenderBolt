@@ -8,22 +8,34 @@
 // normalized message = { uid, messageId, inReplyTo, references[], from, fromName, to, subject, date,
 //   text, html, autoSubmitted, precedence, xAutoreply, xAutoResponseSuppress, contentType, dsn }
 //
-// 'live' uses the "imap" and "mailparser" packages. NOTE: written to their documented APIs; it has not
-// been run against a real mailbox yet (see docs/ARCHITECTURE.md).
+// Uses the "imap" and "mailparser" packages (see `npm run doctor` if they fail to load).
 
 var BATCH = 100;
 
-function createLive() {
-  var Imap, parser;
+function createLive(opts) {
+  var load = (opts && opts.require) || require;
+  var Imap = null, parser = null;
+  // Both libraries are loaded into locals first and only published when BOTH loaded, so a half-loaded state
+  // (the cause of "Cannot read property 'simpleParser' of undefined") is impossible; a failure is retried next sync.
   function libs() {
-    if (!Imap) {
-      try { Imap = require('imap'); parser = require('mailparser'); } catch (e) { throw new Error('Reply tracking needs the "imap" and "mailparser" packages. Run: npm install'); }
+    if (Imap && parser) return;
+    var i, m, which = 'imap';
+    try { i = load('imap'); which = 'mailparser'; m = load('mailparser'); } catch (e) {
+      var err = new Error('Reply tracking could not load the "' + which + '" package: ' + String((e && e.message) || e).split('\n')[0] +
+        ' - run "npm install", then "npm run doctor" for details');
+      err.code = 'mailbox_libs'; throw err;
     }
+    if (typeof m.simpleParser !== 'function') { var e2 = new Error('The installed "mailparser" has no simpleParser (unsupported version) - run "npm run doctor"'); e2.code = 'mailbox_libs'; throw e2; }
+    Imap = i; parser = m;
+  }
+  function parseStream(stream) {
+    return Promise.resolve().then(function () { return parser.simpleParser(stream); });   // sync throws become rejections
   }
   function withImap(creds, fn) {
-    libs();
-    var imap = new Imap({ user: creds.user, password: creds.pass, host: creds.host, port: creds.port, tls: true,
-      tlsOptions: { servername: creds.host, minVersion: 'TLSv1.2' }, connTimeout: 15000, authTimeout: 15000 });
+    try { libs(); } catch (e) { return Promise.reject(e); }      // always a rejection, never a synchronous throw
+    var imap;
+    try { imap = new Imap({ user: creds.user, password: creds.pass, host: creds.host, port: creds.port, tls: true,
+      tlsOptions: { servername: creds.host, minVersion: 'TLSv1.2' }, connTimeout: 15000, authTimeout: 15000 }); } catch (e2) { return Promise.reject(e2); }
     var lateError = null;
     imap.on('error', function (e) { lateError = e; });                   // never let a socket error crash the process
     return new Promise(function (resolve, reject) {
@@ -74,11 +86,11 @@ function createLive() {
             var pending = [], f = imap.fetch(uids, { bodies: '' });
             f.on('message', function (msg) {
               var info = { uid: null, parse: null };
-              msg.on('body', function (stream) { info.parse = parser.simpleParser(stream); });
+              msg.on('body', function (stream) { try { info.parse = parseStream(stream); info.parse.catch(function () { /* handled at 'end' */ }); } catch (e) { info.parse = null; } });
               msg.once('attributes', function (a) { info.uid = a.uid; });
               msg.once('end', function () {
                 pending.push(Promise.resolve(info.parse).then(function (p) { return { uid: info.uid, msg: p ? normalize(info.uid, p) : null }; },
-                  function () { return { uid: info.uid, msg: null }; }));
+                  function () { return { uid: info.uid, msg: null }; }).then(function (r) { return r; }));
               });
             });
             f.once('error', reject);
@@ -96,13 +108,4 @@ function createLive() {
   };
 }
 
-function createDryRun() {
-  return {
-    mode: 'dry-run',
-    verify: function () { return Promise.resolve(true); },
-    baseline: function () { return Promise.resolve({ uidValidity: 1, lastUid: 0 }); },
-    fetchSince: function (creds, st) { return Promise.resolve({ uidValidity: st.uidValidity, lastUid: st.lastUid, messages: [] }); }
-  };
-}
-
-module.exports = { createLive: createLive, createDryRun: createDryRun, BATCH: BATCH };
+module.exports = { createLive: createLive, BATCH: BATCH };

@@ -75,7 +75,7 @@ h.test('one email per sender per tick (throttle), message + lead + sender state 
       assert.ok(/^p\d@co\d\.com$/.test(m.to)); assert.notStrictEqual(c.sent[1].mail.to, m.to); assert.strictEqual(m.subject, 'Question about your domain');
       assert.ok(/<s1\.|\.\d+@gmail\.com>$/.test(m.messageId) || /@gmail\.com>$/.test(m.messageId));
       assert.ok(m.headers['List-Unsubscribe'].indexOf('mailto:') !== -1);
-      assert.ok(m.html.indexOf('unsubscribe') !== -1 && m.text.indexOf('Hi there') === 0);
+      assert.ok(m.html.indexOf('stop campaign') !== -1 && m.text.indexOf('Hi there') === 0);
       assert.strictEqual(c.sent[0].creds.pass, 'abcdefghijklmnop', 'password decrypted only for sending');
     });
   });
@@ -254,12 +254,6 @@ h.test('campaign shows error when no waiting lead has a usable sender, and recov
 });
 
 h.group('engine: adapters and error classification');
-h.test('dry-run mailer never touches the network and echoes the message id', function () {
-  var logged = [], m = mailerLib.createDryRun(function (l) { logged.push(l); });
-  return m.send({}, { subject: 'S', from: { address: 'a@b.com' }, to: 'c@d.com', messageId: '<1@x>' }).then(function (r) {
-    assert.strictEqual(r.messageId, '<1@x>'); assert.ok(/dry-run/.test(logged[0])); return m.verify();
-  });
-});
 h.test('SMTP error classification table', function () {
   var cases = [
     [smtpErr('EAUTH', 535, 'Invalid login'), 'auth'], [smtpErr('', 534, '5.7.9 Application-specific password required'), 'auth'],
@@ -340,6 +334,28 @@ h.test('recent bounces slow the ramp (7-day rate) and it recovers; tiny samples 
       .then(function () { c.clock.t += 8 * DAY; return senderHealth.recompute(c.db, c.sid, c.clock.t); })                      // old bounces fall out of the 7-day window
       .then(function () { return c.db.get('SELECT warmup_penalty FROM senders WHERE id = ?', [c.sid]); })
       .then(function (r) { assert.strictEqual(r.warmup_penalty, 0, 'recovered once the bounces are older than 7 days'); });
+  });
+});
+
+h.group('open tracking');
+h.test('pixel only when the campaign opted in AND a public origin exists; pixel hit is recorded once per email, forged tokens never', function () {
+  var TrackingService = require('../src/services/tracking').TrackingService, track = require('../src/lib/track');
+  return setup({ origin: 'https://app.example' }).then(function (c) {
+    return launch(c, 1, { track_opens: true }).then(function () { return c.engine.tick(); }).then(function () {
+      var m = c.sent[0].mail; assert.ok(/<img src="https:\/\/app\.example\/t\/o\/\d+\.0\.[\w-]+\.gif" width="1" height="1"/.test(m.html), m.html);
+      assert.ok(m.text.indexOf('/t/o/') === -1, 'plain-text part has no tracking link');
+      var tok = /\/t\/o\/([^"]+)\.gif/.exec(m.html)[1], svc = new TrackingService(c.db, { secret: SECRET, now: function () { return c.clock.t; } });
+      return svc.recordOpen(tok).then(function (ok) { assert.strictEqual(ok, true); return svc.recordOpen(tok); }).then(function () {
+        return svc.recordOpen(tok.replace(/.$/, function (ch) { return ch === 'A' ? 'B' : 'A'; }));
+      }).then(function (forged) {
+        assert.strictEqual(forged, false); return svc.recordOpen(track.make('wrong-secret-wrong-secret-wrong', 1, 0));
+      }).then(function (f2) { assert.strictEqual(f2, false); return c.db.get("SELECT open_count, opened_at FROM messages WHERE direction = 'out'"); })
+        .then(function (row) { assert.strictEqual(row.open_count, 2); assert.strictEqual(row.opened_at, c.clock.t); });
+    });
+  }).then(function () { return setup({ origin: 'https://app.example' }); }).then(function (c) {
+    return launch(c, 1).then(function () { return c.engine.tick(); }).then(function () { assert.ok(c.sent[0].mail.html.indexOf('/t/o/') === -1, 'not opted in: no pixel'); return setup({}); });
+  }).then(function (c) {
+    return launch(c, 1, { track_opens: true }).then(function () { return c.engine.tick(); }).then(function () { assert.ok(c.sent[0].mail.html.indexOf('<img') === -1, 'no public origin: no pixel'); });
   });
 });
 

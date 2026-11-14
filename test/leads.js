@@ -217,4 +217,19 @@ h.test('leadIds returns every matching id (status filter), is scoped to the owne
   });
 });
 
+h.group('leads: smart filters');
+h.test('role / missing / domain / in-campaign filters combine; bad values are rejected; sorts by domain', function () {
+  return setup().then(function (c) {
+    var data = 'email,first name,company\nann@alpha.com,Ann,Alpha\ninfo@alpha.com,,Alpha\nbob@beta.org,Bob,\nsales@beta.org,,\n';
+    return c.svc.importLeads(c.a, c.folder, 'csv', data).then(function () {
+      function n(o) { return c.svc.listLeads(c.a, c.folder, o).then(function (r) { return r.total; }); }
+      return Promise.all([n({ role: 'only' }), n({ role: 'exclude' }), n({ missing: 'name' }), n({ missing: 'company' }), n({ missing: 'any' }), n({ domain: 'beta' }), n({ domain: '@alpha.com', role: 'exclude' }), n({ in_campaign: '0' }), n({ in_campaign: '1' })]);
+    }).then(function (r) {
+      assert.deepStrictEqual(r, [2, 2, 2, 2, 3, 2, 1, 4, 0]);
+      return Promise.all(['role', 'missing', 'domain', 'in_campaign'].map(function (k) { var o = {}; o[k] = k === 'domain' ? "x'; DROP TABLE leads;--" : 'bogus'; return h.expectReject(c.svc.listLeads(c.a, c.folder, o), 'validation'); }));
+    }).then(function () { return c.svc.listLeads(c.a, c.folder, { sort: 'domain', dir: 'asc' }); })
+      .then(function (r) { assert.strictEqual(r.items[0].domain, 'alpha.com'); assert.strictEqual(r.items[3].domain, 'beta.org'); });
+  });
+});
+
 h.run();

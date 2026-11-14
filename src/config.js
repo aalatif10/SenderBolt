@@ -33,8 +33,10 @@ function build(env) {
     origins.push(o);
     hosts.push(o.replace(/^https?:\/\//, ''));
   }
-  var sending = (env.SENDERBOLT_SENDING || 'dry-run').toLowerCase();
-  if (['off', 'dry-run', 'live'].indexOf(sending) === -1) throw new Error('SENDERBOLT_SENDING must be off, dry-run or live');
+  // Real sending is the only mode. SENDERBOLT_SENDING=off is a kill switch that stops the engine (nothing is simulated).
+  var sending = (env.SENDERBOLT_SENDING || 'live').toLowerCase();
+  if (sending === 'dry-run') throw new Error('SENDERBOLT_SENDING=dry-run no longer exists: SenderBolt always sends for real. Remove the line from .env (or use "off" to stop the engine).');
+  if (['off', 'live'].indexOf(sending) === -1) throw new Error('SENDERBOLT_SENDING must be live (default) or off');
   var publicOrigin = '';
   if (env.SENDERBOLT_PUBLIC_ORIGIN) {
     var pu;
