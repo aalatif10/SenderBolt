@@ -9,12 +9,14 @@
 //   - links must be http(s) or mailto (entity / whitespace / control-character tricks are decoded first)
 //   - style attributes keep only: font-family (allowlisted families), font-size, font-weight, font-style,
 //     text-decoration (underline), color. url(), expression(), escapes and comments can never survive
+//   - the ONLY image allowed is <img src="sbimg:<id>" alt width height>: a reference to a picture the user uploaded (see
+//     services/images.js). External, data: and any other image sources are dropped, so nothing can be hot-linked or tracked
 //   - template syntax ({{first_name|there}}, {Hi|Hello}) is plain text, so it passes through untouched
 // It is applied when a sequence is saved, when a preview is rendered, and again right before sending.
 // (This is not a general purpose DOM sanitizer: it is only meant for the small HTML subset the editor produces.)
 
-var ALLOWED = { p: 1, div: 1, br: 1, span: 1, b: 1, strong: 1, i: 1, em: 1, u: 1, a: 1, ul: 1, ol: 1, li: 1, blockquote: 1 };
-var VOID = { br: 1 };
+var ALLOWED = { p: 1, div: 1, br: 1, span: 1, b: 1, strong: 1, i: 1, em: 1, u: 1, a: 1, ul: 1, ol: 1, li: 1, blockquote: 1, img: 1 };
+var VOID = { br: 1, img: 1 };
 var DROP_WITH_CONTENT = { script: 1, style: 1, iframe: 1, object: 1, embed: 1, template: 1, noscript: 1, textarea: 1, title: 1, svg: 1, math: 1, head: 1, xmp: 1, plaintext: 1, noframes: 1 };
 var MAX_DEPTH = 40;
 var MAX_HREF = 2000;
@@ -160,6 +162,14 @@ function clean(input) {
       continue;
     }
     if (tag.name === 'br') { out += '<br>'; continue; }
+    if (tag.name === 'img') {
+      var ref = Object.prototype.hasOwnProperty.call(tag.attrs, 'src') ? /^sbimg:(\d{1,15})$/.exec(decodeEntities(tag.attrs.src).trim()) : null;
+      if (!ref) continue;                                             // any other image source is dropped
+      var alt = Object.prototype.hasOwnProperty.call(tag.attrs, 'alt') ? decodeEntities(tag.attrs.alt).replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 125) : '';
+      var iw = /^\d{1,4}$/.test(tag.attrs.width || '') ? parseInt(tag.attrs.width, 10) : 0, ih = /^\d{1,4}$/.test(tag.attrs.height || '') ? parseInt(tag.attrs.height, 10) : 0;
+      out += '<img src="sbimg:' + ref[1] + '" alt="' + escAttr(alt) + '"' + (iw >= 8 && iw <= 1000 ? ' width="' + iw + '"' : '') + (ih >= 8 && ih <= 1600 ? ' height="' + ih + '"' : '') + '>';
+      continue;
+    }
     if (stack.length >= MAX_DEPTH) continue;
 
     // simple nesting hygiene

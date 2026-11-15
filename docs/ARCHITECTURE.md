@@ -1,4 +1,4 @@
-# SenderBolt - Architecture Report (v0.10.0)
+# SenderBolt - Architecture Report (v1.1.0)
 
 Target runtime: **Node.js 12.22.x on Windows 7 (64-bit)**. Code is written in ES2018-style JavaScript
 (no `?.`, `??`, or other post-Node-12 syntax) with promise chains.
@@ -17,10 +17,10 @@ Target runtime: **Node.js 12.22.x on Windows 7 (64-bit)**. Code is written in ES
 | Email templates (variables, fallbacks, spintax, safe escaping) | Done |
 | Sending engine + scheduler (live only) | Done (live SMTP adapter not yet run against a real server) |
 | Reply + bounce sync (IMAP), unified inbox, sentiment, manual reply, unsubscribe | Done (live IMAP adapter not yet run against a real mailbox) |
-| Web UI (all screens) | Not started |
 | Own allowlist HTML sanitizer for email bodies (`src/lib/sanitize.js`) | Done (DOMPurify not used, see Campaign Builder) |
 | Excel (.xlsx) import, open tracking, campaign edit (drafts), batch actions, filters | Done (v1.0) |
-| Inbox HTML rendering | Not started (plain text only) |
+| Inbox formatting: reply / signature / quoted history separated (text only; incoming HTML still never exposed) | Done (v1.1) |
+| Campaign Studio, segmented step bars, Reports page, open drill-down, stop-campaign badges, inline pictures, tabbed Settings | Done (v1.1) |
 
 ## 2. Folder structure
 
@@ -209,7 +209,7 @@ Every state-changing call needs headers `X-SB-Client: 1` and `X-CSRF-Token: <fro
 3. **Outgoing HTML is sanitized (own allowlist), inbound reply HTML is not rendered yet.** Campaign bodies and signatures go through `lib/sanitize.js`. Reply HTML is stored but never shown; when the Inbox renders it, run it through the same sanitizer client-side plus a sandboxed iframe. Older campaigns created before v0.9 are cleaned at send time.
 3b. Windows/time zones are enforced; "weekdays only" means Mon-Fri in the campaign's UTC offset. Daily limits reset at UTC midnight.
 3c. Open tracking is opt-in per campaign (pixel `/t/o/<token>.gif`, needs `SENDERBOLT_PUBLIC_ORIGIN`); counts are approximate (mail-app prefetch inflates, blocked images undercount). Campaign sender filter is not built on the project page. Unsubscribe links use the app's public origin, not the tracking domain. Replies landing in Gmail's Spam folder are not seen (INBOX only). If a sender goes down, its assigned leads wait for it (the campaign shows `error` only when no waiting lead has a usable sender).
-3d. Inbox shows plain text only; HTML replies are stored but never exposed until DOMPurify is added.
+3d. Inbox shows plain text only (since v1.1 split into body / signature / folded quote by `lib/replyParse.js`); HTML replies are stored but never exposed.
 4. **Connect-time DNS check for hosts** (anti-rebinding) is not done; only the hostname format is validated.
 5. Follow-up waits are capped at 60 days.
 6. Verification means "domain can receive mail", not "mailbox exists" (by design; see leads.js header). The checker never produces `catch_all`, so the Leads screen's Risky tile (risky + catch-all) is effectively risky only.
@@ -232,3 +232,40 @@ Every state-changing call needs headers `X-SB-Client: 1` and `X-CSRF-Token: <fro
 | `src/services/campaigns.js` `batch`, `projects.js` `batch`, `leads.js` `moveLeads` | batch delete/move/archive endpoints: `POST /api/campaigns/batch`, `/api/projects/batch`, `/api/leads/move` |
 | `public/js/lists.js` | shared filter chips, tags, selection bar |
 | `scripts/doctor.js` | `npm run doctor` library check |
+
+
+## v1.1 additions (UI/UX refinement)
+Run `npm test` (now includes `test/studio.js`). All new code is ES2018 and was syntax-checked at `ecmaVersion: 2018`.
+
+### Backend
+| Path | Role / responsibilities |
+|---|---|
+| `src/db/migrations/009_studio_reports.sql` | `messages.last_opened_at`; indexes for reports; table `email_images` (BLOB, per user, sha256 unique, size cap); `user_settings.prefs` JSON |
+| `src/services/stepProgress.js` | Per-step `sent` / `capacity` for the segmented bar (one GROUP BY on `campaign_leads`; people who left drop out of later steps); `lockedSteps()` = steps with a sent/sending email |
+| `src/services/campaigns.js` | `list`/`get` now return `step_progress` / per-step `sent, capacity, locked`; `listLeads` returns `opt_out`, `replied_at`; new `updateSteps` (`PATCH /api/campaigns/:id/steps`): edits only unsent steps, lock check inside the write transaction, delay change shifts waiting people |
+| `src/services/reports.js`, `src/routes/reports.js` | `GET /api/reports` (totals + previous-period change, cohort funnel, daily series, per-step reply attribution, sentiment, weekday, leaderboard, sender performance); `GET /api/campaigns/:id/opens` (who opened, how often, first/last time) |
+| `src/services/tracking.js` | also records `last_opened_at` |
+| `src/lib/replyParse.js` | splits a reply into body / device signature ("Sent from my Galaxy", "-- ") / quoted history (Outlook, Gmail, Arabic/French/Spanish headers) |
+| `src/services/inbox.js` | list snippet = the reply itself; thread messages carry `view {body, signature, quoted, quotedHeader}`; `opt_out` on rows and conversation |
+| `src/services/settings.js`, `src/routes/settings.js` | partial update; `prefs` (window, time zone, weekdays, stop-on-reply, open tracking, default follow-up delay), whitelisted and range-checked |
+| `src/lib/imageMeta.js`, `src/services/images.js`, `src/routes/images.js` | inline pictures: magic-byte validation (PNG/JPEG/GIF/WebP), metadata stripped, 300 KB / 100 pictures / 25 MB caps, served with `CSP: sandbox`; `embed()` turns `sbimg:ID` into CID inline MIME parts at send time (max 5 per email) |
+| `src/lib/sanitize.js`, `src/engine/mailer.js`, `src/engine/sendEngine.js`, `src/services/testSend.js` | sanitizer accepts only `<img src="sbimg:ID">`; engine / test send / manual reply embed pictures |
+
+### Frontend (`public/`)
+| Path | Role |
+|---|---|
+| `js/ui.js` | `stepBar` (segmented bar), `optBadge`, shared `lifecycleButton` |
+| `js/dom.js` | `SB.svg` attribute-only SVG builder (charts); new icons |
+| `js/screens/studio.js` | Campaign Studio `#/campaign/:id/:tab` (Sequence, Overview, People, Opens, Settings); live editing of unsent steps, unsaved-change guard |
+| `js/screens/reports.js` | `#/reports`, SVG charts, CSV export (formula-safe) |
+| `js/screens/project.js` | campaigns table uses step bars; row click opens the Studio |
+| `js/screens/inbox.js` | clean reply layout, stop-campaign badges and banner |
+| `js/screens/settings.js` | tabs Security / Sending accounts / Signatures / System preferences (`#/settings/:tab`) |
+| `js/editor.js` | Picture button (library, upload, alt text, width); only library pictures survive paste/serialise |
+| `js/screens/wizard.js` | new campaigns start from the saved preferences |
+| `js/app.js` | routes, Reports nav item, `isDirty()` leave guard |
+
+### Behaviour notes
+- A step is frozen once any email of it is sent or sending. Edits apply from the next engine tick; an email already being composed keeps the old text.
+- Open counts are estimates (mail-app image prefetch). The UI says so.
+- Capacity for a step = people still waiting + people who already received it, so a bar reads "34 / 112", not 34 / total leads.

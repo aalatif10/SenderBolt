@@ -11,6 +11,8 @@ module.exports = function buildRoutes(deps) {
   require('./projects')(router, deps);
   require('./drafts')(router, deps);
   require('./settings')(router, deps);
+  require('./images')(router, deps);
+  require('./reports')(router, deps);
   require('./inbox')(router, deps);
   require('./public')(router, deps);
   return router.routes;

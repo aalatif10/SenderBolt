@@ -1,46 +1,16 @@
-/* Project page: roll-up numbers, campaigns table, drill-down panel (batches + per-step funnel). */
+/* Project page: roll-up numbers and the campaigns table with segmented step bars. Clicking a campaign opens the Studio (studio.js). */
 (function () {
   'use strict';
   var h = SB.h, fmt = SB.fmt, ui = SB.ui, M = SB.S.metric;
   SB.screens = SB.screens || {};
 
-  function lifecycle(c, reload) {
-    var label, path, msg, kind = 'primary';
-    if (c.status === 'draft') { label = 'Start'; path = 'start'; msg = 'Emails will start going out to ' + fmt.num(c.leads) + ' people, following your schedule and each sender\'s daily limit.'; }
-    else if (c.status === 'active') { label = 'Pause'; path = 'pause'; msg = 'Sending stops until you resume. Nobody is lost.'; kind = 'plain'; }
-    else if (c.status === 'paused') { label = 'Resume'; path = 'resume'; msg = 'Sending continues where it stopped.'; }
-    else return null;
-    return h('button', { class: 'btn btn-sm ' + (kind === 'primary' ? 'btn-primary' : ''), type: 'button', on: { click: function (e) {
-      e.stopPropagation();
-      ui.confirm({ title: label + ' "' + c.name + '"?', message: msg, confirmLabel: label, onConfirm: function () {
-        return SB.api.post('/api/campaigns/' + c.id + '/' + path).then(function (r) {
-          (r.campaign && r.campaign.warnings || []).forEach(function (w) { ui.toast(w.message, true); });
-          ui.toast(label === 'Start' ? 'Campaign started' : label === 'Pause' ? 'Campaign paused' : 'Campaign resumed'); reload();
-        });
-      } });
-    } } }, SB.icon(path === 'pause' ? 'pause' : 'play', 'icon'), label);
-  }
+  function lifecycle(c, reload) { return ui.lifecycleButton({ status: c.status, name: c.name, people: c.leads }, reload, c.id); }
 
-  function drillDown(c) {
-    var p = ui.panel(c.name), box = p.body;
-    box.appendChild(h('div', { class: 'skeleton' }));
-    SB.api.get('/api/campaigns/' + c.id + '/analytics').then(function (a) {
-      var t = a.totals, camp = a.campaign;
-      var maxStep = a.steps.reduce(function (m, s) { return Math.max(m, s.sent); }, 0) || 1;
-      SB.mount(box, h('div', null,
-        h('div', { class: 'actions pad-b' }, ui.statusPill(camp.status)),
-        h('div', { class: 'grid-tiles compact' },
-          ui.tile('Emailed', fmt.num(t.emailed), null, M.emailed), ui.tile('Replied', fmt.num(t.replied), fmt.pct(t.reply_rate) + ' reply rate', M.replied),
-          ui.tile('Bounced', fmt.num(t.bounced), fmt.pct(t.bounce_rate) + ' bounce rate', M.bounced), t.opens_tracked ? ui.tile('Opens', fmt.num(t.opens), fmt.pct(t.open_rate) + ' of emailed (approx.)', M.opens) : ui.tile('Opens', 'Not tracked', null, M.opens)),
-        t.replied ? h('div', { class: 'card' }, h('h3', { text: 'Reply sentiment' }), h('div', { class: 'section-title' }), ui.sentimentBar(t.sentiment)) : null,
-        h('div', { class: 'section-title' }, h('h3', { text: 'Emails sent per step' })),
-        a.steps.length ? h('div', { class: 'card' }, a.steps.map(function (s) {
-          return h('div', { class: 'field' }, h('label', { text: (s.step === 0 ? 'First email' : 'Follow-up ' + s.step) + ' \u00b7 ' + fmt.num(s.sent) + ' sent' }), ui.progress(s.sent / maxStep * 100));
-        })) : h('p', { class: 'muted', text: 'Nothing sent yet.' }),
-        a.batches.length ? h('div', null, h('div', { class: 'section-title' }, h('div', { class: 'actions' }, h('h3', { text: 'Batches' }), ui.info('Large lists are split into smaller batches that send in parallel, so contacts at the same company are not emailed at the same moment.'))),
-          h('div', { class: 'table-wrap card' }, h('table', { class: 'table' }, h('thead', null, h('tr', null, h('th', { text: 'Batch' }), h('th', { text: 'Status' }), h('th', { text: 'Progress' }), h('th', { text: 'Replies' }))),
-            h('tbody', null, a.batches.map(function (b) { return h('tr', null, h('td', { text: b.name.replace(/^.* - /, '') }), h('td', null, ui.statusPill(b.status)), h('td', null, ui.progress(b.progress_pct)), h('td', { text: fmt.num(b.metrics.replied) })); }))))) : null));
-    }, function (e) { SB.mount(box, h('div', { class: 'form-error', text: SB.api.friendly(e) })); });
+  // "34 / 112 \u00b7 18 / 80": the numbers behind the segments, so the bar is exact as well as visual
+  function stepSummary(c) {
+    var sp = c.step_progress || [];
+    if (!sp.length) return '';
+    return sp.map(function (s) { return fmt.num(s.sent) + '/' + fmt.num(s.capacity); }).join(' \u00b7 ');
   }
 
   function editModal(p, reload) {
@@ -99,7 +69,7 @@
     var tb = SB.lists.toolbar({ placeholder: 'Search campaigns', label: 'Search campaigns', sorts: SORTS, sort: st.sort,
       onSearch: function (q) { st.q = q; paintCampaigns(); }, onSort: function (k) { st.sort = k; paintCampaigns(); } });
     var chipsBox = h('div'), tagsBox = h('div'), tableBox = h('div'), barBox = h('div');
-    SB.mount(listSlot, h('div', null, h('div', { class: 'section-title' }, h('div', { class: 'actions' }, h('h2', { text: 'Campaigns' }), ui.info('Click a campaign to see its batches and how many emails went out at each step.'))),
+    SB.mount(listSlot, h('div', null, h('div', { class: 'section-title' }, h('div', { class: 'actions' }, h('h2', { text: 'Campaigns' }), ui.info('Click a campaign to open its Studio: edit emails that have not gone out yet, see who opened, replied or opted out, and follow every step.'))),
       tb.el, chipsBox, tagsBox, tableBox, barBox));
 
     function moveModal(ids) {
@@ -145,15 +115,15 @@
         var allCb = h('input', { type: 'checkbox', 'aria-label': 'Select all shown campaigns' }); allCb.checked = items.every(function (c) { return !!st.sel[c.id]; });
         allCb.addEventListener('change', function () { items.forEach(function (c) { if (allCb.checked) st.sel[c.id] = c.name; else delete st.sel[c.id]; }); paintCampaigns(); });
         SB.mount(tableBox, h('div', { class: 'table-wrap card' }, h('table', { class: 'table' }, h('thead', null, h('tr', null, h('th', { class: 'row-check' }, allCb),
-          h('th', { text: 'Campaign' }), h('th', { text: 'Status' }), h('th', null, 'Progress ', ui.info(M.progress)), h('th', { text: 'Sent' }), h('th', { text: 'Replies' }), h('th', { text: 'Bounced' }), h('th', { text: 'Next email' }), h('th'))),
+          h('th', { text: 'Campaign' }), h('th', { text: 'Status' }), h('th', null, 'Sequence progress ', ui.info(SB.S.steps.segTip + ' ' + M.progress)), h('th', { text: 'Sent' }), h('th', { text: 'Replies' }), h('th', { text: 'Bounced' }), h('th', { text: 'Next email' }), h('th'))),
           h('tbody', null, items.map(function (c) {
             var cb = h('input', { type: 'checkbox', 'aria-label': 'Select campaign ' + c.name }); cb.checked = !!st.sel[c.id];
             cb.addEventListener('click', function (e) { e.stopPropagation(); });
             cb.addEventListener('change', function () { if (cb.checked) st.sel[c.id] = c.name; else delete st.sel[c.id]; paintCampaigns(); });
-            return h('tr', { class: 'row-link' + (cb.checked ? ' selected' : ''), on: { click: function () { drillDown(c); } } },
+            return h('tr', { class: 'row-link' + (cb.checked ? ' selected' : ''), on: { click: function () { location.hash = '#/campaign/' + c.id; } } },
               h('td', { class: 'row-check' }, cb),
               h('td', null, h('b', { text: c.name }), c.batches ? h('div', { class: 'small faint', text: c.batches + ' batches' }) : null), h('td', null, ui.statusPill(c.status)),
-              h('td', null, h('div', { class: 'small', text: fmt.pct(c.progress_pct) }), ui.progress(c.progress_pct)),
+              h('td', { class: 'c-steps' }, ui.stepBar(c.step_progress, { compact: true }), h('div', { class: 'small faint', text: stepSummary(c) })),
               h('td', { text: fmt.num(c.sent) }), h('td', { text: fmt.num(c.metrics.replied) }), h('td', { text: fmt.num(c.stats.bounced) }), h('td', { text: fmt.until(c.next_send_at) }),
               h('td', null, h('div', { class: 'actions' }, c.status === 'draft' ? h('a', { class: 'btn btn-sm', href: '#/campaign/edit/' + c.id, tip: 'Change the emails, senders or schedule before you start.', on: { click: function (e) { e.stopPropagation(); } } }, 'Edit') : null, lifecycle(c, load), h('span', { class: 'faint' }, SB.icon('chevron')))));
           })))));

@@ -10,6 +10,7 @@
     { hash: '#/leads', key: 'leads', icon: 'users', label: 'Leads' },
     { hash: '#/senders', key: 'senders', icon: 'send', label: 'Senders' },
     { hash: '#/inbox', key: 'inbox', icon: 'inbox', label: 'Inbox' },
+    { hash: '#/reports', key: 'reports', icon: 'chart', label: 'Reports' },
     { hash: '#/settings', key: 'settings', icon: 'settings', label: 'Settings' }
   ];
   function destroyCurrent() { if (current && current.destroy) current.destroy(); current = null; }
@@ -35,10 +36,12 @@
     else if (key === 'campaign' && parts[1] === 'new' && (!parts[2] || /^\d{1,15}$/.test(parts[2])) && parts.length < 4) screen = SB.screens.wizard({ projectId: parts[2] || null, userEmail: user.email });
     else if (key === 'campaign' && parts[1] === 'draft' && /^\d{1,15}$/.test(parts[2] || '') && parts.length < 4) screen = SB.screens.wizard({ draftId: parts[2], userEmail: user.email });
     else if (key === 'campaign' && parts[1] === 'edit' && /^\d{1,15}$/.test(parts[2] || '') && parts.length < 4) screen = SB.screens.wizard({ editId: parts[2], userEmail: user.email });
+    else if (key === 'campaign' && /^\d{1,15}$/.test(parts[1] || '') && parts.length < 4) screen = SB.screens.studio({ id: parts[1], tab: parts[2] || 'sequence', userEmail: user.email });
+    else if (key === 'reports' && parts.length < 2) screen = SB.screens.reports();
     else if (key === 'inbox' && parts.length < 2) screen = SB.screens.inbox();
     else if (key === 'senders') screen = SB.screens.senders();
     else if (key === 'leads' && (!parts[1] || parts[1] === 'suppression') && parts.length < 3) screen = SB.screens.leads({ tab: parts[1] === 'suppression' ? 'suppression' : 'lists' });
-    else if (key === 'settings' && parts.length < 2) screen = SB.screens.settings({ userEmail: user.email });
+    else if (key === 'settings' && parts.length < 3) screen = SB.screens.settings({ userEmail: user.email, tab: parts[1] });
     else screen = { el: h('div', { class: 'card empty' }, h('h2', { text: 'Page not found' }), h('a', { class: 'btn', href: '#/' }, 'Back to Home')), destroy: function () {} };
     current = screen; SB.mount(viewEl, screen.el);
     var navKey = (key === 'project' || key === 'campaign') ? '' : key;
@@ -99,6 +102,13 @@
     offline: function () { if (bannerEl) setBanner('offline', banner('banner-offline', 'alert', 'Connection lost. Retrying automatically…')); },
     online: function () { setBanner('offline', null); }
   });
-  window.addEventListener('hashchange', function () { if (user && viewEl) route(); });
+  // Screens with unsaved work expose isDirty(); leaving asks first and, if declined, puts the address back.
+  var lastHash = location.hash, revert = false;
+  window.addEventListener('hashchange', function () {
+    if (revert) { revert = false; lastHash = location.hash; return; }
+    if (user && current && current.isDirty && current.isDirty() && !window.confirm(current.dirtyMessage || 'Leave without saving?')) { revert = true; location.hash = lastHash; return; }
+    lastHash = location.hash;
+    if (user && viewEl) route();
+  });
   boot();
 })();

@@ -65,6 +65,7 @@
         if (SIZE_KW[sz]) f.setAttribute('size', sz);
         copyInto(n, f, depth + 1); into.appendChild(f); return;
       }
+      if (tag === 'img') { var pic = imgFrom(n); if (pic) into.appendChild(pic); return; }
       if (!TAGS[tag]) { copyInto(n, into, depth + 1); return; }
       var el = document.createElement(tag);
       if (tag === 'a') {
@@ -84,6 +85,19 @@
       target.appendChild(el);
       return;
     });
+  }
+  // Pictures: only OUR library pictures are allowed (src "sbimg:ID" when saved, "/api/images/ID" while editing). Anything else
+  // (external urls, data: uris, tracking pixels) is dropped, which also keeps pasted web content from smuggling pictures in.
+  var IMG_SRC = /^(?:sbimg:|\/api\/images\/)(\d{1,9})$/;
+  function dim(v, lo, hi) { var n = /^\d{1,5}$/.test(String(v || '')) ? parseInt(v, 10) : 0; return n >= lo && n <= hi ? n : 0; }
+  function imgFrom(n) {
+    var m = IMG_SRC.exec(String(n.getAttribute('src') || '').trim());
+    if (!m) return null;
+    var im = document.createElement('img'), w = dim(n.getAttribute('width'), 8, 1000), ht = dim(n.getAttribute('height'), 8, 1600);
+    im.setAttribute('src', '/api/images/' + m[1]); im.setAttribute('data-sb-img', m[1]);
+    im.setAttribute('alt', String(n.getAttribute('alt') || '').slice(0, 125));
+    if (w) im.setAttribute('width', String(w)); if (ht) im.setAttribute('height', String(ht));
+    return im;
   }
   function sizeNum(kw) { for (var k in SIZE_KW) { if (SIZE_KW[k] === kw) return k; } return null; }
   function render(html) {
@@ -107,6 +121,12 @@
         if (face && face.split(',').every(function (x) { return FAMILY_OK.test(x.trim().replace(/^["']|["']$/g, '').toLowerCase()); })) fs.push('font-family: ' + face);
         if (SIZE_KW[sz]) fs.push('font-size: ' + SIZE_KW[sz]);
         out += fs.length ? '<span style="' + fs.join('; ') + '">' + serialize(n, depth + 1) + '</span>' : serialize(n, depth + 1); return;
+      }
+      if (tag === 'img') {
+        var pic = imgFrom(n);
+        if (pic) out += '<img src="sbimg:' + pic.getAttribute('data-sb-img') + '" alt="' + esc(pic.getAttribute('alt')).replace(/"/g, '&quot;') + '"' +
+          (pic.getAttribute('width') ? ' width="' + pic.getAttribute('width') + '"' : '') + (pic.getAttribute('height') ? ' height="' + pic.getAttribute('height') + '"' : '') + '>';
+        return;
       }
       if (!TAGS[tag]) { out += serialize(n, depth + 1); return; }
       if (tag === 'br') { out += '<br>'; return; }
@@ -196,6 +216,59 @@
           if (sel || existing) cmd('createLink', v); else cmd('insertHTML', '<a href="' + v.replace(/&/g, '&amp;').replace(/"/g, '&quot;') + '">' + esc(v) + '</a>');
         } }]) });
     }
+    // ---- pictures (logo, small images): stored once in the library, embedded in the email as an inline part ----
+    function pictureDialog() {
+      remember();
+      var P = SB.S.images, box = h('div', { class: 'pic-lib' }), chosen = null, alt = h('input', { class: 'input', id: 'pic-alt', maxlength: 125, placeholder: P.altPlaceholder });
+      var width = h('select', { class: 'input', id: 'pic-w', 'aria-label': 'Width in the email' }, [80, 120, 160, 240, 320, 480].map(function (w) { return h('option', { value: w }, w + ' px' + (w === 120 ? ' (logo)' : '')); }));
+      width.value = '120';
+      var err = h('div', { class: 'form-error hidden', role: 'alert' });
+      var file = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/gif,image/webp', class: 'hidden', 'aria-label': 'Choose a picture file' });
+      function fail(m) { err.textContent = m; err.classList.remove('hidden'); }
+      function paint(items) {
+        SB.clear(box);
+        if (!items.length) { box.appendChild(h('p', { class: 'small muted', text: P.empty })); return; }
+        items.forEach(function (it) {
+          var img = h('img', { src: '/api/images/' + it.id, alt: it.name, width: 56, height: 56, class: 'pic-thumb' });
+          var del = h('button', { class: 'pic-del', type: 'button', 'aria-label': 'Delete ' + it.name, tip: P.deleteTip, on: { click: function (e) {
+            e.stopPropagation();
+            SB.api.del('/api/images/' + it.id).then(function () { if (chosen && chosen.id === it.id) chosen = null; return load(); }, function (er) { fail(SB.api.friendly(er)); });
+          } } }, SB.icon('x'));
+          var tile = h('div', { class: 'pic-tile' + (chosen && chosen.id === it.id ? ' on' : ''), role: 'button', tabindex: '0', 'aria-label': it.name + ', ' + it.width + ' by ' + it.height, tip: it.name + ' \u00b7 ' + Math.round(it.size / 1024) + ' KB' }, img, h('span', { class: 'small', text: it.name }), del);
+          function pick() { chosen = it; if (!alt.value) alt.value = it.name; paint(items); }
+          tile.addEventListener('click', pick);
+          tile.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+          box.appendChild(tile);
+        });
+      }
+      var cache = [];
+      function load() { return SB.api.get('/api/images').then(function (r) { cache = r.items; paint(cache); }, function (e) { fail(SB.api.friendly(e)); }); }
+      file.addEventListener('change', function () {
+        var f = file.files && file.files[0]; if (!f) return;
+        err.classList.add('hidden');
+        if (f.size > 300 * 1024) { fail(P.tooBig); file.value = ''; return; }
+        var rd = new FileReader();
+        rd.onload = function () {
+          var b64 = String(rd.result).replace(/^data:[^,]*,/, '');
+          SB.api.post('/api/images', { name: f.name, data: b64 }).then(function (r) { chosen = r.image; alt.value = alt.value || r.image.name; return load(); }, function (e) { fail(SB.api.friendly(e)); });
+        };
+        rd.onerror = function () { fail(P.readFail); };
+        rd.readAsDataURL(f); file.value = '';
+      });
+      load();
+      SB.ui.modal({ title: P.title, body: h('div', null, err, h('p', { class: 'small muted', text: P.intro }),
+        h('div', { class: 'actions pad-b' }, h('button', { class: 'btn btn-sm', type: 'button', on: { click: function () { file.click(); } } }, SB.icon('upload'), P.upload), file), box,
+        h('div', { class: 'two' }, h('div', { class: 'field' }, h('label', { for: 'pic-alt' }, P.alt, SB.ui.info(P.altTip)), alt), h('div', { class: 'field' }, h('label', { for: 'pic-w' }, P.width), width)),
+        h('p', { class: 'small faint', text: P.limits })),
+        actions: [{ label: 'Cancel' }, { label: P.insert, kind: 'primary', onClick: function (close) {
+          if (!chosen) { fail(P.choose); return Promise.reject(new Error('x')); }
+          if (!alt.value.trim()) { fail(P.needAlt); return Promise.reject(new Error('x')); }
+          if (area.querySelectorAll('img').length >= 3) { fail(P.tooMany); return Promise.reject(new Error('x')); }
+          var w = parseInt(width.value, 10), ht = Math.max(8, Math.round(w * chosen.height / chosen.width));
+          close();
+          cmd('insertHTML', '<img src="/api/images/' + chosen.id + '" data-sb-img="' + chosen.id + '" alt="' + esc(alt.value.trim()).replace(/"/g, '&quot;') + '" width="' + w + '" height="' + ht + '">');
+        } }] });
+    }
     var varSelect = null;
     if (o.variables && o.variables.length) {
       varSelect = select('Insert a personalisation field, for example the first name', [['Insert field', '']].concat(o.variables.map(function (v) { return [v[0], v[1]]; })), function (val) { insertText(val); });
@@ -211,6 +284,7 @@
       btn('ul', glyph('•≡'), 'Bulleted list', 'Bulleted list', function () { cmd('insertUnorderedList'); }),
       btn('ol', glyph('1.'), 'Numbered list', 'Numbered list', function () { cmd('insertOrderedList'); }),
       btn('link', SB.icon('edit'), 'Link', 'Add or edit a link (Ctrl+K)', linkDialog),
+      o.pictures === false ? null : btn('picture', SB.icon('image'), 'Picture', SB.S.images.tip, pictureDialog),
       btn('clear', glyph('Tx', 'clr'), 'Clear formatting', 'Remove formatting from the selected text', function () { cmd('removeFormat'); }),
       varSelect ? h('span', { class: 'ed-sep' }) : null, varSelect);
     function refresh() {

@@ -14,6 +14,15 @@ var sanitize = require('../lib/sanitize');
 var emailLib = require('../lib/email');
 var audit = require('./audit');
 var withSignature = require('./settings').withSignature;
+var images = require('./images');
+var replyParse = require('../lib/replyParse');
+
+// 'stop_campaign' | 'unsubscribe_link' | 'bounce' | null  (same rule the Studio uses for its badges)
+function optOutKind(status, note, reason) {
+  if (status === 'bounced') return 'bounce';
+  if (status !== 'unsubscribed') return null;
+  return reason === 'replied_stop' || /stop campaign/i.test(note || '') ? 'stop_campaign' : 'unsubscribe_link';
+}
 
 var SENTIMENTS = ['interested', 'more_info', 'not_interested', 'neutral'];
 var MAX_REPLY = 20000;
@@ -45,7 +54,7 @@ I._list = function (userId, q) {
   var conv = 'SELECT campaign_lead_id, MAX(id) AS last_id, SUM(CASE WHEN read_at IS NULL THEN 1 ELSE 0 END) AS unread, COUNT(*) AS replies ' +
     "FROM messages WHERE user_id = ? AND direction = 'in' AND kind = 'email' AND campaign_lead_id IS NOT NULL GROUP BY campaign_lead_id";
   var sql = 'FROM (' + conv + ') x JOIN messages m ON m.id = x.last_id JOIN campaign_leads cl ON cl.id = x.campaign_lead_id ' +
-    'JOIN campaigns c ON c.id = cl.campaign_id JOIN leads l ON l.id = cl.lead_id LEFT JOIN senders s ON s.id = cl.sender_id WHERE m.user_id = ?';
+    'JOIN campaigns c ON c.id = cl.campaign_id JOIN leads l ON l.id = cl.lead_id LEFT JOIN senders s ON s.id = cl.sender_id LEFT JOIN suppression sp ON sp.user_id = m.user_id AND sp.email = l.email WHERE m.user_id = ?';
   var p = [userId, userId], extra = '';
   if (q.sentiment !== undefined && q.sentiment !== '') {
     if (SENTIMENTS.indexOf(q.sentiment) === -1) throw new AppError('validation', 'Unknown sentiment filter', 400);
@@ -68,7 +77,7 @@ I._list = function (userId, q) {
     p.push(term, term, term);
   }
   return Promise.all([
-    this.db.all('SELECT m.id, m.campaign_lead_id, m.subject, m.sentiment, m.sentiment_manual, m.received_at, substr(m.body_text, 1, 200) AS snippet, x.unread, x.replies, ' +
+    this.db.all('SELECT m.id, m.campaign_lead_id, m.subject, m.sentiment, m.sentiment_manual, m.received_at, substr(m.body_text, 1, 1200) AS snippet, cl.status_note AS status_note, sp.reason AS suppression_reason, x.unread, x.replies, ' +
       'l.email AS lead_email, l.first_name, l.last_name, l.company, c.id AS campaign_id, c.name AS campaign_name, cl.status AS lead_status, s.id AS sender_id, s.email AS sender_email ' +
       sql + extra + ' ORDER BY m.received_at DESC, m.id DESC LIMIT ? OFFSET ?', p.concat([limit, offset])),
     this.db.get('SELECT COUNT(*) AS n ' + sql + extra, p),
@@ -77,13 +86,18 @@ I._list = function (userId, q) {
   ]).then(function (r) {
     var counts = { interested: 0, more_info: 0, not_interested: 0, neutral: 0 };
     r[2].forEach(function (row) { if (counts[row.k] !== undefined) counts[row.k] = row.n; });
+    r[0].forEach(function (it) {
+      it.snippet = replyParse.snippet(it.snippet || '', 200);          // the reply itself, never the signature or the quoted history
+      it.opt_out = optOutKind(it.lead_status, it.status_note, it.suppression_reason);
+      delete it.status_note; delete it.suppression_reason;
+    });
     return { items: r[0], total: r[1].n, counts: counts, unread: r[3].n, limit: limit, offset: offset };
   });
 };
 
 // Loads a conversation the user owns, or 404.
 I._conversation = function (userId, clId) {
-  return this.db.get('SELECT cl.id, cl.status, cl.sender_id, cl.lead_id, cl.campaign_id, c.name AS campaign_name, c.user_id, ' +
+  return this.db.get('SELECT cl.id, cl.status, cl.status_note, cl.sender_id, cl.lead_id, cl.campaign_id, c.name AS campaign_name, c.user_id, ' +
     'l.email AS lead_email, l.first_name, l.last_name, l.company ' +
     'FROM campaign_leads cl JOIN campaigns c ON c.id = cl.campaign_id JOIN leads l ON l.id = cl.lead_id WHERE cl.id = ? AND c.user_id = ?', [clId, userId]).then(function (r) {
     if (!r) throw new AppError('not_found', 'Conversation not found', 404);
@@ -104,8 +118,12 @@ I.thread = function (userId, clId) {
       return {
         conversation: { id: conv.id, status: conv.status, campaign_id: conv.campaign_id, campaign_name: conv.campaign_name,
           lead: { id: conv.lead_id, email: conv.lead_email, first_name: conv.first_name, last_name: conv.last_name, company: conv.company },
-          sender: r[1] || null, suppressed: r[2] ? r[2].reason : null },
-        messages: r[0]
+          sender: r[1] || null, suppressed: r[2] ? r[2].reason : null, opt_out: optOutKind(conv.status, conv.status_note, r[2] && r[2].reason) },
+        messages: r[0].map(function (m) {
+          // Incoming text is split into what they wrote / their device signature / the quoted history, so the screen can lay it out cleanly.
+          if (m.direction === 'in') m.view = replyParse.parse(m.body_text || '');
+          return m;
+        })
       };
     });
   });
@@ -165,9 +183,14 @@ I.reply = function (userId, clId, input, ip) {
       inReplyTo: ids.length ? ids[ids.length - 1] : null, references: ids.slice(-20)
     };
     mail.text = htmlLib.htmlToText(mail.html);
+    return images.embed(self.db, userId, mail.html).then(function (emb) {
+      mail.html = emb.html; if (emb.attachments.length) mail.attachments = emb.attachments;
+      return mail;
+    });
+  }).then(function (mail) {
     return self.db.run("INSERT INTO messages (user_id, campaign_lead_id, sender_id, lead_id, direction, status, idempotency_key, message_id_hdr, in_reply_to, subject, body_html, body_text, from_addr, to_addr, kind, attempts, created_at) " +
       "VALUES (?,?,?,?,'out','sending',?,?,?,?,?,?,?,?,'email',1,?)",
-      [userId, clId, sender.id, conv.lead_id, key, mail.messageId, mail.inReplyTo, subject, mail.html, mail.text, sender.email, conv.lead_email, t]).then(function (ins) {
+      [userId, clId, sender.id, conv.lead_id, key, mail.messageId, mail.inReplyTo, mail.subject, mail.html, mail.text, sender.email, conv.lead_email, t]).then(function (ins) {
       return self.engine.deliver(sender, mail).then(function (res) {
         var t2 = self.now();
         return self.db.transaction(function (tx) {

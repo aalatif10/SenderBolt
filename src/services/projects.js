@@ -14,6 +14,7 @@ var AppError = require('../lib/errors').AppError;
 var v = require('../lib/validate');
 var state = require('./campaignState');
 var audit = require('./audit');
+var stepProgress = require('./stepProgress');
 
 var SENTIMENTS = ['interested', 'more_info', 'not_interested', 'neutral'];
 
@@ -77,14 +78,16 @@ P._load = function (userId) {
     this.db.all('SELECT * FROM projects WHERE user_id = ? ORDER BY created_at DESC, id DESC', [userId]),
     this.db.all('SELECT id, parent_id, project_id, name, status, track_opens, created_at, updated_at FROM campaigns WHERE user_id = ? ORDER BY id', [userId]),
     this.campaigns._statsByCampaign(userId, null),
-    this._metrics(userId)
+    this._metrics(userId),
+    stepProgress.load(this.db, userId, null),
+    stepProgress.metaFor(this.db, userId)
   ]).then(function (r) {
     var kids = {}, mains = {};
     r[1].forEach(function (c) {
       if (c.parent_id) (kids[c.parent_id] = kids[c.parent_id] || []).push(c);
       else (mains[c.project_id] = mains[c.project_id] || []).push(c);
     });
-    return { projects: r[0], mains: mains, kids: kids, stats: r[2], metrics: r[3], self: self };
+    return { projects: r[0], mains: mains, kids: kids, stats: r[2], metrics: r[3], prog: r[4], meta: r[5], self: self };
   });
 };
 
@@ -107,7 +110,8 @@ function describeCampaign(main, L) {
   return {
     id: main.id, name: main.name, status: status, track_opens: main.track_opens ? 1 : 0, created_at: main.created_at, batches: (L.kids[main.id] || []).length,
     leads: s.total, sent: s.sent, progress_pct: s.total ? Math.round(done / s.total * 1000) / 10 : 0, next_send_at: status === 'active' ? s.next_send_at : null,
-    stats: s, metrics: m
+    stats: s, metrics: m,
+    step_progress: stepProgress.describe(L.meta && L.meta[main.id], stepProgress.sum(leaves.map(function (c) { return L.prog && L.prog[c.id]; })))
   };
 }
 
@@ -167,7 +171,7 @@ P.campaignAnalytics = function (userId, campaignId) {
     return self._load(userId).then(function (L) {
       var camp = describeCampaign(main, L), leaves = leafIds(main, L.kids);
       var batches = (L.kids[main.id] || []).map(function (b) {
-        var one = describeCampaign(b, { kids: {}, stats: L.stats, metrics: L.metrics });
+        var one = describeCampaign(b, { kids: {}, stats: L.stats, metrics: L.metrics, prog: L.prog, meta: L.meta });
         one.batches = 0; return one;
       });
       return self.db.all("SELECT m.step_no AS step, COUNT(*) AS sent FROM messages m JOIN campaign_leads cl ON cl.id = m.campaign_lead_id WHERE m.user_id = ? AND m.direction = 'out' AND m.status = 'sent' AND m.step_no IS NOT NULL AND cl.campaign_id IN (" +

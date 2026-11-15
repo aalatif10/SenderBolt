@@ -17,7 +17,8 @@
     trash: 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6', search: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14M20 20l-4-4',
     download: 'M12 4v11M7 11l5 5 5-5M5 20h14', upload: 'M12 16V5M7 9l5-5 5 5M5 20h14', edit: 'M4 20h4L19 9l-4-4L4 16z',
     shield: 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z',
-    bolt: 'M13 2L4 14h7l-1 8 9-12h-7z', info: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 8v.01M11 12h1v5h1'
+    bolt: 'M13 2L4 14h7l-1 8 9-12h-7z',
+    image: 'M3 5h18v14H3zM3 16l5-5 4 4 3-3 6 6M15 9h.01', chart: 'M4 20V4M4 20h16M8 16v-5M13 16V8M18 16v-9', lock: 'M6 11h12v9H6zM8 11V8a4 4 0 0 1 8 0v3', eye: 'M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6', ban: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M5.6 5.6l12.8 12.8', mail: 'M3 5h18v14H3zM3 6l9 7 9-7', info: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 8v.01M11 12h1v5h1'
   };
   function icon(name, cls) {
     var s = document.createElementNS(SVG_NS, 'svg');
@@ -52,8 +53,21 @@
     append(el, kids);
     return el;
   }
+  // SVG builder for charts: attributes only (no style / on* / href), so data can never become script. svg('line', { x1: 0, ... })
+  var SVG_TAGS = { svg: 1, g: 1, path: 1, line: 1, rect: 1, circle: 1, text: 1, title: 1, polyline: 1 };
+  function svg(tag, attrs) {
+    if (!SVG_TAGS[tag]) throw new Error('svg tag not allowed');
+    var el = document.createElementNS(SVG_NS, tag), kids = Array.prototype.slice.call(arguments, 2);
+    if (attrs) Object.keys(attrs).forEach(function (k) {
+      var v = attrs[k];
+      if (v === null || v === undefined || v === false || /^on/i.test(k) || k === 'style' || k === 'href' || k === 'xlink:href') return;
+      if (k === 'text') el.textContent = String(v); else el.setAttribute(k, String(v));
+    });
+    kids.forEach(function (c) { if (c) el.appendChild(c); });
+    return el;
+  }
   function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); return el; }
   function mount(el, node) { clear(el); el.appendChild(node); }
   window.SB = window.SB || {};
-  SB.h = h; SB.icon = icon; SB.clear = clear; SB.mount = mount;
+  SB.h = h; SB.svg = svg; SB.icon = icon; SB.clear = clear; SB.mount = mount;
 })();

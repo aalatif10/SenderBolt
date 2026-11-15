@@ -24,6 +24,10 @@ module.exports = function register(router, d) {
   router.patch('/api/campaigns/:id', { maxBody: BODY }, function (ctx) {
     return S.update(ctx.user.id, parseId(ctx.params.id), ctx.body, ctx.ip).then(function (c) { return { campaign: c }; });
   });
+  // Studio: edit emails that have not been sent yet, also while the campaign runs.
+  router.patch('/api/campaigns/:id/steps', { maxBody: BODY }, function (ctx) {
+    return S.updateSteps(ctx.user.id, parseId(ctx.params.id), ctx.body, ctx.ip).then(function (c) { return { campaign: c }; });
+  });
   router.delete('/api/campaigns/:id', function (ctx) { return S.remove(ctx.user.id, parseId(ctx.params.id), ctx.ip); });
   router.get('/api/campaigns/:id/leads', function (ctx) { return S.listLeads(ctx.user.id, parseId(ctx.params.id), ctx.query); });
 

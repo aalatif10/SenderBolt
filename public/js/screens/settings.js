@@ -20,8 +20,15 @@
 
   SB.screens.settings = function (params) {
     var root = h('div'), dead = false, sigEditor = null;
-    root.appendChild(h('div', { class: 'page-head' }, h('div', null, h('h1', { text: 'Settings' }), h('p', { class: 'sub', text: 'Your account, security and the signature added to your emails.' }))));
-    var grid = h('div', { class: 'st-grid' }); root.appendChild(grid);
+    var TABS = [['security', 'Security'], ['accounts', 'Sending accounts'], ['signatures', 'Signatures'], ['preferences', 'System preferences']];
+    var tab = TABS.some(function (t) { return t[0] === params.tab; }) ? params.tab : 'security';
+    root.appendChild(h('div', { class: 'page-head' }, h('div', null, h('h1', { text: 'Settings' }), h('p', { class: 'sub', text: 'Your security, sending accounts, signatures and the defaults new campaigns start from.' }))));
+    root.appendChild(h('div', { class: 'segs tabs settings-tabs', role: 'tablist' }, TABS.map(function (t) {
+      return h('a', { class: 'seg' + (t[0] === tab ? ' active' : ''), href: '#/settings/' + t[0], role: 'tab', 'aria-selected': t[0] === tab ? 'true' : 'false' }, t[1]);
+    })));
+    var grid = h('div', { class: 'st-grid' }), gridSig = h('div', { class: 'st-grid' }), gridAcc = h('div', { class: 'st-grid' }), gridPref = h('div', { class: 'st-grid' });
+    var panes = { security: grid, accounts: gridAcc, signatures: gridSig, preferences: gridPref };
+    Object.keys(panes).forEach(function (k) { if (k !== tab) panes[k].classList.add('hidden'); root.appendChild(panes[k]); });
 
     // ---- account + password ----
     var cur = h('input', { class: 'input', id: 'st-cur', type: 'password', autocomplete: 'current-password', maxlength: 200 });
@@ -81,7 +88,7 @@
       });
       SB.mount(sigBox, h('div', null, sigEditor.el, h('div', { class: 'actions pad-t' }, sigBtn)));
     }, function (e) { if (!dead) SB.mount(sigBox, h('div', { class: 'form-error', text: SB.api.friendly(e) })); });
-    grid.appendChild(h('div', { class: 'card st-wide' }, h('h2', null, 'Default email signature ', ui.info(T.sigTip)),
+    gridSig.appendChild(h('div', { class: 'card st-wide' }, h('h2', null, 'Default email signature ', ui.info(T.sigTip)),
       h('p', { class: 'muted small', text: 'Added to the end of every email sent from an account that has no signature of its own. An account\'s own signature (Senders > Settings) always wins.' }), sigBox));
 
     // ---- activity ----
@@ -93,6 +100,45 @@
       })) : h('p', { class: 'muted', text: 'Nothing yet.' }));
     }, function (e) { if (!dead) SB.mount(actBox, h('div', { class: 'form-error', text: SB.api.friendly(e) })); });
     grid.appendChild(h('div', { class: 'card st-wide' }, h('h2', null, 'Recent activity ', ui.info('The last actions on your account, for your own security checks.')), actBox));
+
+    // ---- sending accounts (summary; full management stays on the Senders page) ----
+    var accBox = h('div', null, h('div', { class: 'skeleton' }));
+    SB.api.get('/api/senders').then(function (r) {
+      if (dead) return;
+      SB.mount(accBox, r.items.length ? h('div', { class: 'st-list' }, r.items.map(function (x) {
+        return h('div', { class: 'st-row' }, h('div', null, h('b', { text: x.label || x.email }), x.status !== 'active' ? h('span', { class: 'tag tag-sys', text: x.status === 'paused' ? 'Paused' : 'Disabled' }) : null,
+          h('div', { class: 'small faint', text: x.email + ' \u00b7 up to ' + fmt.num(x.daily_limit) + ' emails a day' + (x.health_score !== undefined && x.health_score !== null ? ' \u00b7 health ' + x.health_score + '/100' : '') })));
+      })) : h('p', { class: 'muted', text: 'No sending accounts yet.' }));
+    }, function (e) { if (!dead) SB.mount(accBox, h('div', { class: 'form-error', text: SB.api.friendly(e) })); });
+    gridAcc.appendChild(h('div', { class: 'card st-wide' }, h('div', { class: 'page-head' }, h('div', null, h('h2', { text: 'Sending accounts' }), h('p', { class: 'muted small', text: 'App passwords are stored encrypted and never shown again. Daily limits (max 500), delays, warm-up and tracking domain are set per account.' })),
+      h('a', { class: 'btn btn-primary', href: '#/senders' }, SB.icon('send'), 'Manage accounts')), accBox));
+
+    // ---- system preferences: defaults new campaigns start from ----
+    var P = T.prefs, prefBox = h('div', null, h('div', { class: 'skeleton' }));
+    SB.api.get('/api/settings').then(function (r) {
+      if (dead) return;
+      var v = r.settings.prefs;
+      function num(id, val, min, max) { return h('input', { class: 'input', id: id, type: 'number', min: min, max: max, value: val }); }
+      function chk(id, on) { var c = h('input', { type: 'checkbox', id: id }); c.checked = !!on; return c; }
+      var from = num('pf-from', v.window_start_hour, 0, 23), to = num('pf-to', v.window_end_hour, 1, 24), off = h('select', { class: 'input', id: 'pf-tz' }), delay = num('pf-delay', v.default_delay_days, 1, 60);
+      for (var m = -720; m <= 840; m += 30) { off.appendChild(h('option', { value: m }, 'UTC' + (m < 0 ? '-' : '+') + Math.floor(Math.abs(m) / 60) + (Math.abs(m) % 60 ? ':30' : ''))); }
+      off.value = String(v.utc_offset_min);
+      var wk = chk('pf-wk', v.weekdays_only), sr = chk('pf-sr', v.stop_on_reply), to2 = chk('pf-op', v.track_opens), err = h('div', { class: 'form-error hidden', role: 'alert' });
+      var save = h('button', { class: 'btn btn-primary', type: 'button', id: 'pf-save' }, 'Save preferences');
+      save.addEventListener('click', function () {
+        err.classList.add('hidden'); save.disabled = true;
+        SB.api.put('/api/settings', { prefs: { window_start_hour: Number(from.value), window_end_hour: Number(to.value), utc_offset_min: Number(off.value), weekdays_only: wk.checked, stop_on_reply: sr.checked, track_opens: to2.checked, default_delay_days: Number(delay.value) } })
+          .then(function () { ui.toast('Preferences saved'); }, function (e) { err.textContent = SB.api.friendly(e); err.classList.remove('hidden'); }).then(function () { save.disabled = false; });
+      });
+      SB.mount(prefBox, h('div', null, err, h('p', { class: 'muted small', text: P.intro }),
+        h('div', { class: 'two' }, h('div', { class: 'field' }, h('label', { for: 'pf-from' }, 'Send from (hour)'), from), h('div', { class: 'field' }, h('label', { for: 'pf-to' }, 'Send until (hour)'), to)),
+        h('div', { class: 'field' }, h('label', { for: 'pf-tz' }, 'Time zone ', ui.info(P.tzTip)), off),
+        h('div', { class: 'field' }, h('label', { for: 'pf-delay' }, 'Days to wait before a follow-up'), delay),
+        h('div', { class: 'field check' }, wk, h('label', { for: 'pf-wk' }, 'Skip weekends'), h('div', { class: 'hint', text: SB.S.wizard.weekdaysHint })),
+        h('div', { class: 'field check' }, sr, h('label', { for: 'pf-sr' }, 'Stop follow-ups after a reply'), h('div', { class: 'hint', text: SB.S.wizard.stopHint })),
+        h('div', { class: 'field check' }, to2, h('label', { for: 'pf-op' }, 'Track opens'), h('div', { class: 'hint', text: SB.S.wizard.opensHint })), save));
+    }, function (e) { if (!dead) SB.mount(prefBox, h('div', { class: 'form-error', text: SB.api.friendly(e) })); });
+    gridPref.appendChild(h('div', { class: 'card st-wide' }, h('h2', { text: 'Campaign defaults' }), prefBox));
 
     loadSessions();
     return { el: root, destroy: function () { dead = true; } };

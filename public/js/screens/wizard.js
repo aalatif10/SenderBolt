@@ -33,7 +33,7 @@
 
   SB.screens.wizard = function (params) {
     var st = blankState(), draft = null /* { id, rev } */, root = h('div'), body = h('div'), stepsEl = h('div', { class: 'wz-steps' });
-    var dead = false, dirty = false, saving = false, saveTimer = null, conflict = false, lastSaved = null, saveEl = h('span', { class: 'wz-save', role: 'status' });
+    var defaultDelay = 3, dead = false, dirty = false, saving = false, saveTimer = null, conflict = false, lastSaved = null, saveEl = h('span', { class: 'wz-save', role: 'status' });
     var editId = params.editId || null, userEmail = params.userEmail || '', folders = [], senders = [], projects = [], projectId = params.projectId || null, activeIdx = 0, editors = [], launching = false;
     var previewTimer = null, previewBox = null, coverageBox = null, splitBox = null, countBox = null, previewSeq = 0, audSeq = 0;
 
@@ -187,7 +187,7 @@
       var cards = st.steps.map(function (s, i) { return emailCard(i); });
       var add = st.steps.length - 1 < MAX_FOLLOWUPS
         ? h('button', { class: 'btn wz-add', type: 'button', id: 'wz-add-followup', tip: W.addTip, on: { click: function () {
-          st.steps.push({ subject: '', body_html: '', delay_days: 3 }); activeIdx = st.steps.length - 1; touch(); render();
+          st.steps.push({ subject: '', body_html: '', delay_days: defaultDelay || 3 }); activeIdx = st.steps.length - 1; touch(); render();
           var f = body.querySelector('#wz-subj-' + activeIdx); if (f) f.focus();
         } } }, SB.icon('plus'), 'Add follow-up')
         : h('p', { class: 'hint', text: 'That is the maximum: the first email plus ' + MAX_FOLLOWUPS + ' follow-ups.' });
@@ -396,10 +396,18 @@
       var reqs = [SB.api.get('/api/folders'), SB.api.get('/api/senders'), SB.api.get('/api/projects')];
       if (params.draftId) reqs.push(SB.api.get('/api/drafts/' + params.draftId));
       if (editId) reqs.push(SB.api.get('/api/campaigns/' + editId));
+      var isNew = !params.draftId && !editId;
+      if (isNew) reqs.push(SB.api.get('/api/settings').catch(function () { return null; }));       // the user's own defaults (Settings > System preferences)
       Promise.all(reqs).then(function (r) {
         if (dead) return;
         folders = r[0].items; senders = r[1].items; projects = r[2].items.filter(function (p) { return !p.archived; });
-        if (r[3] && !editId) { draft = { id: r[3].draft.id, rev: r[3].draft.rev }; st = merge(blankState(), r[3].draft.data); st.name = st.name || r[3].draft.name; if (r[3].draft.project_id) projectId = String(r[3].draft.project_id); lastSaved = r[3].draft.updated_at; }
+        if (isNew && r[3] && r[3].settings && r[3].settings.prefs) {
+          var pf = r[3].settings.prefs;
+          ['window_start_hour', 'window_end_hour', 'utc_offset_min'].forEach(function (k) { st.settings[k] = pf[k]; });
+          ['weekdays_only', 'stop_on_reply', 'track_opens'].forEach(function (k) { st.settings[k] = !!pf[k]; });
+          defaultDelay = pf.default_delay_days;
+        }
+        if (params.draftId && r[3]) { draft = { id: r[3].draft.id, rev: r[3].draft.rev }; st = merge(blankState(), r[3].draft.data); st.name = st.name || r[3].draft.name; if (r[3].draft.project_id) projectId = String(r[3].draft.project_id); lastSaved = r[3].draft.updated_at; }
         else if (editId && r[3]) {
           var cc = r[3].campaign;
           if (cc.status !== 'draft' || cc.parent_id) { SB.mount(root, h('div', { class: 'card empty' }, h('h2', { text: 'This campaign can no longer be edited' }), h('p', { text: 'Only campaigns that have not been started can be edited.' }), h('a', { class: 'btn', href: '#/' }, 'Back to Home'))); return; }

@@ -54,7 +54,7 @@
         h('div', { class: 'ib-row-top' }, h('span', { class: 'ib-name', text: who(it) }), h('span', { class: 'ib-time faint small', tip: fmt.full(it.received_at), text: fmt.ago(it.received_at) })),
         h('div', { class: 'ib-subj', text: it.subject || '(no subject)' }),
         h('div', { class: 'ib-snip small muted', text: (it.snippet || '').replace(/\s+/g, ' ') }),
-        h('div', { class: 'ib-row-bot' }, senti(it.sentiment), it.unread ? h('span', { class: 'ib-dot', tip: it.unread + ' unread', 'aria-label': 'Unread' }) : null,
+        h('div', { class: 'ib-row-bot' }, senti(it.sentiment), ui.optBadge(it.opt_out), it.unread ? h('span', { class: 'ib-dot', tip: it.unread + ' unread', 'aria-label': 'Unread' }) : null,
           h('span', { class: 'small faint ib-meta', text: [it.company, it.campaign_name].filter(Boolean).join(' · ') })));
       return b;
     }
@@ -86,12 +86,24 @@
       if (m.step_no === null || m.step_no === undefined) return 'Your reply';
       return m.step_no === 0 ? 'First email' : 'Follow-up ' + m.step_no;
     }
+    // Their reply laid out cleanly: what they wrote, then (muted, separated) their device signature, then the quoted history
+    // folded away in a real blockquote. All text goes through textContent; paragraphs keep their spacing.
+    function paragraphs(txt) {
+      return String(txt || '').split(/\n{2,}/).map(function (para) { return h('p', { class: 'ib-p', text: para.replace(/\n/g, ' \n').replace(/ \n/g, '\n') }); });
+    }
+    function replyParts(v) {
+      return h('div', { class: 'ib-msg-body parts' },
+        h('div', { class: 'ib-main' }, paragraphs(v.body || '(empty reply)')),
+        v.signature ? h('div', { class: 'ib-sig small faint', tip: I.sigTip }, v.signature) : null,
+        v.quoted ? h('details', { class: 'ib-quote' }, h('summary', { class: 'small', text: I.showQuoted }),
+          v.quotedHeader ? h('div', { class: 'small faint ib-qhead', text: v.quotedHeader }) : null, h('blockquote', null, paragraphs(v.quoted))) : null);
+    }
     function bubble(m, lead) {
       var out = m.direction === 'out', label = msgLabel(m), when = m.sent_at || m.received_at || m.created_at;
       return h('div', { class: 'ib-msg ' + (out ? 'out' : 'in') + (m.kind !== 'email' && !out ? ' sys' : '') + (m.status === 'failed' ? ' failed' : '') },
         h('div', { class: 'ib-msg-head small' }, h('b', { text: out ? 'You' : (lead.first_name || lead.email) }), label ? h('span', { class: 'tag tag-sys', text: label }) : null, h('span', { class: 'faint', tip: fmt.full(when), text: fmt.ago(when) })),
         m.subject ? h('div', { class: 'ib-msg-subj small muted', text: m.subject }) : null,
-        h('div', { class: 'ib-msg-body', text: m.body_text || '' }),
+        m.view ? replyParts(m.view) : h('div', { class: 'ib-msg-body', text: m.body_text || '' }),
         m.status === 'failed' && m.error ? h('div', { class: 'small bad', text: 'Could not be delivered.' }) : null);
     }
     function paintThread(d, into, opts) {
@@ -120,7 +132,8 @@
           h('div', { class: 'actions' }, h('button', { class: 'btn btn-sm', type: 'button', tip: 'Show this conversation as unread again.', on: { click: function () {
             SB.api.post('/api/inbox/threads/' + c.id + '/read', { read: false }).then(function () { ui.toast('Marked unread'); if (panel) { panel.close(); panel = null; } state.sel = null; SB.mount(threadEl, emptyThread()); loadList(); });
           } } }, 'Mark unread'))),
-        c.suppressed ? h('div', { class: 'callout warn', text: I.blocked }) : null,
+        c.opt_out ? h('div', { class: 'optbanner ob-' + c.opt_out }, ui.optBadge(c.opt_out, true), h('span', { class: 'small', text: I.optNote[c.opt_out] })) : null,
+        c.suppressed && !c.opt_out ? h('div', { class: 'callout warn', text: I.blocked }) : null,
         tags, h('div', { class: 'ib-msgs' }, msgs.map(function (m) { return bubble(m, lead); })),
         h('div', { class: 'ib-compose' }, err, body, h('div', { class: 'ib-compose-foot' }, h('span', { class: 'small faint', text: I.plainNote }), send)));
       SB.mount(into, node);

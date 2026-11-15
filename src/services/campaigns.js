@@ -17,6 +17,7 @@ var v = require('../lib/validate');
 var AppError = require('../lib/errors').AppError;
 var audit = require('./audit');
 var state = require('./campaignState');
+var stepProgress = require('./stepProgress');
 
 var MAX_LEADS = 50000, MAX_PARTS = 500, MAX_STEPS = 6, MAX_SENDERS = 20;
 var DEFAULT_LEAD_STATUSES = ['valid', 'unverified', 'risky', 'catch_all'];
@@ -33,22 +34,26 @@ function seq(items, fn) { return items.reduce(function (p, it, i) { return p.the
 // ---------- validation ----------
 function validateSteps(steps) {
   if (!Array.isArray(steps) || steps.length < 1 || steps.length > MAX_STEPS) throw bad('steps', 'A sequence needs 1 to ' + MAX_STEPS + ' emails (the first email plus up to 5 follow-ups)');
-  return steps.map(function (s, i) {
-    if (!s || typeof s !== 'object') throw bad('steps', 'Step ' + (i + 1) + ' is invalid');
-    var subject = typeof s.subject === 'string' ? s.subject.trim() : '';
-    if (text.hasControl(subject) || subject.length > 200) throw bad('steps', 'Step ' + (i + 1) + ': subject must be one line, max 200 characters');
-    if (i === 0 && !subject) throw bad('steps', 'The first email needs a subject');
-    var body = typeof s.body_html === 'string' ? s.body_html : '';
-    if (body.length > 50000) throw bad('steps', 'Step ' + (i + 1) + ': body is too long (max 50,000 characters)');
-    body = sanitize.clean(body);
-    if (sanitize.isBlank(body)) throw bad('steps', 'Step ' + (i + 1) + ': the email body is empty');
-    var delay = 0;
-    if (i > 0) {
-      delay = s.delay_days === undefined ? 3 : v.intIn(s.delay_days, 1, 60);
-      if (delay === null) throw bad('steps', 'Step ' + (i + 1) + ': wait time must be 1 to 60 days');
-    }
-    return { step_no: i, delay_days: delay, subject: subject, body_html: body };
-  });
+  return steps.map(function (s, i) { return validateStep(s, i); });
+}
+
+// One step (index i = step_no). Also used by the live editor, which changes a single not-yet-sent step.
+function validateStep(s, i) {
+  if (!s || typeof s !== 'object') throw bad('steps', 'Step ' + (i + 1) + ' is invalid');
+  var subject = typeof s.subject === 'string' ? s.subject.trim() : '';
+  if (text.hasControl(subject) || subject.length > 200) throw bad('steps', 'Step ' + (i + 1) + ': subject must be one line, max 200 characters');
+  if (i === 0 && !subject) throw bad('steps', 'The first email needs a subject');
+  var body = typeof s.body_html === 'string' ? s.body_html : '';
+  if (body.length > 50000) throw bad('steps', 'Step ' + (i + 1) + ': body is too long (max 50,000 characters)');
+  body = sanitize.clean(body);
+  if (sanitize.isBlank(body)) throw bad('steps', 'Step ' + (i + 1) + ': the email body is empty');
+  if ((body.match(/<img\b/g) || []).length > 3) throw bad('steps', 'Step ' + (i + 1) + ': use at most 3 pictures per email (more can look like spam)');
+  var delay = 0;
+  if (i > 0) {
+    delay = s.delay_days === undefined ? 3 : v.intIn(s.delay_days, 1, 60);
+    if (delay === null) throw bad('steps', 'Step ' + (i + 1) + ': wait time must be 1 to 60 days');
+  }
+  return { step_no: i, delay_days: delay, subject: subject, body_html: body };
 }
 
 function validateSettings(input, base) {
@@ -306,9 +311,11 @@ C.list = function (userId, q) {
     return Promise.all([
       self.db.all('SELECT * FROM campaigns WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT 5000', [userId]),
       self._statsByCampaign(userId, null),
-      self.db.all('SELECT cs.campaign_id AS cid, cs.sender_id AS sid FROM campaign_senders cs JOIN campaigns c ON c.id = cs.campaign_id WHERE c.user_id = ?', [userId])
+      self.db.all('SELECT cs.campaign_id AS cid, cs.sender_id AS sid FROM campaign_senders cs JOIN campaigns c ON c.id = cs.campaign_id WHERE c.user_id = ?', [userId]),
+      stepProgress.load(self.db, userId, null),
+      stepProgress.metaFor(self.db, userId)
     ]).then(function (res) {
-      var all = res[0], stats = res[1], links = {};
+      var all = res[0], stats = res[1], links = {}, prog = res[3], meta = res[4];
       res[2].forEach(function (l) { (links[l.cid] = links[l.cid] || []).push(l.sid); });
       var kids = {}, mains = [];
       all.forEach(function (c) { if (c.parent_id) (kids[c.parent_id] = kids[c.parent_id] || []).push(c); else mains.push(c); });
@@ -321,7 +328,8 @@ C.list = function (userId, q) {
         var row = summarize(m, agg, sids);
         row.status = deriveStatus(m.status, parts);
         row.is_split = parts.length > 0;
-        row.parts = parts.map(function (p) { return summarize(p, stats[p.id], links[p.id]); });
+        row.step_progress = stepProgress.describe(meta[m.id], stepProgress.sum((parts.length ? parts : [m]).map(function (c) { return prog[c.id]; })));
+        row.parts = parts.map(function (p) { var pr = summarize(p, stats[p.id], links[p.id]); pr.step_progress = stepProgress.describe(meta[p.id], prog[p.id]); return pr; });
         return row;
       });
       if (search) { var needle = search.toLowerCase(); rows = rows.filter(function (r) { return r.name.toLowerCase().indexOf(needle) !== -1; }); }
@@ -349,7 +357,8 @@ C.get = function (userId, id) {
     ]);
   }).then(function (res) {
     var parts = res[0], ids = [camp.id].concat(parts.map(function (p) { return p.id; }));
-    return self._statsByCampaign(userId, ids).then(function (stats) {
+    return Promise.all([self._statsByCampaign(userId, ids), stepProgress.load(self.db, userId, ids), stepProgress.lockedSteps(self.db, userId, parts.length ? parts.map(function (p) { return p.id; }) : [camp.id])]).then(function (rr) {
+      var stats = rr[0], prog = rr[1], locked = rr[2];
       var agg = emptyStats();
       (parts.length ? parts : [camp]).forEach(function (c) { addStats(agg, stats[c.id] || emptyStats()); });
       finishStats(agg);
@@ -359,7 +368,10 @@ C.get = function (userId, id) {
         created_at: camp.created_at, updated_at: camp.updated_at, split_seed: camp.split_seed, batch_size: camp.batch_size,
         settings: { window_start_hour: camp.window_start_hour, window_end_hour: camp.window_end_hour, utc_offset_min: camp.utc_offset_min,
           weekdays_only: camp.weekdays_only, stop_on_reply: camp.stop_on_reply, track_opens: camp.track_opens },
-        steps: res[1], senders: senders, stats: agg, is_split: parts.length > 0,
+        steps: stepProgress.describe(res[1], stepProgress.sum((parts.length ? parts : [camp]).map(function (c) { return prog[c.id]; }))).map(function (d, k) {
+          return Object.assign({}, res[1][k], { sent: d.sent, capacity: d.capacity, pct: d.pct, locked: !!locked[res[1][k].step_no] });
+        }),
+        senders: senders, stats: agg, is_split: parts.length > 0,
         parts: parts.map(function (p) { var s = summarize(p, stats[p.id], null); delete s.sender_ids; return s; })
       };
       return out;
@@ -381,13 +393,26 @@ C.listLeads = function (userId, id, q) {
     }
     var page = Math.max(1, parseInt(q.page, 10) || 1), size = Math.min(200, Math.max(1, parseInt(q.pageSize, 10) || 50));
     return self.db.get('SELECT COUNT(*) AS c FROM campaign_leads cl WHERE ' + where, params).then(function (tot) {
-      return self.db.all('SELECT cl.id, cl.campaign_id, cl.status, cl.current_step, cl.next_send_at, cl.last_sent_at, l.email, l.first_name, l.last_name, l.company, s.email AS sender_email ' +
-        'FROM campaign_leads cl JOIN leads l ON l.id = cl.lead_id LEFT JOIN senders s ON s.id = cl.sender_id WHERE ' + where +
-        ' ORDER BY cl.campaign_id, cl.position LIMIT ? OFFSET ?', params.concat([size, (page - 1) * size]))
-        .then(function (items) { return { items: items, total: tot.c, page: page, pageSize: size }; });
+      return self.db.all('SELECT cl.id, cl.campaign_id, cl.status, cl.current_step, cl.next_send_at, cl.last_sent_at, cl.status_note, l.email, l.first_name, l.last_name, l.company, s.email AS sender_email, sp.reason AS suppression_reason, ' +
+        '(SELECT MAX(r.received_at) FROM messages r WHERE r.campaign_lead_id = cl.id AND r.direction = \'in\' AND r.kind = \'email\') AS replied_at ' +
+        'FROM campaign_leads cl JOIN leads l ON l.id = cl.lead_id LEFT JOIN senders s ON s.id = cl.sender_id LEFT JOIN suppression sp ON sp.user_id = ? AND sp.email = l.email WHERE ' + where +
+        ' ORDER BY cl.campaign_id, cl.position LIMIT ? OFFSET ?', [userId].concat(params, [size, (page - 1) * size]))
+        .then(function (items) {
+          items.forEach(function (it) { it.opt_out = optOutKind(it); });
+          return { items: items, total: tot.c, page: page, pageSize: size };
+        });
     });
   });
 };
+
+// Why a person stopped receiving mail, as the Studio shows it: 'stop_campaign' (they replied "stop campaign"),
+// 'unsubscribe_link', 'bounce', or null. Derived from the lead status plus the note / suppression reason the engine wrote.
+function optOutKind(it) {
+  if (it.status === 'bounced') return 'bounce';
+  if (it.status !== 'unsubscribed') return null;
+  if (it.suppression_reason === 'replied_stop' || /stop campaign/i.test(it.status_note || '')) return 'stop_campaign';
+  return 'unsubscribe_link';
+}
 
 // ---------- lifecycle ----------
 function leavesOf(db, userId, camp) {
@@ -491,6 +516,71 @@ function changeState(self, userId, id, from, to, action, ip) {
 }
 C.pause = function (userId, id, ip) { return changeState(this, userId, id, 'active', 'paused', 'pause', ip); };
 C.resume = function (userId, id, ip) { return changeState(this, userId, id, 'paused', 'active', 'resume', ip); };
+
+// Live editing of steps that have NOT gone out yet (Campaign Studio): subject, body and wait time of single steps.
+// input.steps = [{ step_no, subject?, body_html?, delay_days? }]. A step is locked once any email of it was sent (or is being
+// sent right now), because people already hold that text. The check runs inside the same transaction as the write, so an
+// email that starts sending a moment later cannot slip past it. The engine re-reads steps every tick, so the change applies
+// from the next tick on; an email already being composed keeps the old text (that is the one unavoidable race, and it is
+// harmless: it is the text the recipient was meant to get a second ago).
+// Changing the wait time moves the due time of people who are waiting for that step by the difference.
+C.updateSteps = function (userId, id, input, ip) {
+  var self = this, camp, leaves, patches;
+  return Promise.resolve().then(function () { return self._own(userId, id); }).then(function (c) {
+    camp = c;
+    if (c.parent_id) throw bad('id', 'Edit the main campaign, not a single part');
+    var list = input && input.steps;
+    if (!Array.isArray(list) || list.length < 1 || list.length > MAX_STEPS) throw bad('steps', 'Send the steps you changed');
+    var seen = {};
+    patches = list.map(function (p) {
+      var n = p && v.intIn(p.step_no, 0, MAX_STEPS - 1);
+      if (n === null || n === undefined) throw bad('steps', 'Invalid step number');
+      if (seen[n]) throw bad('steps', 'A step was sent twice');
+      seen[n] = true;
+      return { n: n, p: p };
+    });
+    return self.db.all('SELECT * FROM campaigns WHERE parent_id = ? AND user_id = ? ORDER BY id', [id, userId]);
+  }).then(function (kids) {
+    leaves = kids.length ? kids : [camp];
+    if (leaves.some(function (l) { return l.status === 'completed'; }) || leaves.some(function (l) { return l.status === 'preparing'; })) {
+      throw new AppError('conflict', 'A completed or still-preparing campaign cannot be edited', 409);
+    }
+    var all = [camp].concat(kids), t = self.now();
+    return self.db.transaction(function (tx) {
+      return stepProgress.lockedSteps(tx, userId, leaves.map(function (l) { return l.id; })).then(function (locked) {
+        patches.forEach(function (x) { if (locked[x.n]) throw new AppError('conflict', 'Email ' + (x.n + 1) + ' has already been sent to some people and can no longer be edited', 409, { step: x.n }); });
+        return tx.all('SELECT step_no, delay_days, subject, body_html FROM campaign_steps WHERE campaign_id = ?', [camp.id]);
+      }).then(function (cur) {
+        var byNo = {}; cur.forEach(function (r) { byNo[r.step_no] = r; });
+        var merged = patches.map(function (x) {
+          var old = byNo[x.n];
+          if (!old) throw bad('steps', 'Step ' + (x.n + 1) + ' does not exist');
+          var next = validateStep({ subject: x.p.subject !== undefined ? x.p.subject : old.subject, body_html: x.p.body_html !== undefined ? x.p.body_html : old.body_html,
+            delay_days: x.p.delay_days !== undefined ? x.p.delay_days : old.delay_days }, x.n);
+          return { n: x.n, next: next, deltaDays: next.delay_days - old.delay_days };
+        });
+        return merged.reduce(function (p, m) {
+          return p.then(function () {
+            return seq(all, function (c) {
+              return tx.run('UPDATE campaign_steps SET subject = ?, body_html = ?, delay_days = ? WHERE campaign_id = ? AND step_no = ?', [m.next.subject, m.next.body_html, m.next.delay_days, c.id, m.n]);
+            });
+          }).then(function () {
+            if (!m.deltaDays || m.n === 0) return null;
+            // People who already got the previous email and now wait for this one.
+            return seq(leaves, function (c) {
+              return tx.run("UPDATE campaign_leads SET next_send_at = MAX(?, next_send_at + ?) WHERE campaign_id = ? AND current_step = ? AND status IN ('active','paused') AND next_send_at IS NOT NULL",
+                [t, m.deltaDays * 86400000, c.id, m.n]);
+            });
+          });
+        }, Promise.resolve()).then(function () {
+          return tx.run('UPDATE campaigns SET updated_at = ? WHERE id = ?', [t, camp.id]);
+        });
+      });
+    }).then(function () {
+      return audit.log(self.db, { userId: userId, action: 'campaign.steps_edit', entity: 'campaign', entityId: id, ip: ip, meta: { steps: patches.map(function (x) { return x.n; }) } }, self.now);
+    });
+  }).then(function () { return self.get(userId, id); });
+};
 
 C.update = function (userId, id, input, ip) {
   var self = this, camp, parts, steps = null, senderIds = null, settings = null, name = null;

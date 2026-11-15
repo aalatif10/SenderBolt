@@ -304,3 +304,61 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; }
 .toolbar select.input { width: auto; min-width: 150px; }
 
 .filter-row { gap: var(--space-2); } .filter-row .input { width: auto; min-width: 0; flex: 0 1 auto; max-width: 100%; } .filter-row input[type=search] { flex: 0 1 190px; width: 190px; }
+
+/* ---- Segmented step bar (ui.stepBar), Studio, Reports, opt-out badges, picture dialog ---- */
+.stepbar { display: flex; gap: 4px; align-items: flex-start; min-width: 160px; }
+.stepseg { flex: 1 1 0; min-width: 0; }
+.stepfill { height: 10px; border-radius: 99px; background: var(--surface-2); overflow: hidden; border: 1px solid var(--border); }
+.stepfill > span { display: block; height: 100%; background: var(--accent); border-radius: 99px; transition: width .4s ease; }
+.stepseg.full .stepfill > span { background: var(--good); }
+.stepcap { display: grid; gap: 0; margin-top: 6px; line-height: 1.25; } .stepcap span { color: var(--text-3); } .stepcap b { color: var(--text); }
+.stepbar.compact .stepfill { height: 8px; } .stepbar.compact { margin-bottom: 4px; }
+.c-steps { min-width: 190px; }
+.optbadge { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.optbadge .icon { width: 13px; height: 13px; }
+.optbadge.ob-stop_campaign { background: var(--warn-soft); color: var(--warn); box-shadow: inset 0 0 0 1px var(--warn); }
+.optbadge.ob-unsubscribe_link { background: var(--surface-2); color: var(--text-2); box-shadow: inset 0 0 0 1px var(--border-strong); }
+.optbadge.ob-bounce { background: var(--bad-soft); color: var(--bad); }
+.optbadge.big { height: 30px; padding: 0 14px; font-size: var(--fs-sm); }
+.row-optout td { background: var(--warn-soft); } .row-optout.ro-bounce td { background: var(--bad-soft); } .row-optout.ro-unsubscribe_link td { background: var(--surface-2); }
+.optbanner { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; padding: 10px 14px; border-radius: var(--radius-sm); background: var(--warn-soft); margin-bottom: var(--space-3); }
+.optbanner.ob-bounce { background: var(--bad-soft); } .optbanner.ob-unsubscribe_link { background: var(--surface-2); }
+.chip-sm { height: 22px; font-size: 12px; gap: 4px; cursor: default; padding: 0 8px; display: inline-flex; align-items: center; } .chip-sm .icon { width: 12px; height: 12px; }
+.studio-tabs, .settings-tabs { max-width: 640px; flex-wrap: wrap; }
+.sd-grid { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: var(--space-4); align-items: start; }
+.sd-rail { display: grid; gap: var(--space-2); position: sticky; top: var(--space-4); }
+.sd-step { display: grid; gap: 6px; text-align: left; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); font: inherit; cursor: pointer; }
+.sd-step:hover { background: var(--surface-2); } .sd-step.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); background: var(--accent-soft); }
+.sd-step-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.sd-subj { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sd-pane { min-width: 0; }
+@media (max-width: 980px) { .sd-grid { grid-template-columns: minmax(0, 1fr); } .sd-rail { position: static; } }
+/* inbox reply layout */
+.ib-msg-body.parts { white-space: normal; } .ib-p { margin: 0 0 .75em; white-space: pre-wrap; } .ib-main > .ib-p:last-child { margin-bottom: 0; }
+.ib-sig { margin-top: var(--space-3); padding-top: var(--space-2); border-top: 1px dashed var(--border-strong); }
+.ib-quote { margin-top: var(--space-3); } .ib-quote summary { cursor: pointer; color: var(--accent); }
+.ib-quote blockquote { margin: var(--space-2) 0 0; padding: 4px 0 4px var(--space-3); border-left: 3px solid var(--border-strong); color: var(--text-2); font-size: var(--fs-sm); }
+.ib-qhead { margin-top: var(--space-2); }
+/* reports */
+.rp-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); margin-bottom: var(--space-4); align-items: start; }
+@media (max-width: 980px) { .rp-grid { grid-template-columns: minmax(0, 1fr); } }
+.kpis { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+.report-filters select.input { width: auto; min-width: 170px; }
+.chart { width: 100%; height: auto; display: block; margin-top: var(--space-3); }
+.ch-grid { stroke: var(--border); stroke-width: 1; } .ch-axis { fill: var(--text-3); font-size: 11px; font-family: var(--font); }
+.ch-bar.c-sent { fill: var(--accent); } .ch-bar.c-reply { fill: var(--good); } .ch-bar:hover { opacity: .75; }
+.hbars { display: grid; gap: var(--space-3); } .hb-top { display: flex; justify-content: space-between; gap: var(--space-3); font-size: var(--fs-sm); }
+.hb-track { height: 12px; border-radius: 99px; background: var(--surface-2); overflow: hidden; margin-top: 4px; } .hb-track span { display: block; height: 100%; border-radius: 99px; background: var(--accent); }
+.hb-track .c-sent2 { background: #7aa2ff; } .hb-track .c-reply { background: var(--good); } .hb-track .c-int { background: #0f9d58; }
+.funnel-foot { display: flex; gap: var(--space-4); flex-wrap: wrap; margin-top: var(--space-4); }
+.delta { font-size: 12px; font-weight: 700; } .delta.good { color: var(--good); } .delta.bad { color: var(--bad); } .delta.flat { color: var(--text-3); }
+.compact-table td, .compact-table th { padding: 8px 10px; }
+/* picture dialog + pictures in the editor */
+.pic-lib { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: var(--space-2); margin-bottom: var(--space-4); max-height: 220px; overflow: auto; }
+.pic-tile { position: relative; display: grid; justify-items: center; gap: 4px; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; overflow: hidden; }
+.pic-tile:hover { background: var(--surface-2); } .pic-tile.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.pic-tile .small { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .pic-thumb { object-fit: contain; width: 56px; height: 56px; }
+.pic-del { position: absolute; top: 2px; right: 2px; width: 22px; height: 22px; border: 0; border-radius: 50%; background: var(--surface); color: var(--text-2); display: grid; place-items: center; cursor: pointer; padding: 0; }
+.pic-del .icon { width: 12px; height: 12px; } .pic-del:hover { color: var(--bad); }
+.modal:has(.pic-lib) { max-width: 560px; }
+.ed-area img, .wz-mail-body img { max-width: 100%; height: auto; vertical-align: middle; }

@@ -27,6 +27,7 @@ var health = require('../lib/health');
 var classify = require('../lib/sendErrors').classify;
 var capacityToday = require('../services/senders').capacityToday;
 var senderHealth = require('../services/senderHealth');
+var images = require('../services/images');
 var state = require('../services/campaignState');
 
 var DAY = 86400000;
@@ -235,7 +236,12 @@ E._attemptSend = function (sender, c, t, stats, steps, step, history) {
         if (composed.missing.length) {
           return self._finishLead(c, 'error', 'Missing merge field: ' + composed.missing.join(', '), t).then(function () { return 'skipped'; });
         }
-        return self._claim(sender, c, composed.mail, steps, t).then(function (cl) {
+        // Pictures written as sbimg:<id> become inline (CID) parts of this one message.
+        return images.embed(self.db, c.user_id, composed.mail.html).then(function (emb) {
+          composed.mail.html = emb.html;
+          if (emb.attachments.length) composed.mail.attachments = emb.attachments;
+          return self._claim(sender, c, composed.mail, steps, t);
+        }).then(function (cl) {
           claim = cl;
           if (!claim.ok) return 'skipped';
           return self.deliver(sender, composed.mail).then(function (res) {

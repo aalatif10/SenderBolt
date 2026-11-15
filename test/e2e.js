@@ -251,6 +251,56 @@ h.test('wizard flow: preview split, create split campaign, start, list, pause, d
     .then(function (r) { assert.strictEqual(r.status, 200); });
 });
 
+h.group('e2e: studio, reports, pictures over HTTP');
+h.test('live step edit, step progress, reports, opens, picture upload and serving', function () {
+  var folderId, senderId, campId, imgId;
+  var png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64').toString('base64');
+  return request('POST', '/api/senders', { json: { label: 'Stu', email: 'stu@gmail.com', provider: 'gmail', password: 'abcdefghijklmnop' } }).then(function (r) {
+    senderId = r.body.sender.id; return request('POST', '/api/folders', { json: { name: 'Studio leads' } });
+  }).then(function (r) {
+    folderId = r.body.folder.id; return request('POST', '/api/folders/' + folderId + '/import', { json: { format: 'paste', data: 'a@c1.com\nb@c2.com' } });
+  }).then(function () { return request('POST', '/api/images', { json: { name: 'logo.png', data: png }, csrf: false }); })
+    .then(function (r) {
+      assert.strictEqual(r.status, 403);
+      return request('POST', '/api/images', { json: { name: 'logo.png', data: png } });
+    }).then(function (r) {
+      assert.strictEqual(r.status, 201); imgId = r.body.image.id;
+      return request('GET', '/api/images/' + imgId);
+    }).then(function (r) {
+      assert.strictEqual(r.status, 200); assert.strictEqual(r.headers['content-type'], 'image/png');
+      assert.ok(/sandbox/.test(r.headers['content-security-policy'])); assert.ok(/private/.test(r.headers['cache-control']));
+      return request('POST', '/api/campaigns', { json: { name: 'Studio camp', folder_id: folderId, sender_ids: [senderId],
+        steps: [{ subject: 'Hello', body_html: '<p>Hi</p><img src="sbimg:' + imgId + '" alt="Logo" width="40" height="40">' }, { subject: '', body_html: '<p>Bump</p>', delay_days: 2 }] } });
+    }).then(function (r) {
+      assert.strictEqual(r.status, 201); campId = r.body.campaign.id;
+      assert.ok(/sbimg:/.test(r.body.campaign.steps[0].body_html));
+      return request('DELETE', '/api/images/' + imgId);
+    }).then(function (r) {
+      assert.strictEqual(r.status, 409);                                                    // still used by the campaign
+      return request('PATCH', '/api/campaigns/' + campId + '/steps', { json: { steps: [{ step_no: 1, subject: 'Re: Hello', delay_days: 4 }] }, csrf: false });
+    }).then(function (r) {
+      assert.strictEqual(r.status, 403);
+      return request('PATCH', '/api/campaigns/' + campId + '/steps', { json: { steps: [{ step_no: 1, subject: 'Re: Hello', delay_days: 4 }] } });
+    }).then(function (r) {
+      assert.strictEqual(r.status, 200); assert.strictEqual(r.body.campaign.steps[1].delay_days, 4); assert.strictEqual(r.body.campaign.steps[1].capacity, 2); assert.strictEqual(r.body.campaign.steps[0].locked, false);
+      return request('GET', '/api/reports?days=7&tz=120');
+    }).then(function (r) {
+      assert.strictEqual(r.status, 200); assert.strictEqual(r.body.series.length, 7); assert.strictEqual(r.body.totals.sent, 0);
+      return request('GET', '/api/reports?days=abc&campaign_id=zzz');
+    }).then(function (r) {
+      assert.strictEqual(r.status, 400);
+      return request('GET', '/api/campaigns/' + campId + '/opens');
+    }).then(function (r) {
+      assert.strictEqual(r.status, 200); assert.strictEqual(r.body.rows.length, 0); assert.strictEqual(r.body.tracking_enabled, false);
+      return request('PUT', '/api/settings', { json: { prefs: { track_opens: true, window_start_hour: 8 } } });
+    }).then(function (r) {
+      assert.strictEqual(r.status, 200); assert.strictEqual(r.body.settings.prefs.window_start_hour, 8);
+      return request('DELETE', '/api/campaigns/' + campId);
+    }).then(function (r) { assert.strictEqual(r.status, 200); return request('DELETE', '/api/images/' + imgId); })
+      .then(function (r) { assert.strictEqual(r.status, 200); return request('DELETE', '/api/folders/' + folderId); })
+      .then(function () { return request('DELETE', '/api/senders/' + senderId); });
+});
+
 h.group('e2e: isolation, password change, logout');
 h.test('a second user cannot see or touch the first user\'s data', function () {
   var owner = { cookie: state.cookie, csrf: state.csrf }, folderId;

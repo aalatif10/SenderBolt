@@ -19,6 +19,7 @@ var sendErrors = require('../lib/sendErrors');
 var throttle = require('../lib/throttle');
 var audit = require('./audit');
 var withSignature = require('./settings').withSignature;
+var images = require('./images');
 
 var SAMPLE_LEAD = { first_name: 'Alex', last_name: 'Morgan', company: 'Acme Domains', email: 'alex@acme-domains.com', domain: 'acme-domains.com' };
 function bad(field, msg) { var d = {}; d[field] = msg; return new AppError('validation', msg, 400, d); }
@@ -66,7 +67,11 @@ T.send = function (user, input, ip) {
       mail.to = to; mail.subject = '[TEST] ' + mail.subject.replace(/[\r\n]+/g, ' ');
       mail.inReplyTo = null; mail.references = [];
       var out = { to: to, sender: snd.email, subject: mail.subject, delivered: true, missing: composed.missing, used_lead: usedLead };
-      return audit.log(self.db, { userId: user.id, action: 'test_email.send', entity: 'sender', entityId: snd.id, ip: ip, meta: { to: to } }, self.now).then(function () {
+      return images.embed(self.db, user.id, mail.html).then(function (emb) {
+        mail.html = emb.html; if (emb.attachments.length) mail.attachments = emb.attachments;
+        out.images = emb.attachments.length;
+        return audit.log(self.db, { userId: user.id, action: 'test_email.send', entity: 'sender', entityId: snd.id, ip: ip, meta: { to: to } }, self.now);
+      }).then(function () {
         return self.engine.deliver(snd, mail).then(function () { return out; }, function (err) {
           throw new AppError('conflict', 'The test email was not sent: ' + sendErrors.classify(err).message, 502);
         });

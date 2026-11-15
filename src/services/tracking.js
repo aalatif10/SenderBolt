@@ -10,8 +10,8 @@ TrackingService.prototype.recordOpen = function (token) {
   var self = this, v = track.verify(this.secret, token);
   if (!v) return Promise.resolve(false);
   var t = this.now();
-  return this.db.run("UPDATE messages SET open_count = open_count + 1, opened_at = COALESCE(opened_at, ?) WHERE idempotency_key = ? AND direction = 'out' AND status = 'sent'",
-    [t, 'cl:' + v.clId + ':s:' + v.step]).then(function (r) { return r.changes > 0; }, function () { return false; });
+  return this.db.run("UPDATE messages SET open_count = open_count + 1, opened_at = COALESCE(opened_at, ?), last_opened_at = ? WHERE idempotency_key = ? AND direction = 'out' AND status = 'sent'",
+    [t, t, 'cl:' + v.clId + ':s:' + v.step]).then(function (r) { return r.changes > 0; }, function () { return false; });
 };
 
 module.exports = { TrackingService: TrackingService };

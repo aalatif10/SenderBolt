@@ -4,7 +4,8 @@
 //                                 err.code, err.responseCode, err.response)
 //   mailer.verify(creds)      -> Promise<true>            (rejects when it cannot log in)
 // creds = { host, port, secure, user, pass }
-// mail  = { from:{name,address}, to, subject, html, text, headers, messageId, inReplyTo, references[] }
+// mail  = { from:{name,address}, to, subject, html, text, headers, messageId, inReplyTo, references[], attachments?[{cid,filename,contentType,content}] }
+//         attachments are INLINE pictures referenced from the HTML as cid:<cid> (see services/images.js)
 //
 // Uses nodemailer (npm install nodemailer). Plain-text SMTP is never allowed: ports that are
 // not implicit-TLS must upgrade with STARTTLS (requireTLS) and certificates are verified.
@@ -35,6 +36,9 @@ function createLive() {
       };
       if (mail.inReplyTo) opts.inReplyTo = mail.inReplyTo;
       if (mail.references && mail.references.length) opts.references = mail.references;
+      if (mail.attachments && mail.attachments.length) {
+        opts.attachments = mail.attachments.map(function (a) { return { cid: a.cid, filename: a.filename, contentType: a.contentType, content: a.content, contentDisposition: 'inline' }; });
+      }
       return tr.sendMail(opts).then(function (info) { tr.close(); return { messageId: info.messageId || mail.messageId }; },
         function (err) { try { tr.close(); } catch (e) { /* ignore */ } throw err; });
     },

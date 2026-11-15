@@ -103,8 +103,8 @@ function send(res, r) {
   if (r.cookies.length) res.setHeader('Set-Cookie', r.cookies);
   if (r.raw) {
     res.statusCode = r.status;
+    res.setHeader('Cache-Control', 'no-store');                     // default; a route may override it (picture bytes are immutable per id)
     Object.keys(r.headers).forEach(function (k) { res.setHeader(k, r.headers[k]); });
-    res.setHeader('Cache-Control', 'no-store');
     res.end(r.body);
   } else {
     http.sendJson(res, r.status, r.body, r.headers);

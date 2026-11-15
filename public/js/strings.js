@@ -110,11 +110,50 @@ SB.S = {
     blocked: 'This person opted out or their address bounced, so replying is turned off.',
     empty: 'No replies yet. When someone answers one of your emails it shows up here, from every connected account.',
     emptyFiltered: 'No conversations match these filters.',
-    plainNote: 'Replies are shown as plain text for safety.'
+    plainNote: 'Replies are shown as plain text for safety.',
+    sigTip: 'Signature added automatically by their phone or mail app. It is kept apart from what they actually wrote.', showQuoted: 'Show earlier messages',
+    optNote: {
+      stop_campaign: 'They replied "stop campaign". Their sequence is stopped and they are on your do-not-email list. Replying is turned off.',
+      unsubscribe_link: 'They used the unsubscribe link. Their sequence is stopped and they are on your do-not-email list. Replying is turned off.',
+      bounce: 'Their address bounced. Their sequence is stopped. Replying is turned off.'
+    }
   },
   settings: {
     accountTip: 'The address you sign in with.',
     passwordHint: 'At least 12 characters. Changing it signs you out everywhere else.',
-    sigTip: 'Added to the end of every email from an account that has no signature of its own.'
+    sigTip: 'Added to the end of every email from an account that has no signature of its own.',
+    prefs: { intro: 'New campaigns start with these choices. You can still change them for each campaign; running campaigns are never affected.', tzTip: 'The sending window follows this time zone, usually your recipients\' or your own.' }
+  },
+  steps: {
+    first: 'First email', follow: function (n) { return 'Follow-up ' + n; }, short: 'Email 1', shortFollow: function (n) { return 'Follow-up ' + n; },
+    segTip: 'Each segment is one email in the sequence. People who replied, bounced or opted out drop out of the later segments.'
+  },
+  optout: {
+    stop_campaign: { label: 'Stopped: replied "stop campaign"', tip: 'This person replied "stop campaign". They were removed from the sequence and added to your do-not-email list, so they will never be emailed again.' },
+    unsubscribe_link: { label: 'Unsubscribed', tip: 'This person clicked the unsubscribe link. They were removed from the sequence and added to your do-not-email list.' },
+    bounce: { label: 'Bounced', tip: 'The address does not exist or refused the email. It was removed from the sequence and will not be tried again.' }
+  },
+  images: {
+    tip: 'Insert a logo or picture. It travels inside the email (no download, no remote server), which keeps deliverability high.',
+    title: 'Insert a picture', intro: 'Pictures are sent inside the email itself, so they show up without a "load images" prompt. Keep them small: a logo of about 100 px width is ideal.',
+    upload: 'Upload a picture', empty: 'No pictures yet. Upload a PNG, JPEG, GIF or WebP file (up to 300 KB).', deleteTip: 'Delete this picture from your library. Not possible while an email or signature still uses it.',
+    alt: 'Description', altTip: 'Shown when a mail app blocks pictures, and read by screen readers. Emails with described pictures are less likely to look like spam.', altPlaceholder: 'e.g. Acme Domains logo',
+    width: 'Width in the email', limits: 'Up to 3 pictures per email, 300 KB each. Location data and other hidden metadata are removed automatically.',
+    insert: 'Insert', choose: 'Choose a picture first.', needAlt: 'Add a short description of the picture.', tooMany: 'An email can hold up to 3 pictures. More can look like spam.',
+    tooBig: 'This picture is larger than 300 KB. Heavy emails are more likely to land in spam. Please use a smaller file.', readFail: 'The file could not be read.'
+  },
+  studio: {
+    locked: 'Already sent', lockedTip: 'This email has gone out to at least one person, so its text is frozen. People already received that wording.',
+    editable: 'Not sent yet', editableTip: 'Nobody has received this email yet. You can change it freely; the next email that goes out uses your edit.',
+    saved: 'Saved', unsaved: 'Unsaved changes', save: 'Save changes', saveTip: 'Applies to everyone who has not received this email yet. Takes effect on the next send.',
+    liveNote: 'Changes apply to everyone who has not received this email yet.', delayShift: 'Changing the wait also moves the send time of people who are already waiting for this email.',
+    leave: 'You have unsaved changes. Leave without saving?', draftNote: 'This campaign has not started. To change who receives it, the senders or the number of emails, use the builder.',
+    opensOff: 'Open tracking is switched off for this campaign. Turn it on in Settings > System preferences before creating campaigns.',
+    opensNote: 'Opens are estimates. Some mail apps load images automatically (inflating the count) and others block them. Replies are the reliable signal.'
+  },
+  reports: {
+    funnelTip: 'Of the people whose first email went out in this period: how many got a follow-up, replied, were interested, bounced or opted out.',
+    seriesTip: 'Emails sent and replies received on each day.', stepsTip: 'How each email in the sequence performs. Replies are attributed to the email that was sent last before the reply.',
+    sentimentTip: 'How replies are tagged. The tag is guessed from the words; you can correct it in the Inbox.', weekdayTip: 'On which weekday replies arrive. Use it to pick your best sending days.'
   }
 };

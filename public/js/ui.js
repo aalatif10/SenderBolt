@@ -65,6 +65,27 @@
     var bar = h('span'); bar.style.width = Math.max(0, Math.min(100, pctValue || 0)) + '%';      // CSSOM is allowed by CSP (inline attributes are not)
     return h('div', { class: 'progress', role: 'progressbar', 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': Math.round(pctValue || 0) }, bar);
   }
+  // Hunter-style segmented bar: one segment per email step, each filled by sent / capacity.
+  // steps: [{ step, sent, capacity, pct }]. compact = bar only (tables); otherwise adds "Email 1  34 / 112" captions.
+  function stepBar(steps, opts) {
+    opts = opts || {};
+    var P = SB.S.steps;
+    if (!steps || !steps.length) return h('span', { class: 'faint small', text: '\u2014' });
+    var segs = steps.map(function (s) {
+      var fill = h('span'); fill.style.width = Math.max(0, Math.min(100, s.capacity ? s.sent / s.capacity * 100 : 0)) + '%';
+      var name = s.step === 0 ? P.first : P.follow(s.step);
+      return h('div', { class: 'stepseg' + (s.capacity && s.sent >= s.capacity ? ' full' : '') + (s.sent === 0 ? ' idle' : ''), tip: name + ': ' + SB.fmt.num(s.sent) + ' sent of ' + SB.fmt.num(s.capacity) + ' people who can still get it. ' + P.segTip,
+        role: 'img', 'aria-label': name + ' ' + s.sent + ' of ' + s.capacity }, h('div', { class: 'stepfill' }, fill),
+        opts.compact ? null : h('div', { class: 'stepcap' }, h('span', { class: 'small', text: s.step === 0 ? P.short : P.shortFollow(s.step) }), h('b', { class: 'small', text: SB.fmt.num(s.sent) + ' / ' + SB.fmt.num(s.capacity) })));
+    });
+    return h('div', { class: 'stepbar' + (opts.compact ? ' compact' : '') }, segs);
+  }
+  // Badge for people who were stopped: kind is 'stop_campaign' | 'unsubscribe_link' | 'bounce'
+  function optBadge(kind, big) {
+    var o = kind && SB.S.optout[kind];
+    if (!o) return null;
+    return h('span', { class: 'optbadge ob-' + kind + (big ? ' big' : ''), tip: o.tip }, SB.icon(kind === 'bounce' ? 'alert' : 'ban'), o.label);
+  }
   function sentimentBar(s) {
     var total = (s.interested + s.more_info + s.not_interested + s.neutral) || 0;
     function seg(cls, n) { var e = h('span', { class: cls }); e.style.width = (total ? n / total * 100 : 0) + '%'; return e; }
@@ -73,6 +94,24 @@
       h('div', { class: 'legend' },
         h('span', null, h('i', { class: 's-int' }), 'Interested ' + s.interested), h('span', null, h('i', { class: 's-more' }), 'More info ' + s.more_info),
         h('span', null, h('i', { class: 's-not' }), 'Not interested ' + s.not_interested)));
+  }
+
+  // Start / Pause / Resume button shared by the project table and the Studio. c = { status, name, people }
+  function lifecycleButton(c, reload, id, small) {
+    var label, path, msg, kind = 'primary';
+    if (c.status === 'draft') { label = 'Start'; path = 'start'; msg = 'Emails will start going out to ' + SB.fmt.num(c.people) + ' people, following your schedule and each sender\'s daily limit.'; }
+    else if (c.status === 'active') { label = 'Pause'; path = 'pause'; msg = 'Sending stops until you resume. Nobody is lost.'; kind = 'plain'; }
+    else if (c.status === 'paused') { label = 'Resume'; path = 'resume'; msg = 'Sending continues where it stopped.'; }
+    else return null;
+    return h('button', { class: (small === false ? 'btn ' : 'btn btn-sm ') + (kind === 'primary' ? 'btn-primary' : ''), type: 'button', on: { click: function (e) {
+      e.stopPropagation();
+      confirmBox({ title: label + ' "' + c.name + '"?', message: msg, confirmLabel: label, onConfirm: function () {
+        return SB.api.post('/api/campaigns/' + id + '/' + path).then(function (r) {
+          (r.campaign && r.campaign.warnings || []).forEach(function (w) { toast(w.message, true); });
+          toast(label === 'Start' ? 'Campaign started' : label === 'Pause' ? 'Campaign paused' : 'Campaign resumed'); reload();
+        });
+      } });
+    } } }, SB.icon(path === 'pause' ? 'pause' : 'play', 'icon'), label);
   }
 
   // Runs fn now and every `ms` while the tab is visible. Returns stop().
@@ -84,5 +123,5 @@
     return function stop() { stopped = true; clearInterval(timer); document.removeEventListener('visibilitychange', onVis); };
   }
 
-  SB.ui = { toast: toast, modal: modal, confirm: confirmBox, panel: panel, statusPill: statusPill, info: info, tile: tile, progress: progress, sentimentBar: sentimentBar, poll: poll };
+  SB.ui = { toast: toast, modal: modal, confirm: confirmBox, panel: panel, statusPill: statusPill, info: info, tile: tile, progress: progress, lifecycleButton: lifecycleButton, stepBar: stepBar, optBadge: optBadge, sentimentBar: sentimentBar, poll: poll };
 })();

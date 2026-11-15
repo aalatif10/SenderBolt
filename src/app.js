@@ -15,6 +15,8 @@ var TestSendService = require('./services/testSend').TestSendService;
 var TrackingService = require('./services/tracking').TrackingService;
 var SettingsService = require('./services/settings').SettingsService;
 var DraftsService = require('./services/drafts').DraftsService;
+var ImagesService = require('./services/images').ImagesService;
+var ReportsService = require('./services/reports').ReportsService;
 var InboxService = require('./services/inbox').InboxService;
 var UnsubscribeService = require('./services/unsubscribe').UnsubscribeService;
 var SenderTest = require('./services/senderTest').SenderTest;
@@ -61,6 +63,8 @@ function createApp(config) {
       deps.tracking = new TrackingService(db, { secret: config.unsubSecret, now: config.now });
       deps.settings = new SettingsService(db, { now: config.now });
       deps.drafts = new DraftsService(db, { now: config.now });
+      deps.images = new ImagesService(db, { now: config.now });
+      deps.reports = new ReportsService(db, { now: config.now });
       deps.projects = new ProjectsService(db, { campaigns: deps.campaigns, now: config.now });
       deps.engineStatus = function (userId) {
         var t = (config.now || Date.now)();
