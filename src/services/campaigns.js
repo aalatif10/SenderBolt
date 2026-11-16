@@ -79,7 +79,10 @@ function parseLeadSource(input) {
     if (!Array.isArray(input.lead_statuses) || !input.lead_statuses.length || input.lead_statuses.some(function (s) { return LEAD_STATUSES.indexOf(s) === -1; })) throw bad('lead_statuses', 'Invalid lead status filter');
     out.statuses = input.lead_statuses;
   }
-  if (input.folder_id !== undefined && input.folder_id !== null) {
+  if (input.folder_ids !== undefined && input.folder_ids !== null) {
+    out.folderIds = v.idArray(input.folder_ids, 1, 50);                 // several lists at once (Hunter-style); duplicates by email are merged
+    if (!out.folderIds) throw bad('folder_ids', 'Choose 1 to 50 lead lists');
+  } else if (input.folder_id !== undefined && input.folder_id !== null) {
     out.folderId = v.intIn(input.folder_id, 1, 9007199254740991);
     if (out.folderId === null) throw bad('folder_id', 'Invalid folder');
   } else if (input.lead_ids !== undefined) {
@@ -116,7 +119,16 @@ C._selectLeads = function (userId, src) {
   }
   var cols = 'SELECT l.id, l.email, l.domain FROM leads l WHERE ';
   var p;
-  if (src.folderId) {
+  if (src.folderIds) {
+    var fids = src.folderIds;
+    p = this.db.all('SELECT id FROM folders WHERE user_id = ? AND id IN (' + v.placeholders(fids.length) + ')', [userId].concat(fids)).then(function (fs) {
+      if (fs.length !== fids.length) throw new AppError('not_found', 'Folder not found', 404);
+      return self.db.all(cols + conds.join(' AND ') + ' AND l.folder_id IN (' + v.placeholders(fids.length) + ') ORDER BY l.id LIMIT ' + (MAX_LEADS * 2 + 1), base.concat(fids));
+    }).then(function (rows) {
+      var seenMail = {};            // the same address in two lists must receive the sequence only once
+      return rows.filter(function (r) { var k = String(r.email).toLowerCase(); if (seenMail[k]) return false; seenMail[k] = true; return true; });
+    });
+  } else if (src.folderId) {
     p = this.db.get('SELECT id FROM folders WHERE id = ? AND user_id = ?', [src.folderId, userId]).then(function (f) {
       if (!f) throw new AppError('not_found', 'Folder not found', 404);
       return self.db.all(cols + conds.join(' AND ') + ' AND l.folder_id = ? ORDER BY l.id LIMIT ' + (MAX_LEADS + 1), base.concat([src.folderId]));
@@ -393,7 +405,7 @@ C.listLeads = function (userId, id, q) {
     }
     var page = Math.max(1, parseInt(q.page, 10) || 1), size = Math.min(200, Math.max(1, parseInt(q.pageSize, 10) || 50));
     return self.db.get('SELECT COUNT(*) AS c FROM campaign_leads cl WHERE ' + where, params).then(function (tot) {
-      return self.db.all('SELECT cl.id, cl.campaign_id, cl.status, cl.current_step, cl.next_send_at, cl.last_sent_at, cl.status_note, l.email, l.first_name, l.last_name, l.company, s.email AS sender_email, sp.reason AS suppression_reason, ' +
+      return self.db.all('SELECT cl.id, cl.campaign_id, cl.status, cl.current_step, cl.next_send_at, cl.last_sent_at, cl.status_note, (SELECT COALESCE(SUM(m.open_count), 0) FROM messages m WHERE m.campaign_lead_id = cl.id AND m.direction = \'out\') AS opens, (SELECT MAX(m.last_opened_at) FROM messages m WHERE m.campaign_lead_id = cl.id AND m.direction = \'out\') AS last_opened_at, l.email, l.first_name, l.last_name, l.company, s.email AS sender_email, sp.reason AS suppression_reason, ' +
         '(SELECT MAX(r.received_at) FROM messages r WHERE r.campaign_lead_id = cl.id AND r.direction = \'in\' AND r.kind = \'email\') AS replied_at ' +
         'FROM campaign_leads cl JOIN leads l ON l.id = cl.lead_id LEFT JOIN senders s ON s.id = cl.sender_id LEFT JOIN suppression sp ON sp.user_id = ? AND sp.email = l.email WHERE ' + where +
         ' ORDER BY cl.campaign_id, cl.position LIMIT ? OFFSET ?', [userId].concat(params, [size, (page - 1) * size]))

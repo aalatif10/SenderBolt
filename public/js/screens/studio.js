@@ -196,7 +196,7 @@
         if (!r.items.length) { SB.mount(table, h('div', { class: 'card empty' }, h('h2', { text: 'Nobody here' }), h('p', { text: 'No people match this filter.' }))); return; }
         var total = camp.steps.length, pages = Math.max(1, Math.ceil(r.total / r.pageSize));
         SB.mount(table, h('div', { class: 'card flush' }, h('div', { class: 'table-wrap' }, h('table', { class: 'table leads-table' },
-          h('thead', null, h('tr', null, h('th', { text: 'Person' }), h('th', { text: 'Status' }), h('th', null, 'Progress ', ui.info('How many emails of the sequence this person has received.')), h('th', { text: 'Last email' }), h('th', { text: 'Reply' }), h('th', { text: 'Sender' }))),
+          h('thead', null, h('tr', null, h('th', { text: 'Person' }), h('th', { text: 'Status' }), h('th', null, 'Progress ', ui.info('How many emails of the sequence this person has received.')), h('th', { text: 'Last email' }), camp.settings.track_opens ? h('th', null, 'Opened ', ui.info('How many times this person opened your emails, and when they last did. Counts are estimates.')) : null, h('th', { text: 'Reply' }), h('th', { text: 'Sender' }))),
           h('tbody', null, r.items.map(function (m) {
             var st = LEAD_STATUS[m.status] || LEAD_STATUS.pending;
             return h('tr', { class: m.opt_out ? 'row-optout ro-' + m.opt_out : '' },
@@ -204,6 +204,7 @@
               h('td', null, m.opt_out ? ui.optBadge(m.opt_out) : h('span', { class: 'pill pill-' + st[1], tip: st[2] }, st[0])),
               h('td', { class: 'nowrap', text: Math.min(m.current_step, total) + ' of ' + total }),
               h('td', { class: 'nowrap', tip: fmt.full(m.last_sent_at), text: m.last_sent_at ? fmt.ago(m.last_sent_at) : '—' }),
+              camp.settings.track_opens ? h('td', { class: 'nowrap', tip: m.last_opened_at ? 'Last opened ' + fmt.full(m.last_opened_at) : 'Not opened yet' }, m.opens ? h('span', null, h('b', { text: m.opens + '\u00d7' }), h('span', { class: 'small faint', text: ' ' + fmt.ago(m.last_opened_at) })) : h('span', { class: 'faint', text: '\u2014' })) : null,
               h('td', { class: 'nowrap', text: m.replied_at ? fmt.ago(m.replied_at) : '—' }),
               h('td', { class: 'small break', text: m.sender_email || '—' }));
           })))),
@@ -215,12 +216,17 @@
 
     // ---------------- Opens ----------------
     var ost = { offset: 0, limit: 100 };
+    // Opens can only be counted when the server knows its public address; say so instead of silently showing zeros.
+    function trackWarn() {
+      if (!SB.status || SB.status.public_origin_set !== false) return null;
+      return h('div', { class: 'banner banner-warn inline', role: 'status' }, SB.icon('alert'), SB.S.studio.trackingInactive);
+    }
     function paintOpens() {
       SB.mount(body, h('div', { class: 'skeleton' }));
       SB.api.get('/api/campaigns/' + id + '/opens?limit=' + ost.limit + '&offset=' + ost.offset).then(function (o) {
         if (dead || tab !== 'opens') return;
         if (!o.tracking_enabled) { SB.mount(body, h('div', { class: 'card empty' }, h('h2', { text: 'Open tracking is off for this campaign' }), h('p', { text: T.opensOff }))); return; }
-        SB.mount(body, h('div', null,
+        SB.mount(body, h('div', null, trackWarn(),
           h('div', { class: 'grid-tiles' }, ui.tile('People who opened', fmt.num(o.opened_emails), fmt.pct(o.open_rate) + ' of emails sent', M.opens), ui.tile('Total opens', fmt.num(o.total_opens), null, 'Every time an email was opened, including re-opens.'), ui.tile('Emails sent', fmt.num(o.emails_sent))),
           o.rows.length ? h('div', { class: 'card flush' }, h('div', { class: 'table-wrap' }, h('table', { class: 'table leads-table' },
             h('thead', null, h('tr', null, h('th', { text: 'Person' }), h('th', { text: 'Email' }), h('th', null, 'Opens ', ui.info('How many times this email was opened.')), h('th', { text: 'First opened' }), h('th', { text: 'Last opened' }))),

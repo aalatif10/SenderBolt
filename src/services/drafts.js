@@ -27,6 +27,8 @@ function normalise(d) {
   });
   out.sender_ids = ids(d.sender_ids, 20);
   out.folder_id = numOrNull(d.folder_id, 1, 9007199254740991);
+  out.folder_ids = ids(d.folder_ids, 50);
+  if (!out.folder_ids.length && out.folder_id) out.folder_ids = [out.folder_id];
   out.exclude_role = !!d.exclude_role;
   out.lead_statuses = (Array.isArray(d.lead_statuses) ? d.lead_statuses : []).filter(function (s, i, a) { return LEAD_STATUSES.indexOf(s) !== -1 && a.indexOf(s) === i; });
   var sp = d.split && typeof d.split === 'object' ? d.split : {};

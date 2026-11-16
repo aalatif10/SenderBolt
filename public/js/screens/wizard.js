@@ -13,7 +13,7 @@
   var STATUSES = ['valid', 'unverified', 'risky', 'catch_all'];
 
   function blankState() {
-    return { step: 0, name: '', steps: [{ subject: '', body_html: '', delay_days: null }], sender_ids: [], folder_id: null, exclude_role: false,
+    return { step: 0, name: '', steps: [{ subject: '', body_html: '', delay_days: null }], sender_ids: [], folder_ids: [], exclude_role: false,
       lead_statuses: STATUSES.slice(), split: { enabled: false, batch_size: 26, seed: null },
       settings: { window_start_hour: 9, window_end_hour: 17, utc_offset_min: -new Date().getTimezoneOffset(), weekdays_only: true, stop_on_reply: true, track_opens: false } };
   }
@@ -21,14 +21,14 @@
     var s = base; d = d || {};
     s.step = d.step || 0; s.name = d.name || '';
     if (d.steps && d.steps.length) s.steps = d.steps.map(function (x, i) { return { subject: x.subject || '', body_html: x.body_html || '', delay_days: i === 0 ? null : x.delay_days }; });
-    s.sender_ids = d.sender_ids || []; s.folder_id = d.folder_id || null; s.exclude_role = !!d.exclude_role;
+    s.sender_ids = d.sender_ids || []; s.folder_ids = d.folder_ids && d.folder_ids.length ? d.folder_ids.slice() : (d.folder_id ? [d.folder_id] : []); s.exclude_role = !!d.exclude_role;
     if (d.lead_statuses && d.lead_statuses.length) s.lead_statuses = d.lead_statuses;
     if (d.split) { s.split.enabled = !!d.split.enabled; if (d.split.batch_size) s.split.batch_size = d.split.batch_size; s.split.seed = d.split.seed; }
     if (d.settings) Object.keys(s.settings).forEach(function (k) { if (d.settings[k] !== null && d.settings[k] !== undefined) s.settings[k] = d.settings[k]; });
     return s;
   }
   function labelFor(i) { return i === 0 ? 'First email' : 'Follow-up ' + i; }
-  function hasContent(s) { return !!(s.name || s.steps.some(function (x) { return x.subject || x.body_html; }) || s.folder_id || s.sender_ids.length); }
+  function hasContent(s) { return !!(s.name || s.steps.some(function (x) { return x.subject || x.body_html; }) || s.folder_ids.length || s.sender_ids.length); }
   function el(tag, cls, text) { return h(tag, { class: cls, text: text }); }
 
   SB.screens.wizard = function (params) {
@@ -42,7 +42,7 @@
       var t = conflict ? W.conflict : saving ? W.saving : dirty ? W.unsaved : lastSaved ? W.saved + ' ' + new Date(lastSaved).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
       saveEl.textContent = t; saveEl.className = 'wz-save' + (conflict ? ' bad' : dirty ? ' dirty' : '');
     }
-    function payload() { return { name: st.name, step: st.step, steps: st.steps, sender_ids: st.sender_ids, folder_id: st.folder_id, exclude_role: st.exclude_role, lead_statuses: st.lead_statuses, split: st.split, settings: st.settings }; }
+    function payload() { return { name: st.name, step: st.step, steps: st.steps, sender_ids: st.sender_ids, folder_ids: st.folder_ids, exclude_role: st.exclude_role, lead_statuses: st.lead_statuses, split: st.split, settings: st.settings }; }
     function saveNow() {
       clearTimeout(saveTimer);
       if (editId || saving || conflict || !dirty || !hasContent(st)) return Promise.resolve();
@@ -200,12 +200,12 @@
 
     // ---------- step 2: audience ----------
     function leadSource() {
-      var o = { folder_id: st.folder_id, exclude_role: st.exclude_role, lead_statuses: st.lead_statuses };
+      var o = { folder_ids: st.folder_ids, exclude_role: st.exclude_role, lead_statuses: st.lead_statuses };
       return o;
     }
     function refreshAudience() {
       if (!countBox || dead) return; var mine = ++audSeq;
-      if (!st.folder_id || !st.lead_statuses.length) { SB.mount(countBox, h('p', { class: 'muted', text: st.folder_id ? 'Choose at least one address type.' : W.pickFolder })); SB.clear(coverageBox); return; }
+      if (!st.folder_ids.length || !st.lead_statuses.length) { SB.mount(countBox, h('p', { class: 'muted', text: st.folder_ids.length ? 'Choose at least one address type.' : W.pickFolder })); SB.clear(coverageBox); return; }
       SB.mount(countBox, h('div', { class: 'skeleton' }));
       var src = leadSource();
       Promise.all([SB.api.post('/api/campaigns/split-preview', Object.assign({ batch_size: 1000000 }, src)), SB.api.post('/api/campaigns/variable-coverage', Object.assign({ steps: st.steps }, src))]).then(function (r) {
@@ -224,10 +224,7 @@
     }
     function stepAudience() {
       if (editId) return h('div', { class: 'wz-narrow' }, h('div', { class: 'card' }, h('h2', { text: 'Audience' }), h('p', { class: 'muted', text: 'The people in a campaign are fixed once it is created, so the sequence you send stays consistent. To email different people, create a new campaign.' })));
-      var sel = h('select', { class: 'input', id: 'wz-folder', 'aria-label': 'Lead folder' }, h('option', { value: '' }, 'Choose a folder…'),
-        folders.map(function (f) { return h('option', { value: f.id }, f.name + ' (' + fmt.num(f.lead_count) + ')'); }));
-      sel.value = st.folder_id ? String(st.folder_id) : '';
-      sel.addEventListener('change', function () { st.folder_id = sel.value ? Number(sel.value) : null; st.split.seed = null; touch(); refreshAudience(); });
+      var listsBox = h('div'), manualBox = h('div');
       var checks = STATUSES.map(function (k) {
         var cb = h('input', { type: 'checkbox', id: 'wz-st-' + k }); cb.checked = st.lead_statuses.indexOf(k) !== -1;
         cb.addEventListener('change', function () { st.lead_statuses = STATUSES.filter(function (x) { return x === k ? cb.checked : st.lead_statuses.indexOf(x) !== -1; }); touch(); refreshAudience(); });
@@ -239,20 +236,91 @@
       countBox = h('div'); coverageBox = h('div');
       var node = h('div', { class: 'card wz-narrow' }, h('h2', { text: 'Who should receive this?' }),
         folders.length ? null : h('div', { class: 'callout warn' }, 'You have no lead folders yet. ', h('a', { href: '#/leads' }, 'Add leads first'), ' - your draft is saved and waiting.'),
-        h('div', { class: 'field' }, h('label', { for: 'wz-folder' }, 'Lead folder'), sel, h('div', { class: 'hint', text: W.folderHint })),
+        h('div', { class: 'field' }, h('label', null, 'Lead lists ', ui.info(W.listsTip)), listsBox, h('div', { class: 'hint', text: W.folderHint })),
+        manualBox,
         h('div', { class: 'field' }, h('label', { text: 'Include addresses that are' }), checks),
         h('div', { class: 'field check' }, role, h('label', { for: 'wz-role' }, 'Skip role addresses (info@, sales@, support@…)'), h('div', { class: 'hint', text: W.roleHint })),
         h('div', { class: 'wz-result' }, countBox, coverageBox),
         h('p', { class: 'hint', text: W.audienceAuto }));
+      paintLists(listsBox); paintManual(manualBox, listsBox);
       refreshAudience();
       return node;
+    }
+
+    // Several lists at once: a checklist with live totals. The same address in two lists is emailed once (the server merges them).
+    function paintLists(box) {
+      if (!folders.length) { SB.mount(box, h('p', { class: 'muted small', text: 'No lists yet. Add people manually below to create your first list.' })); return; }
+      var total = 0; folders.forEach(function (f) { if (st.folder_ids.indexOf(f.id) !== -1) total += f.lead_count; });
+      var allOn = st.folder_ids.length === folders.length;
+      var rows = folders.map(function (f) {
+        var cb = h('input', { type: 'checkbox', id: 'wz-list-' + f.id, 'aria-label': f.name }); cb.checked = st.folder_ids.indexOf(f.id) !== -1;
+        cb.addEventListener('change', function () {
+          st.folder_ids = folders.map(function (x) { return x.id; }).filter(function (id) { return id === f.id ? cb.checked : st.folder_ids.indexOf(id) !== -1; });
+          st.split.seed = null; touch(); paintLists(box); refreshAudience();
+        });
+        return h('label', { class: 'list-pick' + (cb.checked ? ' on' : ''), for: 'wz-list-' + f.id }, cb, h('span', { class: 'lp-name', text: f.name }),
+          h('span', { class: 'lp-n small muted', tip: fmt.num(f.valid_count || 0) + ' of ' + fmt.num(f.lead_count) + ' are checked and valid.', text: fmt.num(f.lead_count) + ' people' }));
+      });
+      SB.mount(box, h('div', { class: 'list-picker' },
+        h('div', { class: 'lp-head' }, h('span', { class: 'small muted', text: st.folder_ids.length + ' of ' + folders.length + ' lists selected' + (st.folder_ids.length ? ' \u00b7 up to ' + fmt.num(total) + ' people' : '') }),
+          h('button', { class: 'btn btn-ghost btn-sm', type: 'button', on: { click: function () { st.folder_ids = allOn ? [] : folders.map(function (x) { return x.id; }); st.split.seed = null; touch(); paintLists(box); refreshAudience(); } } }, allOn ? 'Clear' : 'Select all')),
+        h('div', { class: 'lp-list' }, rows)));
+    }
+
+    // Add people by typing or pasting, straight into an existing list or a brand-new one, without leaving the wizard.
+    function paintManual(box, listsBox) {
+      var open = false;
+      function csvCell(x) { var t = String(x || '').trim(); return '"' + t.replace(/"/g, '""') + '"'; }
+      function draw() {
+        if (!open) { SB.mount(box, h('div', { class: 'field' }, h('button', { class: 'btn', type: 'button', id: 'wz-manual-open', tip: W.manualTip, on: { click: function () { open = true; draw(); } } }, SB.icon('plus'), 'Add people manually'))); return; }
+        var text = h('textarea', { class: 'input', id: 'wz-manual-text', rows: 5, maxlength: 20000, placeholder: 'jane@acme.com, Jane, Smith, Acme\nmark@example.org, Mark' });
+        var target = h('select', { class: 'input', id: 'wz-manual-target', 'aria-label': 'Add to list' }, folders.map(function (f) { return h('option', { value: f.id }, 'Add to: ' + f.name); }), h('option', { value: 'new' }, '+ Create a new list'));
+        var newName = h('input', { class: 'input hidden', id: 'wz-manual-name', maxlength: 100, placeholder: 'Name of the new list, e.g. Manual - November', 'aria-label': 'New list name' });
+        var pre = st.folder_ids.length ? String(st.folder_ids[st.folder_ids.length - 1]) : (folders.length ? String(folders[0].id) : 'new');
+        target.value = pre; if (!folders.length) target.value = 'new';
+        function sync() { newName.classList.toggle('hidden', target.value !== 'new'); }
+        target.addEventListener('change', function () { sync(); if (target.value === 'new') newName.focus(); }); sync();
+        var err = h('div', { class: 'form-error hidden', role: 'alert' }), out = h('div', { role: 'status' });
+        var add = h('button', { class: 'btn btn-primary', type: 'button', id: 'wz-manual-add' }, 'Add people');
+        add.addEventListener('click', function () {
+          err.classList.add('hidden'); SB.clear(out);
+          var lines = text.value.split(/\r?\n/).map(function (l) { return l.trim(); }).filter(Boolean);
+          if (!lines.length) { err.textContent = 'Type or paste at least one email address.'; err.classList.remove('hidden'); return; }
+          if (target.value === 'new' && !newName.value.trim()) { err.textContent = 'Give the new list a name.'; err.classList.remove('hidden'); newName.focus(); return; }
+          // One person per line: email, first name, last name, company (everything after the email is optional).
+          var csv = 'email,first_name,last_name,company\r\n' + lines.map(function (l) {
+            var c = l.split(/[,;\t]/); if (c.length === 1) { var parts = l.split(/\s+/); c = [parts[0]]; }
+            return [c[0], c[1], c[2], c[3]].map(csvCell).join(',');
+          }).join('\r\n');
+          add.disabled = true;
+          var ensure = target.value === 'new' ? SB.api.post('/api/folders', { name: newName.value.trim() }).then(function (r) { return r.folder.id; }) : Promise.resolve(Number(target.value));
+          ensure.then(function (folderId) {
+            return SB.api.post('/api/folders/' + folderId + '/import', { format: 'csv', data: csv }).then(function (r) { return { folderId: folderId, res: r.result }; });
+          }).then(function (x) {
+            return SB.api.get('/api/folders').then(function (fr) {
+              folders = fr.items;
+              if (st.folder_ids.indexOf(x.folderId) === -1) st.folder_ids = st.folder_ids.concat([x.folderId]);
+              st.split.seed = null; touch(); paintLists(listsBox); refreshAudience();
+              var r = x.res, bits = [fmt.num(r.imported) + ' added'];
+              if (r.duplicates) bits.push(fmt.num(r.duplicates) + ' already in the list'); if (r.invalid) bits.push(fmt.num(r.invalid) + ' not valid addresses'); if (r.suppressed) bits.push(fmt.num(r.suppressed) + ' on your do-not-email list');
+              ui.toast(bits.join(', '));
+              text.value = ''; if (target.value === 'new') newName.value = '';
+              open = true; draw();
+            });
+          }, function (e) { err.textContent = SB.api.friendly(e); err.classList.remove('hidden'); }).then(function () { add.disabled = false; });
+        });
+        SB.mount(box, h('div', { class: 'manual-card' }, h('div', { class: 'actions' }, h('h3', { text: 'Add people manually' }), ui.info(W.manualTip)),
+          h('p', { class: 'small muted', text: W.manualHelp }), err, h('div', { class: 'field' }, text), h('div', { class: 'two' }, h('div', { class: 'field' }, target), h('div', { class: 'field' }, newName)),
+          h('div', { class: 'actions' }, add, h('button', { class: 'btn btn-ghost', type: 'button', on: { click: function () { open = false; draw(); } } }, 'Close'))));
+      }
+      draw();
     }
 
     // ---------- step 3: sending ----------
     function refreshSplit() {
       if (!splitBox || dead) return;
       if (!st.split.enabled) { SB.clear(splitBox); return; }
-      if (!st.folder_id) { SB.mount(splitBox, h('p', { class: 'hint warn', text: W.pickFolder })); return; }
+      if (!st.folder_ids.length) { SB.mount(splitBox, h('p', { class: 'hint warn', text: W.pickFolder })); return; }
       var n = st.split.batch_size;
       if (!n || n < 1) { SB.mount(splitBox, h('p', { class: 'hint bad', text: 'Enter a whole number of 1 or more.' })); return; }
       var mine = ++audSeq;
@@ -306,7 +374,8 @@
           h('div', { class: 'wz-row' }, h('div', { class: 'field' }, h('label', { for: 'wz-ws' }, 'From'), hourSel('wz-ws', ss.window_start_hour, 0, 23, function (x) { ss.window_start_hour = x; })),
             h('div', { class: 'field' }, h('label', { for: 'wz-we' }, 'Until'), hourSel('wz-we', ss.window_end_hour, 1, 24, function (x) { ss.window_end_hour = x; })),
             h('div', { class: 'field' }, h('label', { for: 'wz-tz' }, 'Time zone'), tz)),
-          toggle('wz-wd', 'weekdays_only', 'Weekdays only', W.weekdaysHint), toggle('wz-sr', 'stop_on_reply', 'Stop the sequence when someone replies', W.stopHint), toggle('wz-to', 'track_opens', 'Track opens (approximate)', W.opensHint)),
+          toggle('wz-wd', 'weekdays_only', 'Weekdays only', W.weekdaysHint), toggle('wz-sr', 'stop_on_reply', 'Stop the sequence when someone replies', W.stopHint), toggle('wz-to', 'track_opens', 'Track opens (approximate)', W.opensHint),
+            st.settings.track_opens && SB.status && SB.status.public_origin_set === false ? h('div', { class: 'banner banner-warn inline', role: 'status' }, SB.icon('alert'), SB.S.studio.trackingInactive) : null),
         h('div', { class: 'card' }, h('h2', null, 'Smart Split ', ui.info(W.splitTip)),
           h('div', { class: 'field check' }, useSplit, h('label', { for: 'wz-split' }, 'Split into smaller batches'), h('div', { class: 'hint', text: W.splitHint })), splitCtl, splitBox));
     }
@@ -321,7 +390,7 @@
         if (empty) p.push({ s: 0, t: labelFor(i) + ' has no text.' });
         if (i > 0 && (s.delay_days === null || s.delay_days < 1 || s.delay_days > MAX_DELAY)) p.push({ s: 0, t: labelFor(i) + ': wait must be 1 to ' + MAX_DELAY + ' days.' });
       });
-      if (!st.folder_id) p.push({ s: 1, t: 'Choose a lead folder.' });
+      if (!st.folder_ids.length) p.push({ s: 1, t: 'Choose at least one lead list.' });
       if (!st.lead_statuses.length) p.push({ s: 1, t: 'Choose at least one address type.' });
       if (!st.sender_ids.length) p.push({ s: 2, t: 'Choose at least one sender account.' });
       if (st.settings.window_end_hour <= st.settings.window_start_hour) p.push({ s: 2, t: 'The sending window must end after it starts.' });
@@ -330,7 +399,7 @@
     }
     function stepReview() {
       var probs = problems(), out = h('div', { class: 'wz-narrow' });
-      var folder = folders.filter(function (f) { return f.id === st.folder_id; })[0];
+      var chosenLists = folders.filter(function (f) { return st.folder_ids.indexOf(f.id) !== -1; });
       var chosen = senders.filter(function (s) { return st.sender_ids.indexOf(s.id) !== -1; });
       var totalDays = 0; st.steps.forEach(function (s, i) { if (i) totalDays += s.delay_days || 0; });
       var projSel = h('select', { class: 'input', id: 'wz-project', 'aria-label': 'Project' }, projectId ? null : h('option', { value: '' }, 'New project named after this campaign'),
@@ -341,7 +410,7 @@
       out.appendChild(h('div', { class: 'card' }, h('h2', { text: 'Review' }),
         probs.length ? h('div', { class: 'callout warn' }, h('b', { text: 'Fix these before launching:' }), h('ul', null, probs.map(function (p) { return h('li', null, p.t + ' ', h('a', { href: '#', on: { click: function (e) { e.preventDefault(); go(p.s); } } }, 'Go there')); }))) : h('p', { class: 'hint ok', text: 'Everything is filled in. Nothing is sent until you press Start.' }),
         row('Campaign', st.name || '-'), row('Emails', st.steps.length + ' (first email' + (st.steps.length > 1 ? ' + ' + (st.steps.length - 1) + ' follow-up' + (st.steps.length > 2 ? 's' : '') : '') + ')' + (totalDays ? ', over ' + totalDays + ' days' : '')),
-        editId ? null : row('Audience', folder ? folder.name : '-'), row('Senders', chosen.length ? chosen.map(function (s) { return s.label || s.email; }).join(', ') : '-'),
+        editId ? null : row('Audience', chosenLists.length ? chosenLists.map(function (f) { return f.name; }).join(', ') : '-'), row('Senders', chosen.length ? chosen.map(function (s) { return s.label || s.email; }).join(', ') : '-'),
         row('Window', pad(st.settings.window_start_hour) + ':00 to ' + pad(st.settings.window_end_hour % 24) + ':00, ' + (st.settings.weekdays_only ? 'weekdays' : 'every day')),
         editId ? null : row('Smart Split', st.split.enabled ? 'Batches of ' + st.split.batch_size : 'Off'),
         editId ? null : h('div', { class: 'field pad-t' }, h('label', { for: 'wz-project' }, 'Add to project'), projSel)));
@@ -356,12 +425,12 @@
     function launch(start) {
       if (launching || problems().length) return; launching = true;
       var body = { name: st.name.trim(), steps: st.steps.map(function (s, i) { return { subject: s.subject, body_html: s.body_html, delay_days: i === 0 ? undefined : s.delay_days }; }), sender_ids: st.sender_ids,
-        folder_id: st.folder_id, exclude_role: st.exclude_role, lead_statuses: st.lead_statuses, settings: st.settings };
+        folder_ids: st.folder_ids, exclude_role: st.exclude_role, lead_statuses: st.lead_statuses, settings: st.settings };
       body.window_start_hour = st.settings.window_start_hour; body.window_end_hour = st.settings.window_end_hour; body.utc_offset_min = st.settings.utc_offset_min;
       body.weekdays_only = st.settings.weekdays_only; body.stop_on_reply = st.settings.stop_on_reply; body.track_opens = st.settings.track_opens;
       if (st.split.enabled) body.split = { batch_size: st.split.batch_size, seed: st.split.seed === null ? undefined : st.split.seed };
       if (editId) {
-        delete body.folder_id; delete body.exclude_role; delete body.lead_statuses; delete body.split;
+        delete body.folder_ids; delete body.exclude_role; delete body.lead_statuses; delete body.split;
         SB.api.patch('/api/campaigns/' + editId, body).then(function () { dirty = false; ui.toast('Changes saved'); location.hash = '#/project/' + projectId; }, function (e) { launching = false; ui.toast(SB.api.friendly(e), true); });
         return;
       }
@@ -375,7 +444,7 @@
         });
       }).catch(function (e) {
         launching = false; ui.toast(SB.api.friendly(e), true);
-        if (e.details) { var first = Object.keys(e.details)[0]; if (first === 'steps') go(0); else if (first === 'folder_id') go(1); else if (first === 'sender_ids') go(2); }
+        if (e.details) { var first = Object.keys(e.details)[0]; if (first === 'steps') go(0); else if (first === 'folder_id' || first === 'folder_ids') go(1); else if (first === 'sender_ids') go(2); }
       });
     }
 
@@ -418,7 +487,7 @@
           dirty = false;
         }
         else if (!projectId && projects.length === 1) { /* keep "new project" as default */ }
-        if (st.folder_id && !folders.some(function (f) { return f.id === st.folder_id; })) st.folder_id = null;
+        st.folder_ids = st.folder_ids.filter(function (id) { return folders.some(function (f) { return f.id === id; }); });
         st.sender_ids = st.sender_ids.filter(function (id) { return senders.some(function (s) { return s.id === id; }); });
         render();
       }, function (e) {

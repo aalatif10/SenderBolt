@@ -60,6 +60,7 @@
   function refreshStatus() {
     return Promise.all([SB.api.get('/api/engine/status'), SB.api.get('/api/inbox?limit=1')]).then(function (r) {
       var mode = r[0].mode;
+      SB.status = r[0];
       setBanner('mode', mode === 'off' ? banner('banner-off', 'alert', SB.S.engineOff) : null);
       SB.clear(badgeEl);
       if (r[1].unread) { badgeEl.appendChild(h('span', { class: 'pill pill-active', text: String(r[1].unread) })); }

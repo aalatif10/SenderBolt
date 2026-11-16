@@ -24,20 +24,59 @@
     return name;
   }
 
-  function projectCard(p, st, repaint) {
-    var t = p.totals, on = !!st.sel[p.id], any = Object.keys(st.sel).length > 0;
+  function rate(n) { return n === null || n === undefined ? '-' : fmt.num(n) + '%'; }
+  function stat(label, value, tipText, sub) {
+    return h('div', { class: 'hx-stat', tip: tipText }, h('b', { text: value }), h('span', { text: label }), sub ? h('i', { text: sub }) : null);
+  }
+
+  // One Hunter-style project row. The chevron expands it to show its campaigns underneath, loaded on demand.
+  function projectRow(p, st, repaint, toggle) {
+    var t = p.totals, on = !!st.sel[p.id], open = !!st.open[p.id], any = Object.keys(st.sel).length > 0;
     var cb = h('input', { type: 'checkbox', class: 'pc-check', 'aria-label': 'Select project ' + p.name });
     cb.checked = on;
     cb.addEventListener('change', function () { if (cb.checked) st.sel[p.id] = p.name; else delete st.sel[p.id]; repaint(); });
-    return h('div', { class: 'pc-wrap' + (on ? ' selected' : '') + (any ? ' sel-mode' : '') }, cb,
-      h('a', { class: 'card project-card', href: '#/project/' + p.id },
-        h('div', { class: 'top' }, h('h3', { text: p.name }), ui.statusPill(p.status)),
-        p.campaign_count ? ui.progress(t.progress_pct) : h('div', { class: 'small faint', text: 'No campaigns yet' }),
-        h('div', { class: 'kv' },
-          h('span', { tip: SB.S.metric.sent }, h('b', { text: fmt.num(t.sent) }), 'sent'),
-          h('span', { tip: SB.S.metric.replied }, h('b', { text: fmt.num(t.replied) }), 'replies'),
-          h('span', { tip: SB.S.metric.bounced }, h('b', { text: fmt.num(t.bounced) }), 'bounced'),
-          h('span', { tip: SB.S.metric.next }, h('b', { text: fmt.until(t.next_send_at) }), 'next email'))));
+    var chev = h('button', { class: 'hx-chev' + (open ? ' open' : ''), type: 'button', 'aria-expanded': open ? 'true' : 'false', 'aria-label': (open ? 'Hide' : 'Show') + ' campaigns in ' + p.name,
+      tip: open ? 'Hide the campaigns in this project.' : 'Show the campaigns in this project with their results.', on: { click: function () { toggle(p.id); } } }, SB.icon('chevron'));
+    var head = h('div', { class: 'hx-head' }, chev,
+      h('div', { class: 'hx-title' }, h('a', { class: 'hx-name', href: '#/project/' + p.id, text: p.name }),
+        h('div', { class: 'small faint', text: p.campaign_count ? fmt.num(p.campaign_count) + ' campaign' + (p.campaign_count === 1 ? '' : 's') + ' \u00b7 ' + fmt.num(t.leads) + ' people' : 'No campaigns yet' })),
+      ui.statusPill(p.status),
+      p.campaign_count ? h('div', { class: 'hx-stats' },
+        stat('Sent', fmt.num(t.sent), SB.S.metric.sent),
+        stat('Opened', t.opens_tracked ? rate(t.open_rate) : 'Off', t.opens_tracked ? 'Share of delivered emails that were opened at least once. Open counts are estimates.' : 'Open tracking is off for these campaigns.'),
+        stat('Replied', rate(t.reply_rate), SB.S.metric.replied, fmt.num(t.replied) + ' people'),
+        stat('Bounced', rate(t.bounce_rate), SB.S.metric.bounced, fmt.num(t.bounced) + ' people'),
+        stat('Next email', fmt.until(t.next_send_at), SB.S.metric.next)) : h('div', { class: 'hx-stats' }),
+      h('div', { class: 'hx-prog' }, p.campaign_count ? ui.progress(t.progress_pct) : null));
+    var body = null;
+    if (open) {
+      var d = st.detail[p.id];
+      if (!d) body = h('div', { class: 'hx-body' }, h('div', { class: 'skeleton' }));
+      else if (d.error) body = h('div', { class: 'hx-body' }, h('div', { class: 'form-error', text: d.error }));
+      else body = h('div', { class: 'hx-body' }, campaignTable(d.campaigns, p));
+    }
+    return h('div', { class: 'pc-wrap hx-row' + (on ? ' selected' : '') + (any ? ' sel-mode' : '') + (open ? ' is-open' : '') }, cb, head, body);
+  }
+
+  function campaignTable(list, p) {
+    if (!list.length) return h('div', { class: 'hx-empty' }, h('span', { class: 'muted', text: 'This project has no campaigns yet.' }), h('a', { class: 'btn btn-sm btn-primary', href: '#/campaign/new/' + p.id }, SB.icon('plus'), 'New campaign'));
+    var M = SB.S.metric;
+    return h('div', { class: 'hx-table' }, h('table', { class: 'table' },
+      h('thead', null, h('tr', null, h('th', { text: 'Campaign' }), h('th', { text: 'Status' }), h('th', { text: 'Sequence' }), h('th', { text: 'Sent', tip: M.sent }), h('th', { text: 'Opened', tip: 'People who opened at least one email, and the share of delivered emails.' }),
+        h('th', { text: 'Replied', tip: M.replied }), h('th', { text: 'Bounced', tip: M.bounced }), h('th', { text: 'Next email', tip: M.next }))),
+      h('tbody', null, list.map(function (c) {
+        var m = c.metrics || {}, tracked = !!c.track_opens, emailed = m.emailed || 0;
+        function pctOf(n) { return emailed ? Math.round(n / emailed * 1000) / 10 + '%' : '0%'; }
+        return h('tr', { class: 'row-link', on: { click: function () { location.hash = '#/campaign/' + c.id; } } },
+          h('td', null, h('b', { text: c.name }), c.batches ? h('div', { class: 'small faint', text: c.batches + ' batches' }) : null),
+          h('td', null, ui.statusPill(c.status)),
+          h('td', { class: 'c-steps' }, ui.stepBar(c.step_progress, { compact: true })),
+          h('td', { text: fmt.num(c.sent) }),
+          h('td', { tip: tracked ? 'Opens are estimates: some mail apps block the tracking image.' : 'Open tracking is off for this campaign.' }, tracked ? h('span', null, fmt.num(m.opened || 0), h('span', { class: 'small faint', text: ' \u00b7 ' + pctOf(m.opened || 0) })) : h('span', { class: 'faint', text: 'Off' })),
+          h('td', null, fmt.num(m.replied || 0), h('span', { class: 'small faint', text: ' \u00b7 ' + pctOf(m.replied || 0) })),
+          h('td', null, fmt.num(c.stats.bounced), h('span', { class: 'small faint', text: ' \u00b7 ' + pctOf(c.stats.bounced) })),
+          h('td', { text: fmt.until(c.next_send_at) }));
+      }))));
   }
 
   var STATUS_CHIPS = [
@@ -72,7 +111,7 @@
     var head = h('div', { class: 'page-head' }, h('div', null, h('h1', { text: 'Home' }), h('p', { class: 'sub', text: 'Your outreach at a glance.' })),
       h('div', { class: 'actions' }, h('a', { class: 'btn btn-primary', href: '#/campaign/new', id: 'home-new-campaign' }, SB.icon('plus'), 'New campaign'),
         h('button', { class: 'btn', type: 'button', on: { click: newProjectModal } }, 'New project')));
-    var st = { q: '', status: 'all', sort: 'recent', archived: false, sel: {} }, data = null, built = false;
+    var st = { q: '', status: 'all', sort: 'recent', archived: false, sel: {}, open: {}, detail: {} }, data = null, built = false;
     var tb = SB.lists.toolbar({ placeholder: 'Search projects', label: 'Search projects', sorts: SORTS, sort: st.sort,
       onSearch: function (q) { st.q = q; paintList(); }, onSort: function (k) { st.sort = k; paintList(); } });
     var chipsBox = h('div'), tagsBox = h('div'), barBox = h('div'), gridBox = h('div');
@@ -85,6 +124,13 @@
       var chip = STATUS_CHIPS.filter(function (c) { return c.key === st.status; })[0] || STATUS_CHIPS[0];
       var cmp = SORTS.filter(function (x) { return x.key === st.sort; })[0].cmp;
       return data.items.filter(function (p) { return SB.lists.has(p.name + ' ' + (p.description || ''), st.q) && (!chip.match || chip.match.indexOf(p.status) !== -1); }).sort(cmp);
+    }
+    function fetchDetail(id) {
+      return SB.api.get('/api/projects/' + id).then(function (r) { st.detail[id] = { campaigns: r.project.campaigns || [] }; }, function (e) { st.detail[id] = { error: SB.api.friendly(e) }; });
+    }
+    function toggle(id) {
+      if (st.open[id]) { delete st.open[id]; paintList(); return; }
+      st.open[id] = true; paintList(); fetchDetail(id).then(paintList);
     }
     function reload() { st.sel = {}; return load(); }
     function batch(action, ids) {
@@ -114,7 +160,11 @@
       } else if (!items.length) {
         SB.mount(gridBox, h('div', { class: 'card empty' }, h('h2', { text: 'No projects match' }), h('p', { text: 'Try a different search or status.' })));
       } else {
-        SB.mount(gridBox, h('div', { class: 'project-grid' }, items.map(function (p) { return projectCard(p, st, paintList); })));
+        var allOpen = items.every(function (p) { return !!st.open[p.id]; });
+        SB.mount(gridBox, h('div', { class: 'hx-list' },
+          h('div', { class: 'hx-toolbar' }, h('span', { class: 'small muted', text: items.length + ' project' + (items.length === 1 ? '' : 's') }),
+            h('button', { class: 'btn btn-ghost btn-sm', type: 'button', tip: 'Open or close every project at once.', on: { click: function () { items.forEach(function (p) { if (allOpen) delete st.open[p.id]; else { st.open[p.id] = true; fetchDetail(p.id); } }); paintList(); } } }, allOpen ? 'Collapse all' : 'Expand all')),
+          items.map(function (p) { return projectRow(p, st, paintList, toggle); })));
       }
       var names = selIds.length;
       var acts = [{ label: st.archived ? 'Restore' : 'Archive', tip: st.archived ? 'Show these projects in the main list again.' : 'Hide these projects from the main list. Results are kept.',
@@ -129,6 +179,8 @@
     function render(r) {
       var drafts = r[4].drafts, senders = r[1].items, projects = r[0].items, leads = r[2].stats.total, unread = r[3].unread;
       data = r[0];
+      SB.status = SB.status || {};
+      Object.keys(st.open).forEach(function (k) { if (!data.items.some(function (p) { return String(p.id) === k; })) { delete st.open[k]; delete st.detail[k]; } });
       var sent = 0, cap = 0;
       senders.forEach(function (s) { sent += s.sent_today; if (s.status === 'active') cap += s.limit_today; });
       var badSenders = senders.filter(function (s) { return s.status !== 'active' || s.last_error; });
@@ -142,6 +194,8 @@
       SB.mount(topSlot, h('div', null, st.archived ? null : nextStep(senders, leads, projects.length), tiles,
         drafts.length ? h('div', null, h('div', { class: 'section-title' }, h('div', { class: 'actions' }, h('h2', { text: 'Drafts' }), ui.info('Campaigns you started writing but have not created yet. Everything you typed is saved.'))), SB.screens.draftList(drafts, load)) : null));
       paintList(); built = true;
+      // Keep expanded projects fresh without flicker: refetch quietly, repaint once everything is back.
+      var ids = Object.keys(st.open); if (ids.length) Promise.all(ids.map(function (k) { return fetchDetail(Number(k)); })).then(paintList);
     }
 
     function load() {

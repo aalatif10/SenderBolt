@@ -82,7 +82,7 @@ SB.S = {
     delayEmpty: 'Type how many days to wait.', delayRange: 'Use a whole number from 1 to 60 days.',
     fieldsHelp: 'Tip: use the "Insert field" menu to personalise. {{first_name|there}} means "use the first name, or \"there\" if it is empty". {Hi|Hello} picks one of the words at random for each person.',
     previewTip: 'How the email looks for an example person (Alex Morgan, Acme Domains). Real people get their own details.', previewEmpty: 'Start typing and the preview appears here.',
-    pickFolder: 'Choose a lead folder first.', folderHint: 'People in this folder receive the sequence. Add or verify leads on the Leads page.',
+    pickFolder: 'Choose at least one lead list first.', folderHint: 'People in this folder receive the sequence. Add or verify leads on the Leads page.',
     roleHint: 'Role addresses are shared inboxes. They usually reply less and complain more.',
     eligibleTip: 'After removing invalid addresses, anyone on your suppression list, and people already in a running campaign.',
     coverageHelp: 'Those people will be skipped (and marked as errors) instead of receiving an email with a blank gap. Add a fallback like {{first_name|there}} to include them.',
@@ -149,6 +149,7 @@ SB.S = {
     liveNote: 'Changes apply to everyone who has not received this email yet.', delayShift: 'Changing the wait also moves the send time of people who are already waiting for this email.',
     leave: 'You have unsaved changes. Leave without saving?', draftNote: 'This campaign has not started. To change who receives it, the senders or the number of emails, use the builder.',
     opensOff: 'Open tracking is switched off for this campaign. Turn it on in Settings > System preferences before creating campaigns.',
+    trackingInactive: 'Open tracking cannot record anything yet: the server has no public address. Set SENDERBOLT_PUBLIC_ORIGIN to the https address where SenderBolt is reachable from the internet, restart, and emails sent after that are counted. Emails already sent cannot be tracked.',
     opensNote: 'Opens are estimates. Some mail apps load images automatically (inflating the count) and others block them. Replies are the reliable signal.'
   },
   reports: {

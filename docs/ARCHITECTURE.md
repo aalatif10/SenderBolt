@@ -269,3 +269,17 @@ Run `npm test` (now includes `test/studio.js`). All new code is ES2018 and was s
 - A step is frozen once any email of it is sent or sending. Edits apply from the next engine tick; an email already being composed keeps the old text.
 - Open counts are estimates (mail-app image prefetch). The UI says so.
 - Capacity for a step = people still waiting + people who already received it, so a bar reads "34 / 112", not 34 / total leads.
+
+## v1.2 additions (Hunter.io-style frontend)
+Frontend-only overhaul; the single additive backend change is `folder_ids`.
+
+| Path | Role / responsibilities |
+|---|---|
+| `public/js/screens/wizard.js` | Audience step now picks **several lists** (checklist with live totals; same email in two lists is sent once) and has an inline **Add people manually** card: one person per line (`email, first, last, company`), saved straight into an existing list or a brand-new one via `POST /api/folders` + `POST /api/folders/:id/import`, then auto-selected. |
+| `public/js/screens/home.js` | Projects are **expandable rows**: chevron lazily loads `GET /api/projects/:id` and shows nested campaigns (status, step bar, sent, opened, replied, bounced, next email). Row header shows project-level sent/open/reply/bounce rates and progress. Expand/collapse all; expanded rows refresh on the 10 s poll. |
+| `public/js/screens/studio.js` | People tab gets **Opened** (count + last opened) when tracking is on; Opens tab warns when tracking cannot work. |
+| `public/js/app.js` | Keeps the last `/api/engine/status` in `SB.status` (used for the tracking warning). |
+| `src/services/campaigns.js`, `drafts.js` | `folder_ids` (1-50 lists, deduped by lowercase email) accepted in create / split-preview / variable-coverage and saved in drafts; `listLeads` returns `opens` and `last_opened_at`. |
+| `src/engine/sendEngine.js` | Tracking pixel is a real 1x1 image (no `display:none`, which many clients skip). |
+
+**Open tracking requirements:** opens are recorded only when the campaign has *Track opens* on **and** `SENDERBOLT_PUBLIC_ORIGIN` points at an address reachable from the internet (a localhost address cannot receive the pixel). Counts are estimates.

@@ -252,4 +252,32 @@ h.test('sanitizer: only our own picture reference survives', function () {
   assert.ok(!/evil|data:|onerror/.test(out)); assert.ok(/<img src="sbimg:7" alt="Logo" width="50" height="20">/.test(out));
 });
 
+h.group('multiple lists');
+h.test('several lists in one campaign: merged, duplicates by email sent once, foreign/missing lists refused, drafts keep folder_ids', function () {
+  return setup().then(function (c) {
+    return c.leads.createFolder(c.a, 'Second').then(function (f2) {
+      return c.leads.importLeads(c.a, f2.id, 'paste', ['E@co5.com', 'new1@x.com', 'new2@x.com'].join('\n')).then(function () {
+        return c.db.get("SELECT folder_id FROM leads WHERE email = 'a@co1.com'").then(function (r) {
+          return c.camps.previewSplit(c.a, { folder_ids: [r.folder_id, f2.id], batch_size: 100 }).then(function (p) {
+            assert.strictEqual(p.total, 7);                                  // 5 + 3 - the shared address e@co5.com counted once
+            return h.expectReject(c.camps.previewSplit(c.a, { folder_ids: [r.folder_id, 99999], batch_size: 100 }), 'not_found');
+          }).then(function () { return h.expectReject(c.camps.previewSplit(c.a, { folder_ids: [], batch_size: 100 }), 'validation'); })
+            .then(function () { return c.camps.create(c.a, { name: 'Multi', steps: JSON.parse(JSON.stringify(STEPS)), sender_ids: [c.sid], folder_ids: [r.folder_id, f2.id] }); })
+            .then(function (camp) { assert.strictEqual(camp.stats.total, 7); });
+        });
+      });
+    });
+  });
+});
+h.test('person-level opens appear in the People list', function () {
+  return setup().then(function (c) {
+    return cls(c).then(function (rows) {
+      return sendMsg(c, rows[0].id, 0, T0, 2).then(function () { return c.camps.listLeads(c.a, c.camp.id, {}); }).then(function (r) {
+        var it = r.items.filter(function (x) { return x.email === rows[0].email; })[0];
+        assert.strictEqual(it.opens, 2); assert.strictEqual(it.last_opened_at, T0 + 5000);
+      });
+    });
+  });
+});
+
 h.run();

@@ -199,7 +199,7 @@ E._compose = function (sender, c, step, history) {
     ? '<p style="font-size:12px;color:#777">If you would rather not receive these emails, <a href="' + link + '">unsubscribe</a> or reply with the words stop campaign.</p>'
     : '<p style="font-size:12px;color:#777">If you would rather not receive these emails, reply with the words stop campaign and I will not contact you again.</p>';
   var pixel = c.track_opens && !c.test && this.publicOrigin && this.secret
-    ? '<img src="' + track.url(this.publicOrigin, track.make(this.secret, c.cl_id, c.current_step)) + '" width="1" height="1" alt="" style="display:none;border:0">' : '';
+    ? '<img src="' + track.url(this.publicOrigin, track.make(this.secret, c.cl_id, c.current_step)) + '" width="1" height="1" alt="" style="border:0;width:1px;height:1px">' : '';
   var bodyHtml = b.text + (sender.signature_html ? '<br>' + sanitize.clean(sender.signature_html) : '') + footer + pixel;
   var mailto = '<mailto:' + sender.email + '?subject=stop%20campaign>';
   var headers = { 'List-Unsubscribe': link ? '<' + link + '>, ' + mailto : mailto };
