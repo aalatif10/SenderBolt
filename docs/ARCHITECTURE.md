@@ -287,3 +287,6 @@ Frontend-only overhaul; the single additive backend change is `folder_ids`.
 ## v1.3 additions
 - `src/services/inbox.js` `replyHtml()`, `src/routes/inbox.js` `GET /api/inbox/messages/:id/html`, `public/js/screens/inbox.js` "View original formatting" (sandboxed iframe). Tests in `test/inbox.js`, `test/e2e_engine.js`.
 - `nodemailer` is pinned at 6.9.1 in `package.json` (run `npm install` after pulling).
+
+## v1.4 additions
+- `public/css/app.css` (end of file): Hunter-style polish. Flat cards, underline tabs (Settings, Studio), numbered timeline for sequence steps in the wizard, quieter table headers, flat wizard step tabs. CSS only; no behaviour or backend change.

@@ -397,3 +397,39 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; }
 
 /* ---- inbox: sandboxed original formatting ---- */
 .ib-formatted { margin-top: var(--space-2); } .ib-frame { width: 100%; height: 260px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: #fff; margin-top: var(--space-2); resize: vertical; }
+
+/* ---- v1.4 Hunter-style polish: flat cards, underline tabs, timeline sequence, calmer tables ---- */
+.card { box-shadow: none; border-color: var(--border); }
+.card:hover.project-card, .hx-row:hover { border-color: var(--border-strong); }
+.page-head h1 { font-size: var(--fs-2xl); letter-spacing: -.01em; }
+
+/* tabs (Settings, Studio) become underline tabs */
+.segs.tabs { max-width: none; background: transparent; padding: 0; gap: var(--space-5); border-bottom: 1px solid var(--border); border-radius: 0; margin-bottom: var(--space-5); }
+.segs.tabs .seg, .segs.tabs a.seg { flex: 0 0 auto; background: transparent; box-shadow: none; border-radius: 0; padding: 10px 2px; margin-bottom: -1px; border-bottom: 2px solid transparent; color: var(--text-2); font-weight: 600; }
+.segs.tabs .seg:hover { color: var(--text); }
+.segs.tabs .seg.active, .segs.tabs .seg[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); background: transparent; box-shadow: none; }
+
+/* tables: quiet uppercase headers, generous rows, soft hover */
+.table th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); background: var(--surface-2); white-space: nowrap; }
+.table tbody tr:last-child td { border-bottom: 0; }
+.table-wrap.card { padding: 0; overflow: hidden; }
+
+/* sequence: numbered timeline of steps */
+.wz-grid > div:first-child { counter-reset: seqstep; position: relative; }
+.wz-email { position: relative; margin-left: 44px; counter-increment: seqstep; border-left-width: 1px; border-left-color: var(--border); }
+.wz-email::before { content: counter(seqstep); position: absolute; left: -44px; top: 14px; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 13px; background: var(--surface); border: 2px solid var(--border-strong); color: var(--text-2); z-index: 1; }
+.wz-email::after { content: ''; position: absolute; left: -29px; top: 46px; bottom: -18px; width: 2px; background: var(--border); }
+.wz-email:last-of-type::after { display: none; }
+.wz-email.active { border-color: var(--accent); border-left-width: 1px; box-shadow: 0 0 0 3px var(--accent-soft); }
+.wz-email.active::before { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.wz-add { margin-left: 44px; width: calc(100% - 44px); }
+@media (max-width: 980px) { .wz-email { margin-left: 0; } .wz-email::before, .wz-email::after { display: none; } .wz-add { margin-left: 0; width: 100%; } }
+
+/* wizard progress: flat step tabs */
+.wz-steps { border-bottom: 1px solid var(--border); gap: var(--space-5); }
+.wz-step { border: 0; border-radius: 0; background: transparent; padding: 10px 2px; margin-bottom: -1px; border-bottom: 2px solid transparent; }
+.wz-step.on { background: transparent; border-bottom-color: var(--accent); }
+
+/* settings panes: sections as a calm, narrow column */
+.st-grid { max-width: 880px; }
+.st-grid .card h2, .st-grid .card h3 { font-size: var(--fs-lg); }
