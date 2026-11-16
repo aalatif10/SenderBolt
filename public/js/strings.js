@@ -111,7 +111,7 @@ SB.S = {
     empty: 'No replies yet. When someone answers one of your emails it shows up here, from every connected account.',
     emptyFiltered: 'No conversations match these filters.',
     plainNote: 'Replies are shown as plain text for safety.',
-    sigTip: 'Signature added automatically by their phone or mail app. It is kept apart from what they actually wrote.', showQuoted: 'Show earlier messages',
+    showFormatted: 'View original formatting', hideFormatted: 'Hide original formatting', formattedTip: 'Shows the reply with its bold, lists and links. Scripts, images and forms are always removed.', sigTip: 'Signature added automatically by their phone or mail app. It is kept apart from what they actually wrote.', showQuoted: 'Show earlier messages',
     optNote: {
       stop_campaign: 'They replied "stop campaign". Their sequence is stopped and they are on your do-not-email list. Replying is turned off.',
       unsubscribe_link: 'They used the unsubscribe link. Their sequence is stopped and they are on your do-not-email list. Replying is turned off.',

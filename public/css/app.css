@@ -394,3 +394,6 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; }
 
 /* ---- inline warning banner (tracking inactive) ---- */
 .banner-warn { background: var(--warn-soft); color: var(--warn); } .banner.inline { margin-bottom: var(--space-4); font-weight: 500; line-height: 1.45; align-items: flex-start; }
+
+/* ---- inbox: sandboxed original formatting ---- */
+.ib-formatted { margin-top: var(--space-2); } .ib-frame { width: 100%; height: 260px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: #fff; margin-top: var(--space-2); resize: vertical; }

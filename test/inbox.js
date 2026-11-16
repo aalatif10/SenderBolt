@@ -251,6 +251,26 @@ h.test('list / counts / filters / thread (text only) / read state / manual senti
       .then(function () { return c.inbox.list(c.a, { q: "%' OR '1'='1" }); }).then(function (r) { assert.strictEqual(r.total, 0); });
   });
 });
+h.test('formatted reply: sanitized page only for incoming HTML, own messages only, thread flags has_html', function () {
+  return setup().then(function (c) {
+    return launch(c, 1).then(function () { return armed(c); }).then(function () { return sendAll(c, 2); }).then(function () {
+      incoming(c, { from: c.sent[0].to, inReplyTo: c.sent[0].messageId, text: 'Yes', html: '<p onclick="x()">Hi <b>there</b></p><script>alert(1)</script><img src="http://evil/p.gif"><a href="javascript:alert(1)">bad</a><a href="https://ok.example/">good</a>' });
+      return sync(c);
+    }).then(function () { return c.db.get("SELECT cl.id AS clid, m.id AS mid FROM messages m JOIN campaign_leads cl ON cl.id = m.campaign_lead_id WHERE m.direction = 'in'"); }).then(function (r) {
+      return c.inbox.thread(c.a, r.clid).then(function (t) {
+        var inc = t.messages.filter(function (m) { return m.direction === 'in'; })[0], out = t.messages.filter(function (m) { return m.direction === 'out'; })[0];
+        assert.ok(inc.has_html, 'incoming HTML is flagged'); assert.ok(!out.has_html, 'own messages are not');
+        return c.inbox.replyHtml(c.a, r.mid);
+      }).then(function (page) {
+        assert.ok(/<b>there<\/b>/.test(page), 'formatting kept');
+        assert.ok(!/script|alert|onclick|evil|javascript:|<img/i.test(page), 'nothing active survives: ' + page);
+        assert.ok(/href="https:\/\/ok\.example\/"/.test(page), 'https links survive');
+        return h.expectReject(c.inbox.replyHtml(c.b, r.mid), 'not_found');
+      }).then(function () { return h.expectReject(c.inbox.replyHtml(c.a, 999999), 'not_found'); });
+    });
+  });
+});
+
 h.test('manual reply: threaded from the same sender, counted, marks read; blocked for suppressed contacts and foreign users', function () {
   return setup().then(function (c) {
     return launch(c, 1).then(function () { return armed(c); }).then(function () { return sendAll(c); }).then(function () {

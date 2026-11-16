@@ -109,7 +109,7 @@ I.thread = function (userId, clId) {
   var db = this.db;
   return this._conversation(userId, clId).then(function (conv) {
     return Promise.all([
-      db.all("SELECT id, direction, kind, status, step_no, subject, body_text, from_addr, to_addr, sentiment, sentiment_manual, error_class, error, sent_at, received_at, read_at, created_at " +
+      db.all("SELECT id, direction, kind, status, step_no, subject, body_text, (body_html IS NOT NULL AND direction = 'in' AND kind = 'email' AND length(body_html) > 0) AS has_html, from_addr, to_addr, sentiment, sentiment_manual, error_class, error, sent_at, received_at, read_at, created_at " +
         "FROM messages WHERE campaign_lead_id = ? AND user_id = ? AND NOT (direction = 'out' AND status IN ('queued','sending')) " +
         'ORDER BY COALESCE(sent_at, received_at, created_at), id', [clId, userId]),
       conv.sender_id ? db.get('SELECT id, email, label FROM senders WHERE id = ? AND user_id = ?', [conv.sender_id, userId]) : Promise.resolve(null),
@@ -126,6 +126,19 @@ I.thread = function (userId, clId) {
         })
       };
     });
+  });
+};
+
+// The formatted version of one incoming reply, as a complete, self-contained page for a sandboxed iframe.
+// The raw HTML is never returned by the JSON API: it goes through the allowlist sanitizer (no scripts, images, forms,
+// external links other than http/https/mailto) and the route serves it with a CSP that forbids everything but inline styles.
+I.replyHtml = function (userId, messageId) {
+  return this.db.get("SELECT body_html FROM messages WHERE id = ? AND user_id = ? AND direction = 'in' AND kind = 'email' AND body_html IS NOT NULL", [messageId, userId]).then(function (m) {
+    if (!m) throw new AppError('not_found', 'Message not found', 404);
+    var safe = sanitize.clean(String(m.body_html).slice(0, 200000));
+    return '<!doctype html><html><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><base target="_blank">' +
+      '<style>body{font:14px/1.5 Arial,Helvetica,sans-serif;color:#1f2937;margin:0;padding:12px;word-wrap:break-word}a{color:#2563eb}blockquote{margin:8px 0;padding-left:12px;border-left:3px solid #d1d5db;color:#6b7280}p{margin:0 0 10px}</style>' +
+      '</head><body>' + safe + '</body></html>';
   });
 };
 

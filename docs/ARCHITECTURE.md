@@ -209,7 +209,7 @@ Every state-changing call needs headers `X-SB-Client: 1` and `X-CSRF-Token: <fro
 3. **Outgoing HTML is sanitized (own allowlist), inbound reply HTML is not rendered yet.** Campaign bodies and signatures go through `lib/sanitize.js`. Reply HTML is stored but never shown; when the Inbox renders it, run it through the same sanitizer client-side plus a sandboxed iframe. Older campaigns created before v0.9 are cleaned at send time.
 3b. Windows/time zones are enforced; "weekdays only" means Mon-Fri in the campaign's UTC offset. Daily limits reset at UTC midnight.
 3c. Open tracking is opt-in per campaign (pixel `/t/o/<token>.gif`, needs `SENDERBOLT_PUBLIC_ORIGIN`); counts are approximate (mail-app prefetch inflates, blocked images undercount). Campaign sender filter is not built on the project page. Unsubscribe links use the app's public origin, not the tracking domain. Replies landing in Gmail's Spam folder are not seen (INBOX only). If a sender goes down, its assigned leads wait for it (the campaign shows `error` only when no waiting lead has a usable sender).
-3d. Inbox shows plain text only (since v1.1 split into body / signature / folded quote by `lib/replyParse.js`); HTML replies are stored but never exposed.
+3d. Inbox shows plain text by default (split into body / signature / folded quote by `lib/replyParse.js`). Since v1.3 an HTML reply can be viewed with its formatting via `GET /api/inbox/messages/:id/html`: sanitized server-side by `lib/sanitize.js` (no scripts, images, forms), served with `default-src 'none'` CSP + sandbox and shown in a sandboxed iframe. Raw HTML is never in the JSON API.
 4. **Connect-time DNS check for hosts** (anti-rebinding) is not done; only the hostname format is validated.
 5. Follow-up waits are capped at 60 days.
 6. Verification means "domain can receive mail", not "mailbox exists" (by design; see leads.js header). The checker never produces `catch_all`, so the Leads screen's Risky tile (risky + catch-all) is effectively risky only.
@@ -220,7 +220,7 @@ Every state-changing call needs headers `X-SB-Client: 1` and `X-CSRF-Token: <fro
 ## 7. Next steps (suggested order)
 
 1. Live test with one real Gmail App Password .
-2. Inbox HTML rendering (DOMPurify + sandboxed iframe) (vanilla JS + clean CSS, tooltips) served with the existing CSP.
+2. (done in v1.3) Inbox HTML rendering.
 
 
 ## v1.0 additions
@@ -283,3 +283,7 @@ Frontend-only overhaul; the single additive backend change is `folder_ids`.
 | `src/engine/sendEngine.js` | Tracking pixel is a real 1x1 image (no `display:none`, which many clients skip). |
 
 **Open tracking requirements:** opens are recorded only when the campaign has *Track opens* on **and** `SENDERBOLT_PUBLIC_ORIGIN` points at an address reachable from the internet (a localhost address cannot receive the pixel). Counts are estimates.
+
+## v1.3 additions
+- `src/services/inbox.js` `replyHtml()`, `src/routes/inbox.js` `GET /api/inbox/messages/:id/html`, `public/js/screens/inbox.js` "View original formatting" (sandboxed iframe). Tests in `test/inbox.js`, `test/e2e_engine.js`.
+- `nodemailer` is pinned at 6.9.1 in `package.json` (run `npm install` after pulling).

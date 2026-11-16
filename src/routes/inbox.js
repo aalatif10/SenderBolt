@@ -13,6 +13,13 @@ module.exports = function register(router, d) {
 
   router.get('/api/inbox', function (ctx) { return I.list(ctx.user.id, ctx.query); });
   router.get('/api/inbox/threads/:id', function (ctx) { return I.thread(ctx.user.id, parseId(ctx.params.id)); });
+  router.get('/api/inbox/messages/:id/html', function (ctx) {
+    return I.replyHtml(ctx.user.id, parseId(ctx.params.id)).then(function (page) {
+      // Own, stricter policy: nothing loads or runs (no script, image, font, frame or form); "sandbox" makes it a unique origin; only our own app may frame it.
+      return reply(200, page, { raw: true, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; sandbox allow-popups allow-popups-to-escape-sandbox; frame-ancestors 'self'",
+        'X-Frame-Options': 'SAMEORIGIN', 'Cache-Control': 'private, no-store' } });
+    });
+  });
   router.post('/api/inbox/threads/:id/read', function (ctx) { return I.markRead(ctx.user.id, parseId(ctx.params.id), ctx.body.read !== false); });
   router.post('/api/inbox/threads/:id/reply', { limit: replyLimit, maxBody: 60000 }, function (ctx) {
     return I.reply(ctx.user.id, parseId(ctx.params.id), ctx.body, ctx.ip).then(function (r) { return reply(201, r); });

@@ -63,7 +63,7 @@ h.test('config rejects bad sending mode and bad public origin', function () {
 });
 h.test('inbox and engine routes require a session', function () {
   var saved = S.cookie; S.cookie = null;
-  var paths = ['/api/inbox', '/api/inbox/threads/1', '/api/engine/status'];
+  var paths = ['/api/inbox', '/api/inbox/threads/1', '/api/inbox/messages/1/html', '/api/engine/status'];
   return paths.reduce(function (p, path) { return p.then(function () { return request('GET', path); }).then(function (r) { assert.strictEqual(r.status, 401, path); }); }, Promise.resolve())
     .then(function () { return request('POST', '/api/inbox/sync', { json: {} }); }).then(function (r) { assert.strictEqual(r.status, 401); S.cookie = saved; });
 });

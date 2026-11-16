@@ -98,12 +98,23 @@
         v.quoted ? h('details', { class: 'ib-quote' }, h('summary', { class: 'small', text: I.showQuoted }),
           v.quotedHeader ? h('div', { class: 'small faint ib-qhead', text: v.quotedHeader }) : null, h('blockquote', null, paragraphs(v.quoted))) : null);
     }
+    // "View original formatting": the server-sanitized page in a fully sandboxed frame (no scripts, no same-origin access).
+    function formattedToggle(m) {
+      var slot = h('div'), shown = false;
+      var btn = h('button', { class: 'btn btn-ghost btn-sm', type: 'button', tip: I.formattedTip, on: { click: function () {
+        shown = !shown; btn.textContent = shown ? I.hideFormatted : I.showFormatted;
+        if (shown) SB.mount(slot, h('iframe', { class: 'ib-frame', sandbox: 'allow-popups allow-popups-to-escape-sandbox', referrerpolicy: 'no-referrer', title: 'Original formatting of the reply', src: '/api/inbox/messages/' + m.id + '/html', loading: 'lazy' }));
+        else SB.clear(slot);
+      } } }, I.showFormatted);
+      return h('div', { class: 'ib-formatted' }, btn, slot);
+    }
     function bubble(m, lead) {
       var out = m.direction === 'out', label = msgLabel(m), when = m.sent_at || m.received_at || m.created_at;
       return h('div', { class: 'ib-msg ' + (out ? 'out' : 'in') + (m.kind !== 'email' && !out ? ' sys' : '') + (m.status === 'failed' ? ' failed' : '') },
         h('div', { class: 'ib-msg-head small' }, h('b', { text: out ? 'You' : (lead.first_name || lead.email) }), label ? h('span', { class: 'tag tag-sys', text: label }) : null, h('span', { class: 'faint', tip: fmt.full(when), text: fmt.ago(when) })),
         m.subject ? h('div', { class: 'ib-msg-subj small muted', text: m.subject }) : null,
         m.view ? replyParts(m.view) : h('div', { class: 'ib-msg-body', text: m.body_text || '' }),
+        m.has_html ? formattedToggle(m) : null,
         m.status === 'failed' && m.error ? h('div', { class: 'small bad', text: 'Could not be delivered.' }) : null);
     }
     function paintThread(d, into, opts) {
