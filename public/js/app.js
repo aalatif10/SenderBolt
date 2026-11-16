@@ -5,12 +5,18 @@
   var user = null, current = null, stopStatus = null, viewEl = null, bannerEl = null, badgeEl = null, navEl = null;
   var offlineBanner = null, modeBanner = null;
 
+  // Two groups, like a sequences tool: day-to-day outreach first, then the supporting lists and setup.
   var NAV = [
-    { hash: '#/', key: '', icon: 'home', label: 'Home' },
-    { hash: '#/leads', key: 'leads', icon: 'users', label: 'Leads' },
-    { hash: '#/senders', key: 'senders', icon: 'send', label: 'Senders' },
+    { group: 'Outreach' },
+    { hash: '#/', key: '', icon: 'home', label: 'Campaigns' },
     { hash: '#/inbox', key: 'inbox', icon: 'inbox', label: 'Inbox' },
-    { hash: '#/reports', key: 'reports', icon: 'chart', label: 'Reports' },
+    { hash: '#/engagement', key: 'engagement', icon: 'eye', label: 'Engagement' },
+    { hash: '#/reports', key: 'reports', icon: 'chart', label: 'Reporting' },
+    { hash: '#/queue', key: 'queue', icon: 'clock', label: 'Queue' },
+    { group: 'Setup' },
+    { hash: '#/senders', key: 'senders', icon: 'send', label: 'Sending accounts' },
+    { hash: '#/leads', key: 'leads', icon: 'users', label: 'Leads' },
+    { hash: '#/unsubscriptions', key: 'unsubscriptions', icon: 'ban', label: 'Unsubscriptions' },
     { hash: '#/settings', key: 'settings', icon: 'settings', label: 'Settings' }
   ];
   function destroyCurrent() { if (current && current.destroy) current.destroy(); current = null; }
@@ -39,6 +45,9 @@
     else if (key === 'campaign' && /^\d{1,15}$/.test(parts[1] || '') && parts.length < 4) screen = SB.screens.studio({ id: parts[1], tab: parts[2] || 'sequence', userEmail: user.email });
     else if (key === 'reports' && parts.length < 2) screen = SB.screens.reports();
     else if (key === 'inbox' && parts.length < 2) screen = SB.screens.inbox();
+    else if (key === 'engagement' && parts.length < 2) screen = SB.screens.engagement();
+    else if (key === 'queue' && parts.length < 2) screen = SB.screens.queue();
+    else if (key === 'unsubscriptions' && parts.length < 2) screen = SB.screens.unsubscriptions();
     else if (key === 'senders') screen = SB.screens.senders();
     else if (key === 'leads' && (!parts[1] || parts[1] === 'suppression') && parts.length < 3) screen = SB.screens.leads({ tab: parts[1] === 'suppression' ? 'suppression' : 'lists' });
     else if (key === 'settings' && parts.length < 3) screen = SB.screens.settings({ userEmail: user.email, tab: parts[1] });
@@ -73,6 +82,7 @@
 
   function startShell() {
     navEl = h('nav', { class: 'nav', 'aria-label': 'Main' }, NAV.map(function (n) {
+      if (n.group) return h('div', { class: 'nav-group', text: n.group });
       var a = h('a', { href: n.hash, 'data-key': n.key }, SB.icon(n.icon), h('span', { text: n.label }));
       if (n.key === 'inbox') { badgeEl = h('span', { class: 'badge' }); a.appendChild(badgeEl); }
       return a;

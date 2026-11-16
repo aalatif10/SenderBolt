@@ -244,7 +244,7 @@
   SB.screens.senders = function () {
     var root = h('div'), body = h('div', null, h('div', { class: 'skeleton' }));
     function openAdd() { addModal(load); }
-    root.appendChild(h('div', { class: 'page-head' }, h('div', null, h('h1', { text: 'Senders' }), h('p', { class: 'sub', text: 'The email accounts SenderBolt sends from. Emails rotate evenly across active accounts.' })),
+    root.appendChild(h('div', { class: 'page-head' }, h('div', null, h('h1', { text: 'Sending accounts' }), h('p', { class: 'sub', text: 'The email accounts SenderBolt sends from. Emails rotate evenly across active accounts.' })),
       h('button', { class: 'btn btn-primary', type: 'button', on: { click: openAdd } }, SB.icon('plus'), 'Add sender')));
     root.appendChild(body);
 
@@ -259,10 +259,15 @@
       }
       var active = 0, capToday = 0, sent = 0;
       senders.forEach(function (s) { sent += s.sent_today; if (s.status === 'active' && s.health_score >= 50) { active++; capToday += s.limit_today; } });
-      var tiles = h('div', { class: 'grid-tiles' },
-        ui.tile('Active senders', fmt.num(active), 'of ' + fmt.num(senders.length) + ' connected', 'Accounts that are switched on and healthy enough to send.'),
-        ui.tile('Capacity today', fmt.num(capToday), 'emails across active senders', 'The most your active accounts can send today, including warm-up limits.'),
-        ui.tile('Sent today', fmt.num(sent), capToday ? Math.max(0, capToday - sent) + ' still available' : null, 'Emails already sent today from all accounts.'));
+      var avail = Math.max(0, capToday - sent), pct = capToday ? Math.min(100, Math.round(sent / capToday * 100)) : 0, fill = h('div', { class: 'usage-fill' });
+      fill.style.width = pct + '%';
+      var tiles = h('div', { class: 'card usage-card' }, h('div', { class: 'glance-h' }, h('span', { text: 'Sending limits' }), ui.info('How much your active accounts can still send today, including warm-up limits. It resets every day at midnight UTC.')),
+        h('div', { class: 'muted small', text: 'Today\u2019s usage' }), h('div', { class: 'usage-bar', role: 'img', 'aria-label': pct + ' percent of today\u2019s capacity used' }, fill),
+        h('div', { class: 'usage-legend' },
+          h('div', { tip: 'Emails already sent today from all accounts.' }, h('span', { class: 'dot dot-sent' }), 'Sent', h('b', { text: fmt.num(sent) })),
+          h('div', { tip: 'The most your active accounts can send today.' }, h('span', { class: 'dot dot-cap' }), 'Capacity', h('b', { text: fmt.num(capToday) })),
+          h('div', { tip: 'Emails still allowed today before the limits are reached.' }, h('span', { class: 'dot dot-avail' }), 'Available', h('b', { text: fmt.num(avail) })),
+          h('div', { tip: 'Accounts switched on and healthy enough to send.' }, h('span', { class: 'dot dot-acc' }), 'Active accounts', h('b', { text: fmt.num(active) + ' / ' + fmt.num(senders.length) }))));
       var cards = h('div', { class: 'sender-grid' }, senders.map(function (s) { var t = tracking[s.id]; return card(s, t ? t.reply_tracking : 'pending', load); }));
       var hint = h('div', { class: 'callout' }, h('b', { text: 'How limits work. ' }),
         'Every account has its own daily limit, never above ' + CAP + '. Campaigns share the work evenly between their accounts, so more accounts means more emails per day and less risk for each one.');

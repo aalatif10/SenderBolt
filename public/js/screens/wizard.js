@@ -76,11 +76,19 @@
     function head() {
       var name = h('input', { class: 'input wz-name', id: 'wz-name', maxlength: 120, placeholder: W.namePlaceholder, value: st.name, 'aria-label': 'Campaign name' });
       name.addEventListener('input', function () { st.name = name.value; touch(); });
-      return h('div', null, h('div', { class: 'crumbs' }, h('a', { href: '#/' }, 'Home'), editId ? ' / Edit campaign' : ' / New campaign'),
-        h('div', { class: 'page-head' }, h('div', { class: 'wz-title' }, name, saveEl),
-          editId ? h('div', { class: 'actions' }, h('a', { class: 'btn btn-ghost', href: '#/project/' + projectId, id: 'wz-cancel-edit' }, 'Cancel')) : h('div', { class: 'actions' },
-            h('button', { class: 'btn', type: 'button', tip: W.saveTip, on: { click: function () { saveNow().then(function () { if (!conflict && !dirty) ui.toast(W.draftSaved); }); } } }, 'Save draft'),
-            h('button', { class: 'btn btn-ghost', type: 'button', tip: W.discardTip, on: { click: discard } }, 'Discard'))),
+      var closeHref = projectId ? '#/project/' + projectId : '#/';
+      // Full-width builder bar: close, where you are, the name, save state on the left; the one primary action on the right.
+      var primary = st.step < 3 ? h('button', { class: 'btn btn-primary', type: 'button', id: 'wz-next', tip: 'Go to the next step: ' + STEP_NAMES[st.step + 1] + '.', on: { click: function () { go(st.step + 1); } } }, 'Next', SB.icon('chevron')) : null;
+      return h('div', { class: 'wz-bar' },
+        h('div', { class: 'wz-bar-top' },
+          h('a', { class: 'wz-close', href: closeHref, 'aria-label': 'Close the builder', tip: editId ? 'Leave without changing anything.' : 'Close. Your draft is kept.' }, SB.icon('x')),
+          h('div', { class: 'wz-crumb' }, h('span', { class: 'muted', text: editId ? 'Edit campaign' : 'New campaign' }), h('span', { class: 'faint', text: '/' }), name),
+          saveEl,
+          h('div', { class: 'wz-bar-actions' },
+            editId ? h('a', { class: 'btn btn-ghost', href: '#/project/' + projectId, id: 'wz-cancel-edit' }, 'Cancel') : h('button', { class: 'btn btn-ghost', type: 'button', tip: W.discardTip, on: { click: discard } }, 'Discard'),
+            editId ? null : h('button', { class: 'btn', type: 'button', tip: W.saveTip, on: { click: function () { saveNow().then(function () { if (!conflict && !dirty) ui.toast(W.draftSaved); }); } } }, 'Save draft'),
+            st.step > 0 ? h('button', { class: 'btn', type: 'button', id: 'wz-back', on: { click: function () { go(st.step - 1); } } }, SB.icon('back'), 'Back') : null,
+            primary)),
         conflict ? h('div', { class: 'form-error' }, W.conflictLong, ' ', h('button', { class: 'btn btn-sm', type: 'button', on: { click: function () { location.reload(); } } }, 'Reload latest')) : null,
         stepsEl);
     }
@@ -143,10 +151,16 @@
       subj.addEventListener('input', function () { s.subject = subj.value.replace(/[\r\n]+/g, ' '); touch(); queuePreview(); });
       subj.addEventListener('focus', function () { setActive(i); });
       var ed = SB.editor.create({ value: s.body_html, placeholder: i === 0 ? W.bodyPlaceholder : W.followBodyPlaceholder, label: labelFor(i) + ' text', variables: FIELDS,
-        onChange: function (html) { s.body_html = html; touch(); queuePreview(); } });
+        onChange: function (html) { s.body_html = html; touch(); queuePreview(); paintStats(); } });
       ed.area.addEventListener('focus', function () { setActive(i); });
+      var stats = h('div', { class: 'wz-stats small faint' });
+      function paintStats() {
+        var txt = String(s.body_html || '').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim(), words = txt ? txt.split(' ').length : 0, secs = Math.round(words / 3.3);
+        stats.textContent = 'Words: ' + words + '  \u00b7  Reading time: ' + (secs >= 60 ? Math.floor(secs / 60) + ' min ' + (secs % 60) + ' sec' : secs + ' sec');
+      }
+      paintStats();
       editors[i] = ed;
-      var card = h('div', { class: 'card wz-email' + (i === activeIdx ? ' active' : ''), 'data-idx': i },
+      var card = h('div', { class: 'card wz-email' + (i === activeIdx ? ' active' : ' wz-off'), 'data-idx': i },
         h('div', { class: 'wz-email-head' }, h('h3', { text: labelFor(i) }),
           h('div', { class: 'actions' },
             h('button', { class: 'btn btn-sm', type: 'button', id: 'wz-test-' + i, tip: W.testTip, on: { click: function () { testDialog(i); } } }, SB.icon('send'), 'Send test'),
@@ -154,20 +168,20 @@
         i > 0 ? delayRow(i) : null,
         h('div', { class: 'field' }, h('label', { for: 'wz-subj-' + i }, 'Subject'), subj,
           i > 0 ? h('div', { class: 'hint', text: W.followSubjectHint }) : h('div', { class: 'hint', text: W.subjectHint })),
-        h('div', { class: 'field' }, h('label', { text: 'Message' }), ed.el));
+        h('div', { class: 'field' }, h('label', { text: 'Message' }), ed.el, stats));
       return card;
     }
     function setActive(i) {
       if (activeIdx === i) return; activeIdx = i;
-      Array.prototype.forEach.call(body.querySelectorAll('.wz-email'), function (c) { c.classList.toggle('active', Number(c.getAttribute('data-idx')) === i); });
-      queuePreview();
+      Array.prototype.forEach.call(body.querySelectorAll('.wz-email'), function (c) { var on = Number(c.getAttribute('data-idx')) === i; c.classList.toggle('active', on); c.classList.toggle('wz-off', !on); });
+      paintRail(); queuePreview();
     }
     function removeFollowUp(i) {
       var s = st.steps[i], empty = !s.subject && !s.body_html;
       function doIt() { st.steps.splice(i, 1); activeIdx = Math.min(activeIdx, st.steps.length - 1); touch(); render(); }
       if (empty) doIt(); else ui.confirm({ title: 'Remove ' + labelFor(i).toLowerCase() + '?', message: 'Its subject and text are deleted. Later follow-ups move up.', confirmLabel: 'Remove', danger: true, onConfirm: function () { doIt(); } });
     }
-    function queuePreview() { clearTimeout(previewTimer); previewTimer = setTimeout(paintPreview, 450); }
+    function queuePreview() { clearTimeout(previewTimer); previewTimer = setTimeout(function () { paintPreview(); paintRail(); }, 450); }
     function paintPreview() {
       if (!previewBox || dead) return;
       var s = st.steps[activeIdx] || st.steps[0], mine = ++previewSeq;
@@ -182,20 +196,40 @@
           r.variables.length ? h('div', { class: 'hint pad-t', text: 'Fields used: ' + r.variables.join(', ') + '. Filled with an example person here.' }) : null));
       }, function () {});
     }
+    var railBox = null;
+    function railNote(i) {
+      var x = st.steps[i], plain = String(x.body_html || '').replace(/<[^>]*>/g, '').trim();
+      if (!x.subject && !plain) return { t: 'Missing content', warn: true };
+      var parts = [];
+      if (i > 0) parts.push('Wait ' + (x.delay_days === null ? '?' : x.delay_days + 'd'));
+      parts.push(x.subject ? x.subject : 'No subject');
+      return { t: parts.join(' \u00b7 '), warn: false };
+    }
+    // Left rail: the whole sequence at a glance. Pick a step to edit it on the right.
+    function paintRail() {
+      if (!railBox) return;
+      var items = st.steps.map(function (x, i) {
+        var n = railNote(i);
+        return h('button', { type: 'button', class: 'wz-rail-item' + (i === activeIdx ? ' on' : ''), 'aria-current': i === activeIdx ? 'true' : null, on: { click: function () { setActive(i); } } },
+          h('span', { class: 'ri-ico' }, SB.icon('mail')), h('span', { class: 'ri-txt' }, h('b', { text: labelFor(i) }), h('span', { class: 'ri-sub' + (n.warn ? ' warn' : ''), text: n.t })));
+      });
+      var add = st.steps.length - 1 < MAX_FOLLOWUPS
+        ? h('button', { class: 'wz-rail-add', type: 'button', id: 'wz-add-followup', tip: W.addTip, on: { click: function () {
+          st.steps.push({ subject: '', body_html: '', delay_days: defaultDelay || 3 }); activeIdx = st.steps.length - 1; touch(); render();
+          var f = body.querySelector('#wz-subj-' + activeIdx); if (f) f.focus();
+        } } }, SB.icon('plus'), 'Add step')
+        : h('p', { class: 'hint pad-t', text: 'Maximum reached: the first email plus ' + MAX_FOLLOWUPS + ' follow-ups.' });
+      SB.mount(railBox, h('div', null, items, add));
+    }
     function stepEmails() {
       editors = [];
       var cards = st.steps.map(function (s, i) { return emailCard(i); });
-      var add = st.steps.length - 1 < MAX_FOLLOWUPS
-        ? h('button', { class: 'btn wz-add', type: 'button', id: 'wz-add-followup', tip: W.addTip, on: { click: function () {
-          st.steps.push({ subject: '', body_html: '', delay_days: defaultDelay || 3 }); activeIdx = st.steps.length - 1; touch(); render();
-          var f = body.querySelector('#wz-subj-' + activeIdx); if (f) f.focus();
-        } } }, SB.icon('plus'), 'Add follow-up')
-        : h('p', { class: 'hint', text: 'That is the maximum: the first email plus ' + MAX_FOLLOWUPS + ' follow-ups.' });
+      railBox = h('nav', { class: 'wz-rail', 'aria-label': 'Sequence steps' });
       previewBox = h('div', { class: 'wz-preview-body' });
       var side = h('aside', { class: 'wz-side' }, h('div', { class: 'card' }, h('div', { class: 'actions' }, h('h3', { text: 'Preview' }), ui.info(W.previewTip)), previewBox,
         h('p', { class: 'small muted pad-t', text: 'Shows the email you are editing.' })));
-      paintPreview();
-      return h('div', { class: 'wz-grid' }, h('div', null, cards, add, h('p', { class: 'hint pad-t', text: W.fieldsHelp })), side);
+      paintRail(); paintPreview();
+      return h('div', { class: 'wz-master' }, railBox, h('div', { class: 'wz-detail' }, cards, h('p', { class: 'hint pad-t', text: W.fieldsHelp })), side);
     }
 
     // ---------- step 2: audience ----------
@@ -212,11 +246,12 @@
         if (mine !== audSeq || dead) return;
         SB.mount(countBox, h('div', { class: 'wz-count' }, h('b', { text: fmt.num(r[0].total) }), ' people will be emailed ', ui.info(W.eligibleTip)));
         var cov = r[1], vars = cov.variables.filter(function (v) { return v.missing > 0; });
-        SB.mount(coverageBox, vars.length
+        var covNode = (vars.length
           ? h('div', { class: 'callout warn' }, h('b', { text: fmt.num(cov.leads_affected) + ' of these people are missing information used in your emails.' }),
             h('ul', null, vars.map(function (v) { return h('li', { text: '{{' + v.name + '}} is empty for ' + fmt.num(v.missing) + ' ' + (v.missing === 1 ? 'person' : 'people') }); })),
             h('p', { class: 'small', text: W.coverageHelp }))
           : (cov.variables.length ? h('p', { class: 'hint ok', text: 'Every person has a value for every field you use.' }) : null));
+        if (covNode) SB.mount(coverageBox, covNode); else SB.clear(coverageBox);
       }, function (e) {
         if (mine !== audSeq || dead) return;
         SB.mount(countBox, h('div', { class: e.status === 400 ? 'callout warn' : 'form-error', text: e.status === 400 ? e.message : SB.api.friendly(e) })); SB.clear(coverageBox);
@@ -333,13 +368,18 @@
       }, function (e) { if (mine === audSeq) SB.mount(splitBox, h('div', { class: 'callout warn', text: e.message })); });
     }
     function stepSending() {
-      var list = senders.length ? senders.map(function (s) {
-        var cb = h('input', { type: 'checkbox', id: 'wz-sd-' + s.id }); cb.checked = st.sender_ids.indexOf(s.id) !== -1;
-        var ok = s.status === 'active';
-        cb.addEventListener('change', function () { st.sender_ids = senders.map(function (x) { return x.id; }).filter(function (id) { return id === s.id ? cb.checked : st.sender_ids.indexOf(id) !== -1; }); touch(); paintCap(); });
-        return h('div', { class: 'field check' }, cb, h('label', { for: 'wz-sd-' + s.id }, (s.label || s.email) + ' ', s.label && s.label !== s.email ? h('span', { class: 'faint', text: s.email }) : null),
-          h('div', { class: 'hint', text: ok ? 'Can send ' + fmt.num(s.limit_today) + ' per day right now' + (s.warmup_enabled ? ' (warming up)' : '') : 'Not active (' + (SB.S.status[s.status] ? SB.S.status[s.status].label : s.status) + ') - it will not send until fixed' }));
-      }) : [h('div', { class: 'callout warn' }, 'No sender accounts yet. ', h('a', { href: '#/senders' }, 'Add a sender'), ' - your draft is saved and waiting.')];
+      var list = senders.length ? h('div', { class: 'table-wrap wz-tbl' }, h('table', { class: 'table' },
+        h('thead', null, h('tr', null, h('th', { class: 'row-check' }), h('th', { text: 'Sending account' }), h('th', { text: 'Status' }), h('th', null, 'Daily limit ', ui.info('How many emails this account may send per day, including its warm-up ramp.')), h('th', { text: 'Sent today' }))),
+        h('tbody', null, senders.map(function (s) {
+          var cb = h('input', { type: 'checkbox', id: 'wz-sd-' + s.id, 'aria-label': 'Send from ' + s.email }); cb.checked = st.sender_ids.indexOf(s.id) !== -1;
+          var ok = s.status === 'active';
+          cb.addEventListener('change', function () { st.sender_ids = senders.map(function (x) { return x.id; }).filter(function (id) { return id === s.id ? cb.checked : st.sender_ids.indexOf(id) !== -1; }); touch(); paintCap(); });
+          return h('tr', null, h('td', { class: 'row-check' }, cb),
+            h('td', null, h('label', { for: 'wz-sd-' + s.id, class: 'b' }, s.label || s.email), s.label && s.label !== s.email ? h('div', { class: 'small faint', text: s.email }) : null),
+            h('td', null, h('span', { class: 'pill pill-' + (s.status === 'active' ? 'active' : 'paused'), text: s.status === 'active' ? 'Ready to send' : (SB.S.status[s.status] ? SB.S.status[s.status].label : String(s.status)) })),
+            h('td', { text: ok ? fmt.num(s.limit_today) + (s.warmup_enabled ? ' (warming up)' : '') : '-' }),
+            h('td', { text: fmt.num(s.sent_today || 0) }));
+        })))) : h('div', { class: 'callout warn' }, 'No sender accounts yet. ', h('a', { href: '#/senders' }, 'Add a sender'), ' - your draft is saved and waiting.');
       var capBox = h('p', { class: 'hint' });
       function paintCap() {
         var cap = 0; senders.forEach(function (s) { if (st.sender_ids.indexOf(s.id) !== -1 && s.status === 'active') cap += s.limit_today; });
@@ -358,7 +398,8 @@
       tz.value = String(ss.utc_offset_min); tz.addEventListener('change', function () { ss.utc_offset_min = Number(tz.value); touch(); });
       function toggle(id, key, label, hint) {
         var cb = h('input', { type: 'checkbox', id: id }); cb.checked = !!ss[key]; cb.addEventListener('change', function () { ss[key] = cb.checked; touch(); });
-        return h('div', { class: 'field check' }, cb, h('label', { for: id }, label), h('div', { class: 'hint', text: hint }));
+        cb.className = 'switch'; cb.setAttribute('role', 'switch');
+        return h('div', { class: 'set-row' }, h('div', { class: 'set-txt' }, h('label', { for: id, text: label }), h('div', { class: 'hint', text: hint })), cb);
       }
       var split = st.split, batch = h('input', { class: 'input wz-days', id: 'wz-batch', type: 'text', inputmode: 'numeric', maxlength: 6, value: String(split.batch_size || ''), 'aria-label': 'Batch size' });
       batch.addEventListener('input', function () { var d = batch.value.replace(/\D/g, '').slice(0, 6); if (d !== batch.value) batch.value = d; split.batch_size = d ? parseInt(d, 10) : null; split.seed = null; touch(); refreshSplit(); });
@@ -368,16 +409,19 @@
       function paintSplitCtl() { splitCtl.classList.toggle('hidden', !split.enabled); }
       useSplit.addEventListener('change', function () { split.enabled = useSplit.checked; touch(); paintSplitCtl(); refreshSplit(); });
       splitBox = h('div'); paintSplitCtl(); paintCap(); refreshSplit();
-      return h('div', { class: 'wz-narrow' },
-        h('div', { class: 'card' }, h('h2', { text: 'Send from' }), h('div', { class: 'field' }, list), capBox, h('p', { class: 'hint', text: W.sendersHint })),
-        h('div', { class: 'card' }, h('h2', { text: 'When to send' }),
-          h('div', { class: 'wz-row' }, h('div', { class: 'field' }, h('label', { for: 'wz-ws' }, 'From'), hourSel('wz-ws', ss.window_start_hour, 0, 23, function (x) { ss.window_start_hour = x; })),
-            h('div', { class: 'field' }, h('label', { for: 'wz-we' }, 'Until'), hourSel('wz-we', ss.window_end_hour, 1, 24, function (x) { ss.window_end_hour = x; })),
-            h('div', { class: 'field' }, h('label', { for: 'wz-tz' }, 'Time zone'), tz)),
-          toggle('wz-wd', 'weekdays_only', 'Weekdays only', W.weekdaysHint), toggle('wz-sr', 'stop_on_reply', 'Stop the sequence when someone replies', W.stopHint), toggle('wz-to', 'track_opens', 'Track opens (approximate)', W.opensHint),
-            st.settings.track_opens && SB.status && SB.status.public_origin_set === false ? h('div', { class: 'banner banner-warn inline', role: 'status' }, SB.icon('alert'), SB.S.studio.trackingInactive) : null),
-        h('div', { class: 'card' }, h('h2', null, 'Smart Split ', ui.info(W.splitTip)),
-          h('div', { class: 'field check' }, useSplit, h('label', { for: 'wz-split' }, 'Split into smaller batches'), h('div', { class: 'hint', text: W.splitHint })), splitCtl, splitBox));
+      function section(title, desc, kids) { return h('section', { class: 'set-section' }, h('h2', { text: title }), h('p', { class: 'set-desc', text: desc }), h('div', { class: 'set-body' }, kids)); }
+      return h('div', { class: 'wz-settings' },
+        section('Sender accounts', 'Select the account(s) that send this campaign. With several, the emails are shared between them.', [list, capBox, h('p', { class: 'hint', text: W.sendersHint })]),
+        section('Tracking', 'Choose whether to track email opens. Tracking works for HTML emails only.', [toggle('wz-to', 'track_opens', 'Track email opens', W.opensHint),
+          st.settings.track_opens && SB.status && SB.status.public_origin_set === false ? h('div', { class: 'banner banner-warn inline', role: 'status' }, SB.icon('alert'), SB.S.studio.trackingInactive) : null]),
+        section('Sending window', 'Pick when this campaign\u2019s emails may go out.', [
+          toggle('wz-wd', 'weekdays_only', 'Weekdays only', W.weekdaysHint),
+          h('div', { class: 'wz-row set-hours' }, h('div', { class: 'field' }, h('label', { for: 'wz-ws' }, 'Sending hours: from'), hourSel('wz-ws', ss.window_start_hour, 0, 23, function (x) { ss.window_start_hour = x; })),
+            h('div', { class: 'field' }, h('label', { for: 'wz-we' }, 'to'), hourSel('wz-we', ss.window_end_hour, 1, 24, function (x) { ss.window_end_hour = x; })),
+            h('div', { class: 'field' }, h('label', { for: 'wz-tz' }, 'Time zone'), tz))]),
+        section('Replies', 'What happens to the rest of a sequence when someone answers.', [toggle('wz-sr', 'stop_on_reply', 'Stop the sequence when someone replies', W.stopHint)]),
+        section('Smart Split', 'Send to a large list in smaller, shuffled batches so it looks like natural outreach.', [
+          h('div', { class: 'set-row' }, h('div', { class: 'set-txt' }, h('label', { for: 'wz-split', text: 'Split into smaller batches' }), h('div', { class: 'hint', text: W.splitHint })), (function () { useSplit.className = 'switch'; useSplit.setAttribute('role', 'switch'); return useSplit; })()), splitCtl, splitBox]));
     }
 
     // ---------- step 4: review ----------
@@ -452,9 +496,8 @@
     function render() {
       paintSteps(); paintSave();
       var content = st.step === 0 ? stepEmails() : st.step === 1 ? stepAudience() : st.step === 2 ? stepSending() : stepReview();
-      var nav = h('div', { class: 'wz-nav' },
-        st.step > 0 ? h('button', { class: 'btn', type: 'button', on: { click: function () { go(st.step - 1); } } }, SB.icon('back'), 'Back') : h('span'),
-        st.step < 3 ? h('button', { class: 'btn btn-primary', type: 'button', id: 'wz-next', on: { click: function () { go(st.step + 1); } } }, 'Next: ' + STEP_NAMES[st.step + 1], SB.icon('chevron')) : h('span'));
+      var nav = st.step < 3 ? null : h('div', { class: 'wz-nav' },
+        h('button', { class: 'btn', type: 'button', on: { click: function () { go(st.step - 1); } } }, SB.icon('back'), 'Back'), h('span'));
       SB.mount(body, h('div', null, content, nav));
       var headNode = head(); SB.clear(root); root.appendChild(headNode); root.appendChild(body);
     }

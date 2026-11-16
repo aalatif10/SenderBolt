@@ -290,3 +290,11 @@ Frontend-only overhaul; the single additive backend change is `folder_ids`.
 
 ## v1.4 additions
 - `public/css/app.css` (end of file): Hunter-style polish. Flat cards, underline tabs (Settings, Studio), numbered timeline for sequence steps in the wizard, quieter table headers, flat wizard step tabs. CSS only; no behaviour or backend change.
+
+## v1.5 additions (structural UX alignment, frontend only)
+- `public/js/screens/hub.js` (new): Engagement, Queue and Unsubscriptions screens, derived from existing endpoints (`/api/campaigns`, `/api/campaigns/:id/opens`, `/api/suppression`). CSV export guards against formula injection.
+- `public/js/screens/wizard.js`: top bar (name, save state, Discard/Save draft/Back/Next), master-detail content step (step rail + editor + preview), sending step split into sections with switch toggles. `refreshAudience` null-safe.
+- `public/js/app.js`: sidebar grouped (Outreach / Setup); routes for the hub screens.
+- `public/js/screens/home.js`: at-a-glance row (rates, health alerts) above the expandable project list.
+- `public/js/screens/senders.js`: "Sending limits" usage card.
+- `public/css/app.css`: v1.5 block. No backend changes.

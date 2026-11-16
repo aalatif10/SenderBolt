@@ -108,7 +108,7 @@
 
   SB.screens.home = function () {
     var root = h('div'), topSlot = h('div'), listSlot = h('div');
-    var head = h('div', { class: 'page-head' }, h('div', null, h('h1', { text: 'Home' }), h('p', { class: 'sub', text: 'Your outreach at a glance.' })),
+    var head = h('div', { class: 'page-head' }, h('div', null, h('h1', { text: 'Campaigns' }), h('p', { class: 'sub', text: 'Your projects and campaigns at a glance.' })),
       h('div', { class: 'actions' }, h('a', { class: 'btn btn-primary', href: '#/campaign/new', id: 'home-new-campaign' }, SB.icon('plus'), 'New campaign'),
         h('button', { class: 'btn', type: 'button', on: { click: newProjectModal } }, 'New project')));
     var st = { q: '', status: 'all', sort: 'recent', archived: false, sel: {}, open: {}, detail: {} }, data = null, built = false;
@@ -186,11 +186,32 @@
       var badSenders = senders.filter(function (s) { return s.status !== 'active' || s.last_error; });
       var attn = badSenders.length + (r[0].counts.error || 0);
       var attnNote = badSenders.length ? badSenders[0].label + ': ' + (badSenders[0].last_error || (badSenders[0].status === 'paused' ? 'paused' : badSenders[0].status)) : (r[0].counts.error ? 'A campaign is blocked' : 'Everything looks healthy');
-      var tiles = h('div', { class: 'grid-tiles' },
-        ui.tile('Sent today', fmt.num(sent), cap ? 'of ' + fmt.num(cap) + ' daily capacity' : 'No active sender', 'Emails sent today across all your senders, compared with what they are allowed to send per day.'),
-        ui.tile('Replies waiting', fmt.num(unread), unread ? 'Unread conversations' : 'You are all caught up', 'Conversations with a reply you have not opened yet.'),
-        ui.tile('Projects running', fmt.num(r[0].counts.active), 'of ' + fmt.num(projects.length) + ' projects', 'Projects with at least one campaign currently sending.'),
-        ui.tile('Needs attention', fmt.num(attn), attnNote, 'Senders that are paused or reporting an error, and campaigns that are blocked.', attn > 0));
+      // At-a-glance row: replies waiting, people waiting for an email, today's sending, and a health list of anything that needs action.
+      var waiting = 0; projects.forEach(function (p) { waiting += p.totals.active || 0; });
+      var alerts = [];
+      projects.forEach(function (p) {
+        var t = p.totals;
+        if (t.emailed >= 20 && t.bounce_rate >= 5) alerts.push({ lvl: 'critical', t: p.name + ': high bounce rate (' + t.bounce_rate + '%)', d: 'Pause the campaign and verify your lead list to protect your sending accounts.', href: '#/project/' + p.id, l: 'Review' });
+        else if (t.errors) alerts.push({ lvl: 'warning', t: p.name + ': a campaign is blocked', d: 'Open the project to see which campaign needs attention.', href: '#/project/' + p.id, l: 'Review' });
+      });
+      badSenders.forEach(function (s) { alerts.push({ lvl: s.status === 'active' ? 'warning' : 'critical', t: (s.label || s.email) + ': ' + (s.last_error ? 'reporting an error' : s.status), d: s.last_error || 'This account is not sending right now.', href: '#/senders', l: 'Open' }); });
+      function glance(icon, label, value, note, href, btn, tipText) {
+        return h('div', { class: 'card glance', tip: tipText }, h('div', { class: 'glance-h' }, SB.icon(icon), h('span', { text: label })),
+          h('div', { class: 'glance-v' }, h('b', { text: value }), h('span', { class: 'muted', text: note })), h('a', { class: 'btn btn-sm', href: href }, btn));
+      }
+      var health = h('div', { class: 'card glance-health' }, h('div', { class: 'glance-h' }, SB.icon('alert'), h('span', { text: 'Campaign health' }), alerts.length ? h('span', { class: 'pill pill-error', text: String(alerts.length) }) : null,
+        ui.info('Problems found in your campaigns and sending accounts, most urgent first. Nothing here means all is well.')),
+        alerts.length ? h('div', { class: 'health-list' }, alerts.sort(function (x, y) { return x.lvl === y.lvl ? 0 : x.lvl === 'critical' ? -1 : 1; }).slice(0, 6).map(function (x) {
+          return h('div', { class: 'health-item ' + x.lvl }, h('div', null, h('b', { text: x.t }), h('div', { class: 'small muted', text: x.d })), h('div', { class: 'health-side' }, h('span', { class: 'small faint', text: x.lvl === 'critical' ? 'Critical' : 'Warning' }), h('a', { class: 'btn btn-sm', href: x.href }, x.l)));
+        })) : h('p', { class: 'muted', text: attnNote + '.' }));
+      var tiles = h('div', { class: 'glance-row' },
+        h('div', { class: 'glance-col' },
+          glance('inbox', 'Replies', fmt.num(unread), 'unread', '#/inbox', 'Go to inbox', 'Conversations with a reply you have not opened yet.'),
+          glance('clock', 'Waiting', fmt.num(waiting), 'people', '#/queue', 'Go to queue', 'People who still have an email to receive in a running campaign.')),
+        h('div', { class: 'glance-col' },
+          glance('send', 'Sent today', fmt.num(sent), cap ? 'of ' + fmt.num(cap) : 'no active sender', '#/senders', 'Sending accounts', 'Emails sent today compared with what your senders may send per day.'),
+          glance('chart', 'Projects running', fmt.num(r[0].counts.active), 'of ' + fmt.num(projects.length), '#/reports', 'Reporting', 'Projects with at least one campaign currently sending.')),
+        health);
       SB.mount(topSlot, h('div', null, st.archived ? null : nextStep(senders, leads, projects.length), tiles,
         drafts.length ? h('div', null, h('div', { class: 'section-title' }, h('div', { class: 'actions' }, h('h2', { text: 'Drafts' }), ui.info('Campaigns you started writing but have not created yet. Everything you typed is saved.'))), SB.screens.draftList(drafts, load)) : null));
       paintList(); built = true;

@@ -82,7 +82,7 @@ SB.S = {
     delayEmpty: 'Type how many days to wait.', delayRange: 'Use a whole number from 1 to 60 days.',
     fieldsHelp: 'Tip: use the "Insert field" menu to personalise. {{first_name|there}} means "use the first name, or \"there\" if it is empty". {Hi|Hello} picks one of the words at random for each person.',
     previewTip: 'How the email looks for an example person (Alex Morgan, Acme Domains). Real people get their own details.', previewEmpty: 'Start typing and the preview appears here.',
-    pickFolder: 'Choose at least one lead list first.', folderHint: 'People in this folder receive the sequence. Add or verify leads on the Leads page.',
+    pickFolder: 'Choose at least one lead list first.', folderHint: 'Pick one or several lists. Everyone in them receives the sequence; an address that appears in two lists is emailed only once.', listsTip: 'Choose as many lists as you like. Invalid addresses, unsubscribed people and people already in a running campaign are skipped automatically.', manualTip: 'Type or paste a few people and they are saved to a list right away. No need to leave this page.', manualHelp: 'One person per line: email, first name, last name, company. Only the email is required.',
     roleHint: 'Role addresses are shared inboxes. They usually reply less and complain more.',
     eligibleTip: 'After removing invalid addresses, anyone on your suppression list, and people already in a running campaign.',
     coverageHelp: 'Those people will be skipped (and marked as errors) instead of receiving an email with a blank gap. Add a fallback like {{first_name|there}} to include them.',
