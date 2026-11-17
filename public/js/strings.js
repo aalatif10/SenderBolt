@@ -150,6 +150,11 @@ SB.S = {
     leave: 'You have unsaved changes. Leave without saving?', draftNote: 'This campaign has not started. To change who receives it, the senders or the number of emails, use the builder.',
     opensOff: 'Open tracking is switched off for this campaign. Turn it on in Settings > System preferences before creating campaigns.',
     trackingInactive: 'Open tracking cannot record anything yet: the server has no public address. Set SENDERBOLT_PUBLIC_ORIGIN to the https address where SenderBolt is reachable from the internet, restart, and emails sent after that are counted. Emails already sent cannot be tracked.',
+    addTip: 'Append another follow-up to this running campaign.', addNote: 'This follow-up is added to the end of the sequence. It reaches everyone who is still in the sequence once they have received the previous email; people who already finished do not get it.',
+    removeNote: 'People nobody has emailed yet are taken out of the campaign. People who already received an email stay in the history but get nothing more.', removeTip: 'Stop emailing these people. Their history is kept.',
+    requeueTip: 'Put people who stopped back in the queue. Works for people who replied, replied "stop campaign" (your own keyword rule) or had a problem. Never for bounces or people who used the unsubscribe link.',
+    leadSaveTip: 'Updates this person everywhere they appear (their list too). Emails that have not gone out yet use the new values.', customTip: 'Extra merge fields, used as {{field_name}} in your emails. Letters, digits and underscores only.',
+    settingsNote: 'Changes apply to emails that go out from now on. Emails already sent are never affected.',
     opensNote: 'Opens are estimates. Some mail apps load images automatically (inflating the count) and others block them. Replies are the reliable signal.'
   },
   reports: {

@@ -28,6 +28,15 @@ module.exports = function register(router, d) {
   router.patch('/api/campaigns/:id/steps', { maxBody: BODY }, function (ctx) {
     return S.updateSteps(ctx.user.id, parseId(ctx.params.id), ctx.body, ctx.ip).then(function (c) { return { campaign: c }; });
   });
+  // Running campaigns: add follow-ups, per-person history / edit / multi-select actions, metrics breakdown.
+  router.post('/api/campaigns/:id/steps', { maxBody: BODY, limit: heavy }, function (ctx) {
+    return S.addSteps(ctx.user.id, parseId(ctx.params.id), ctx.body, ctx.ip).then(function (c) { return { campaign: c }; });
+  });
+  router.get('/api/campaigns/:id/leads/:lid/history', function (ctx) { return S.leadHistory(ctx.user.id, parseId(ctx.params.id), parseId(ctx.params.lid)); });
+  router.patch('/api/campaigns/:id/leads/:lid', function (ctx) { return S.updateLead(ctx.user.id, parseId(ctx.params.id), parseId(ctx.params.lid), ctx.body, ctx.ip); });
+  router.post('/api/campaigns/:id/leads/bulk', { limit: heavy }, function (ctx) { return S.bulkLeads(ctx.user.id, parseId(ctx.params.id), ctx.body, ctx.ip); });
+  router.get('/api/campaigns/:id/metrics', function (ctx) { return S.metrics(ctx.user.id, parseId(ctx.params.id)); });
+  router.get('/api/overview', function (ctx) { return S.homeOverview(ctx.user.id, ctx.query || {}); });
   router.delete('/api/campaigns/:id', function (ctx) { return S.remove(ctx.user.id, parseId(ctx.params.id), ctx.ip); });
   router.get('/api/campaigns/:id/leads', function (ctx) { return S.listLeads(ctx.user.id, parseId(ctx.params.id), ctx.query); });
 

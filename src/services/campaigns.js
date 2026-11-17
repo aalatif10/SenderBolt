@@ -64,6 +64,10 @@ function validateSettings(input, base) {
   if (o.window_end_hour <= o.window_start_hour) throw bad('window_end_hour', 'End hour must be after the start hour');
   if (has('utc_offset_min')) { o.utc_offset_min = v.intIn(input.utc_offset_min, -720, 840); if (o.utc_offset_min === null) throw bad('utc_offset_min', 'Invalid time zone offset'); }
   ['weekdays_only', 'stop_on_reply', 'track_opens'].forEach(function (k) { if (has(k)) o[k] = input[k] ? 1 : 0; });
+  if (has('active_days')) {
+    var m = v.intIn(input.active_days, 1, 127); if (m === null) throw bad('active_days', 'Choose at least one day to send on');
+    o.active_days = m; o.weekdays_only = (m & 65) === 0 ? 1 : 0;      // keep the old flag truthful for older readers
+  } else if (has('weekdays_only')) o.active_days = null;
   return o;
 }
 
@@ -379,7 +383,7 @@ C.get = function (userId, id) {
         id: camp.id, parent_id: camp.parent_id, project_id: camp.project_id === undefined ? null : camp.project_id, name: camp.name, status: deriveStatus(camp.status, parts),
         created_at: camp.created_at, updated_at: camp.updated_at, split_seed: camp.split_seed, batch_size: camp.batch_size,
         settings: { window_start_hour: camp.window_start_hour, window_end_hour: camp.window_end_hour, utc_offset_min: camp.utc_offset_min,
-          weekdays_only: camp.weekdays_only, stop_on_reply: camp.stop_on_reply, track_opens: camp.track_opens },
+          weekdays_only: camp.weekdays_only, active_days: camp.active_days || (camp.weekdays_only ? 62 : 127), stop_on_reply: camp.stop_on_reply, track_opens: camp.track_opens },
         steps: stepProgress.describe(res[1], stepProgress.sum((parts.length ? parts : [camp]).map(function (c) { return prog[c.id]; }))).map(function (d, k) {
           return Object.assign({}, res[1][k], { sent: d.sent, capacity: d.capacity, pct: d.pct, locked: !!locked[res[1][k].step_no] });
         }),
@@ -595,7 +599,7 @@ C.updateSteps = function (userId, id, input, ip) {
 };
 
 C.update = function (userId, id, input, ip) {
-  var self = this, camp, parts, steps = null, senderIds = null, settings = null, name = null;
+  var self = this, camp, parts, steps = null, senderIds = null, settings = null, name = null, live = false;
   return Promise.resolve().then(function () { return self._own(userId, id); }).then(function (c) {
     camp = c;
     if (c.parent_id) throw bad('id', 'Edit the main campaign, not a single part');
@@ -606,16 +610,24 @@ C.update = function (userId, id, input, ip) {
       senderIds = v.idArray(input.sender_ids, 1, MAX_SENDERS);
       if (!senderIds) throw bad('sender_ids', 'Choose 1 to ' + MAX_SENDERS + ' sending accounts');
     }
-    var hasSettings = ['window_start_hour', 'window_end_hour', 'utc_offset_min', 'weekdays_only', 'stop_on_reply', 'track_opens'].some(function (k) { return input[k] !== undefined; });
+    var hasSettings = ['window_start_hour', 'window_end_hour', 'utc_offset_min', 'weekdays_only', 'active_days', 'stop_on_reply', 'track_opens'].some(function (k) { return input[k] !== undefined; });
     if (hasSettings) settings = validateSettings(input, c);
     return self.db.all('SELECT * FROM campaigns WHERE parent_id = ? AND user_id = ? ORDER BY id', [id, userId]);
   }).then(function (kids) {
     parts = kids;
     var leaves = kids.length ? kids : [camp];
-    if ((steps || senderIds || settings) && leaves.some(function (l) { return l.status !== 'draft'; })) {
-      throw new AppError('conflict', 'Sequence, senders and settings can only be changed while the campaign is a draft', 409);
+    live = leaves.some(function (l) { return l.status !== 'draft'; });
+    if (steps && live) throw new AppError('conflict', 'Use the sequence editor to change emails of a running campaign', 409);
+    // Senders and schedule may change while the campaign runs (paused or active); not once it is finished.
+    if ((senderIds || settings) && leaves.some(function (l) { return l.status === 'completed' || l.status === 'preparing'; })) {
+      throw new AppError('conflict', 'A finished or still-preparing campaign cannot be changed', 409);
     }
-    return senderIds ? self._checkSenders(userId, senderIds) : null;
+    return senderIds ? self._checkSenders(userId, senderIds).then(function () {
+      if (!live) return null;
+      return self.db.get('SELECT COUNT(*) AS n FROM senders WHERE user_id = ? AND status != \'active\' AND id IN (' + v.placeholders(senderIds.length) + ')', [userId].concat(senderIds)).then(function (r) {
+        if (r.n) throw bad('sender_ids', 'A running campaign can only use active sending accounts. Activate it first or pick another.');
+      });
+    }) : null;
   }).then(function () {
     var t = self.now(), all = [camp].concat(parts);
     return self.db.transaction(function (tx) {
@@ -627,8 +639,8 @@ C.update = function (userId, id, input, ip) {
       if (settings) {
         p = p.then(function () {
           return seq(all, function (c) {
-            return tx.run('UPDATE campaigns SET window_start_hour = ?, window_end_hour = ?, utc_offset_min = ?, weekdays_only = ?, stop_on_reply = ?, track_opens = ?, updated_at = ? WHERE id = ?',
-              [settings.window_start_hour, settings.window_end_hour, settings.utc_offset_min, settings.weekdays_only, settings.stop_on_reply, settings.track_opens, t, c.id]);
+            return tx.run('UPDATE campaigns SET window_start_hour = ?, window_end_hour = ?, utc_offset_min = ?, weekdays_only = ?, active_days = ?, stop_on_reply = ?, track_opens = ?, updated_at = ? WHERE id = ?',
+              [settings.window_start_hour, settings.window_end_hour, settings.utc_offset_min, settings.weekdays_only, settings.active_days || null, settings.stop_on_reply, settings.track_opens, t, c.id]);
           });
         });
       }
@@ -640,12 +652,22 @@ C.update = function (userId, id, input, ip) {
       if (senderIds) {
         p = p.then(function () {
           return seq(all, function (c) { return tx.run('DELETE FROM campaign_senders WHERE campaign_id = ?', [c.id]).then(function () { return linkSenders(tx, c.id, senderIds); }); });
-        });
+        }).then(function () { return live ? rebalanceLeads(tx, parts.length ? parts : [camp], senderIds) : null; });
       }
       return p.then(function () { return audit.log(tx, { userId: userId, action: 'campaign.update', entity: 'campaign', entityId: id, ip: ip, meta: { name: name, steps: !!steps, senders: !!senderIds, settings: !!settings } }, self.now); });
     });
   }).then(function () { return self.get(userId, id); });
 };
+
+// After the senders of a running campaign changed: people who have not been emailed yet are spread over the new set,
+// and so is anybody whose sender was removed. People already mid-sequence keep their sender so their follow-ups stay in the same thread.
+function rebalanceLeads(tx, leaves, senderIds) {
+  var n = senderIds.length, cases = senderIds.map(function (s, k) { return 'WHEN ' + k + ' THEN ?'; }).join(' ');
+  return seq(leaves, function (leaf) {
+    return tx.run("UPDATE campaign_leads SET sender_id = CASE (position % " + n + ') ' + cases + " END WHERE campaign_id = ? AND status IN ('pending','active','paused') AND (current_step = 0 OR sender_id IS NULL OR sender_id NOT IN (" + v.placeholders(n) + '))',
+      senderIds.concat([leaf.id], senderIds));
+  });
+}
 
 C.remove = function (userId, id, ip) {
   var self = this;
@@ -766,5 +788,7 @@ C.previewTemplate = function (userId, input) {
     return { subject: s.text, body_html: b.text, variables: used, missing: s.missing.concat(b.missing.filter(function (m) { return s.missing.indexOf(m) === -1; })), sample: ctx.sample };
   });
 };
+
+require('./campaignLive').install(C, { bad: bad, seq: seq, validateStep: validateStep, MAX_STEPS: MAX_STEPS, CL_STATUSES: CL_STATUSES, leavesOf: leavesOf });
 
 module.exports = { CampaignsService: CampaignsService, validateSteps: validateSteps, deriveStatus: deriveStatus };

@@ -48,7 +48,8 @@ function hash32(n) { return (Math.imul(n | 0, 2654435761) >>> 0); }
 function inWindow(c, t) {
   var local = new Date(t + c.utc_offset_min * 60000), hour = local.getUTCHours();
   if (hour < c.window_start_hour || hour >= c.window_end_hour) return false;
-  if (c.weekdays_only) { var d = local.getUTCDay(); if (d === 0 || d === 6) return false; }
+  var mask = c.active_days ? c.active_days : (c.weekdays_only ? 62 : 127);
+  if (!(mask & (1 << local.getUTCDay()))) return false;
   return true;
 }
 
@@ -131,7 +132,7 @@ E.tick = function () {
   this._steps = {};
   function finish(v) { self.running = false; self.lastTickAt = t; return v; }
   return this._reconcile(t).then(function () {
-    return self.db.all("SELECT id, window_start_hour, window_end_hour, utc_offset_min, weekdays_only FROM campaigns WHERE status = 'active'");
+    return self.db.all("SELECT id, window_start_hour, window_end_hour, utc_offset_min, weekdays_only, active_days FROM campaigns WHERE status = 'active'");
   }).then(function (camps) {
     var open = camps.filter(function (c) { return inWindow(c, t); }).map(function (c) { return c.id; }).slice(0, 800);
     if (!open.length) return stats;

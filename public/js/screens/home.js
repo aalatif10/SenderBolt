@@ -145,8 +145,8 @@
       Object.keys(st.sel).forEach(function (k) { if (selIds.indexOf(Number(k)) === -1) delete st.sel[k]; });
       var chips = STATUS_CHIPS.map(function (c) { return { key: c.key, label: c.label, tip: c.tip, n: c.match ? data.items.filter(function (p) { return c.match.indexOf(p.status) !== -1; }).length : data.items.length }; })
         .filter(function (c) { return c.key === 'all' || c.n > 0 || c.key === st.status; });
-      var view = h('div', { class: 'chips filter-chips' }, SB.lists.chips(chips, st.status, function (k) { st.status = k; paintList(); }),
-        h('button', { type: 'button', class: 'chip' + (st.archived ? ' on' : ''), 'aria-pressed': st.archived ? 'true' : 'false', tip: 'Projects you archived. Their results are kept.',
+      var view = h('div', { class: 'filter-row' }, SB.lists.chips(chips, st.status, function (k) { st.status = k; paintList(); }),
+        h('button', { type: 'button', class: 'chip chip-archived' + (st.archived ? ' on' : ''), 'aria-pressed': st.archived ? 'true' : 'false', tip: 'Projects you archived. Their results are kept.',
           on: { click: function () { st.archived = !st.archived; st.status = 'all'; reload(); } } }, 'Archived'));
       SB.mount(chipsBox, view);
       var tags = [];
@@ -204,13 +204,17 @@
         alerts.length ? h('div', { class: 'health-list' }, alerts.sort(function (x, y) { return x.lvl === y.lvl ? 0 : x.lvl === 'critical' ? -1 : 1; }).slice(0, 6).map(function (x) {
           return h('div', { class: 'health-item ' + x.lvl }, h('div', null, h('b', { text: x.t }), h('div', { class: 'small muted', text: x.d })), h('div', { class: 'health-side' }, h('span', { class: 'small faint', text: x.lvl === 'critical' ? 'Critical' : 'Warning' }), h('a', { class: 'btn btn-sm', href: x.href }, x.l)));
         })) : h('p', { class: 'muted', text: attnNote + '.' }));
-      var tiles = h('div', { class: 'glance-row' },
-        h('div', { class: 'glance-col' },
-          glance('inbox', 'Replies', fmt.num(unread), 'unread', '#/inbox', 'Go to inbox', 'Conversations with a reply you have not opened yet.'),
-          glance('clock', 'Waiting', fmt.num(waiting), 'people', '#/queue', 'Go to queue', 'People who still have an email to receive in a running campaign.')),
-        h('div', { class: 'glance-col' },
-          glance('send', 'Sent today', fmt.num(sent), cap ? 'of ' + fmt.num(cap) : 'no active sender', '#/senders', 'Sending accounts', 'Emails sent today compared with what your senders may send per day.'),
-          glance('chart', 'Projects running', fmt.num(r[0].counts.active), 'of ' + fmt.num(projects.length), '#/reports', 'Reporting', 'Projects with at least one campaign currently sending.')),
+      var ov = r[5];
+      function stat(icon, label, value, note, href, tipText) {
+        return h('a', { class: 'card stat-card', href: href, tip: tipText }, h('div', { class: 'stat-h' }, SB.icon(icon), h('span', { text: label })),
+          h('div', { class: 'stat-v', text: fmt.num(value) }), h('div', { class: 'stat-n small muted', text: note }));
+      }
+      var tiles = h('div', null,
+        h('div', { class: 'stat-row' },
+          stat('send', 'Active', ov.active_campaigns, ov.active_campaigns === 1 ? 'campaign running' : 'campaigns running', '#/', 'Campaigns that are sending right now.'),
+          stat('inbox', 'Replies', ov.replies_7d, 'people, last 7 days' + (unread ? ' · ' + fmt.num(unread) + ' unread' : ''), '#/inbox', 'People who wrote back to one of your emails in the last 7 days. Open the inbox to answer them.'),
+          stat('mail', 'Sent today', sent, cap ? 'of ' + fmt.num(cap) + ' daily capacity' : 'no active sender', '#/senders', 'Emails sent since midnight, compared with what your active sending accounts may send per day.'),
+          stat('clock', 'Scheduled', ov.scheduled, 'upcoming emails', '#/queue', 'Every email still to go out in running campaigns: first emails and follow-ups, for people who have not replied or opted out.')),
         health);
       SB.mount(topSlot, h('div', null, st.archived ? null : nextStep(senders, leads, projects.length), tiles,
         drafts.length ? h('div', null, h('div', { class: 'section-title' }, h('div', { class: 'actions' }, h('h2', { text: 'Drafts' }), ui.info('Campaigns you started writing but have not created yet. Everything you typed is saved.'))), SB.screens.draftList(drafts, load)) : null));
@@ -220,7 +224,7 @@
     }
 
     function load() {
-      return Promise.all([SB.api.get('/api/projects' + (st.archived ? '?archived=1' : '')), SB.api.get('/api/senders'), SB.api.get('/api/stats'), SB.api.get('/api/inbox?limit=1'), SB.api.get('/api/drafts')]).then(render, function (e) {
+      return Promise.all([SB.api.get('/api/projects' + (st.archived ? '?archived=1' : '')), SB.api.get('/api/senders'), SB.api.get('/api/stats'), SB.api.get('/api/inbox?limit=1'), SB.api.get('/api/drafts'), SB.api.get('/api/overview?tz=' + (-new Date().getTimezoneOffset()))]).then(render, function (e) {
         if (e.code !== 'offline' && !built) SB.mount(topSlot, h('div', { class: 'form-error', text: SB.api.friendly(e) }));
       });
     }

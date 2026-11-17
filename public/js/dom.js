@@ -18,6 +18,8 @@
     download: 'M12 4v11M7 11l5 5 5-5M5 20h14', upload: 'M12 16V5M7 9l5-5 5 5M5 20h14', edit: 'M4 20h4L19 9l-4-4L4 16z',
     shield: 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z',
     bolt: 'M13 2L4 14h7l-1 8 9-12h-7z',
+    hourglass: 'M6 3h12M6 21h12M7 3c0 6 5 6 5 9s-5 3-5 9M17 3c0 6-5 6-5 9s5 3 5 9',
+    undo: 'M9 14L4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3',
     image: 'M3 5h18v14H3zM3 16l5-5 4 4 3-3 6 6M15 9h.01', chart: 'M4 20V4M4 20h16M8 16v-5M13 16V8M18 16v-9', lock: 'M6 11h12v9H6zM8 11V8a4 4 0 0 1 8 0v3', eye: 'M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6', ban: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M5.6 5.6l12.8 12.8', mail: 'M3 5h18v14H3zM3 6l9 7 9-7', info: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 8v.01M11 12h1v5h1'
   };
   function icon(name, cls) {

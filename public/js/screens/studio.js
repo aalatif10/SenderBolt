@@ -2,10 +2,12 @@
    Opening a campaign from the project table lands here. Tabs:
      Sequence  every email as a step; emails nobody has received yet are editable (subject, text, wait, pictures),
                emails already sent are frozen and shown read-only. Saves with PATCH /api/campaigns/:id/steps.
-     Overview  numbers, the segmented step bar with exact counts, sentiment, batches.
-     People    every person with status, step reached and an opt-out badge ("Stopped: replied stop campaign").
+     Overview  stat strip (sent / scheduled / opened / replied / successful), sequence overview bar, Metrics breakdown table
+               (whole sequence + every email: scheduled, sent, delivered, opened, replied, successful, bounced, unsubscribed).
+     People    every person with status and opt-out badge; tick people for Pause / Resume / Re-queue / Remove; click a person to
+               open the drawer with the full message history, step progression and inline editing of their merge fields.
      Opens     who opened, how many times, first and last time (only when open tracking is on).
-     Settings  schedule and senders as they were when the campaign was created (read-only after start). */
+     Settings  sending window, active days, senders, stop-on-reply and tracking: editable also while the campaign runs. */
 (function () {
   'use strict';
   var h = SB.h, fmt = SB.fmt, ui = SB.ui, M = SB.S.metric, T = SB.S.studio;
@@ -24,9 +26,9 @@
   SB.screens.studio = function (params) {
     var id = params.id, tab = TABS.some(function (t) { return t[0] === params.tab; }) ? params.tab : 'sequence', userEmail = params.userEmail;
     var root = h('div'), head = h('div'), tabsBox = h('div'), body = h('div', null, h('div', { class: 'skeleton' }));
-    var camp = null, dead = false, stopPoll = null, lastFetch = 0;
+    var camp = null, dead = false, stopPoll = null, lastFetch = 0, drawerClose = null;
     // Sequence editing state: dirty edits per step survive background refreshes.
-    var edits = {}, activeStep = null, editors = {};
+    var edits = {}, activeStep = null, editors = {}, adding = false;
     root.appendChild(head); root.appendChild(tabsBox); root.appendChild(body);
 
     function isDirty() { return Object.keys(edits).length > 0; }
@@ -59,7 +61,7 @@
       editors = {};
       var rail = h('div', { class: 'sd-rail' }, steps.map(function (s) {
         var v = stepView(s);
-        return h('button', { type: 'button', class: 'sd-step' + (s.step_no === activeStep ? ' on' : '') + (s.locked ? ' locked' : ''), on: { click: function () { activeStep = s.step_no; paintSequence(); } } },
+        return h('button', { type: 'button', class: 'sd-step' + (s.step_no === activeStep && !adding ? ' on' : '') + (s.locked ? ' locked' : ''), on: { click: function () { activeStep = s.step_no; adding = false; paintSequence(); } } },
           h('div', { class: 'sd-step-top' }, h('b', { text: stepLabel(s.step_no) }),
             s.locked ? h('span', { class: 'chip chip-sm', tip: T.lockedTip }, SB.icon('lock'), T.locked) : h('span', { class: 'chip chip-sm chip-good', tip: T.editableTip }, edits[s.step_no] ? T.unsaved : T.editable)),
           h('div', { class: 'small muted sd-subj', text: v.subject || (s.step_no === 0 ? '(no subject)' : 'Re: previous subject') }),
@@ -67,7 +69,31 @@
           h('div', { class: 'small faint', text: fmt.num(s.sent) + ' sent of ' + fmt.num(s.capacity) }));
       }));
       var cur = steps.filter(function (s) { return s.step_no === activeStep; })[0];
-      SB.mount(body, h('div', { class: 'sd-grid' }, rail, cur.locked ? lockedPane(cur) : editPane(cur)));
+      var canAdd = camp.status !== 'draft' && camp.status !== 'completed' && camp.status !== 'preparing' && steps.length < 6;
+      if (canAdd) rail.appendChild(h('button', { type: 'button', class: 'sd-step sd-add' + (adding ? ' on' : ''), tip: T.addTip, on: { click: function () { adding = true; paintSequence(); } } }, SB.icon('plus'), h('b', { text: 'Add follow-up' }), h('div', { class: 'small muted', text: 'Follow-up ' + steps.length + ' · reaches everyone still in the sequence' })));
+      SB.mount(body, h('div', { class: 'sd-grid' }, rail, adding && canAdd ? addPane() : (cur.locked ? lockedPane(cur) : editPane(cur))));
+    }
+
+    // New follow-up appended to a running campaign: people who already finished the sequence do not get it; everyone else does.
+    function addPane() {
+      var W = SB.S.wizard, n = camp.steps.length, err = h('div', { class: 'form-error hidden', role: 'alert' });
+      var subj = h('input', { class: 'input', maxlength: 200, placeholder: W.followSubjectPlaceholder, 'aria-label': 'Subject' });
+      var days = h('input', { class: 'input wz-days', type: 'number', min: 1, max: 60, value: 3, 'aria-label': 'Days to wait' });
+      var ed = SB.editor.create({ value: '', placeholder: W.followBodyPlaceholder, label: 'Follow-up ' + n + ' text', variables: [['First name', '{{first_name|there}}'], ['Last name', '{{last_name}}'], ['Company', '{{company|your company}}'], ['Domain', '{{domain}}']], onChange: function () {} });
+      var add = h('button', { class: 'btn btn-primary', type: 'button' }, SB.icon('plus'), 'Add follow-up ' + n);
+      add.addEventListener('click', function () {
+        var d = Number(days.value);
+        if (!(Math.floor(d) === d && d >= 1 && d <= 60)) { err.textContent = W.delayRange; err.classList.remove('hidden'); return; }
+        add.disabled = true; err.classList.add('hidden');
+        SB.api.post('/api/campaigns/' + id + '/steps', { steps: [{ subject: subj.value, body_html: ed.getHtml(), delay_days: d }] }).then(function (r) {
+          camp = r.campaign; adding = false; activeStep = n; ui.toast('Follow-up ' + n + ' added. People still in the sequence will get it after their current wait.'); paintHead(); paintSequence();
+        }, function (e) { add.disabled = false; err.textContent = SB.api.friendly(e); err.classList.remove('hidden'); });
+      });
+      return h('div', { class: 'card sd-pane' }, err, h('div', { class: 'callout' }, T.addNote),
+        h('div', { class: 'field' }, h('label', null, 'Subject'), subj, h('div', { class: 'hint', text: W.followSubjectHint })),
+        h('div', { class: 'wz-delay' }, h('label', null, 'Wait'), days, h('span', { text: 'days after the previous email' }), ui.info(W.delayTip)),
+        h('div', { class: 'field' }, h('label', null, 'Email text'), ed.el, h('div', { class: 'hint', text: W.fieldsHelp })),
+        h('div', { class: 'panel-foot' }, h('button', { class: 'btn', type: 'button', on: { click: function () { adding = false; paintSequence(); } } }, 'Cancel'), add));
     }
 
     function lockedPane(s) {
@@ -161,18 +187,45 @@
     }
 
     // ---------------- Overview ----------------
+    function pctOf(n, den) { return den ? Math.round(n / den * 1000) / 10 : 0; }
+    function pc(n, den, tracked) { if (tracked === false) return '—'; return fmt.pct(pctOf(n, den)) + ' (' + fmt.num(n) + ')'; }
     function paintOverview() {
       SB.mount(body, h('div', { class: 'skeleton' }));
-      SB.api.get('/api/campaigns/' + id + '/analytics').then(function (a) {
+      Promise.all([SB.api.get('/api/campaigns/' + id + '/analytics'), SB.api.get('/api/campaigns/' + id + '/metrics')]).then(function (res) {
         if (dead || tab !== 'overview') return;
-        var t = a.totals;
-        SB.mount(body, h('div', null,
-          h('div', { class: 'grid-tiles' },
-            ui.tile('Emailed', fmt.num(t.emailed), null, M.emailed), ui.tile('Replied', fmt.num(t.replied), fmt.pct(t.reply_rate) + ' reply rate', M.replied),
-            ui.tile('Bounced', fmt.num(t.bounced), fmt.pct(t.bounce_rate) + ' bounce rate', M.bounced, t.bounce_rate > 3),
-            t.opens_tracked ? ui.tile('Opens', fmt.num(t.opens), fmt.pct(t.open_rate) + ' of emailed (approx.)', M.opens) : ui.tile('Opens', 'Not tracked', 'Use replies instead', M.opens),
-            ui.tile('Opted out', fmt.num(camp.stats.unsubscribed), null, M.unsub)),
-          h('div', { class: 'card' }, h('div', { class: 'actions' }, h('h3', { text: 'Sequence progress' }), ui.info(SB.S.steps.segTip)), h('div', { class: 'section-title' }), ui.stepBar(camp.steps.map(function (s) { return { step: s.step_no, sent: s.sent, capacity: s.capacity }; }))),
+        var a = res[0], m = res[1], seqRow = m.rows[0], t = a.totals, tr = m.track_opens, total = seqRow.sent + seqRow.scheduled;
+        function cell(label, value, note, tip) { return h('div', { class: 'ov-cell' }, h('div', { class: 'ov-label' }, label, tip ? ui.info(tip) : null), h('div', { class: 'ov-value', text: value }), note ? h('div', { class: 'ov-note small muted', text: note }) : null); }
+        var sentFill = h('span', { class: 'sent' }), schedFill = h('span', { class: 'sched' });
+        sentFill.style.width = pctOf(seqRow.sent, total) + '%'; schedFill.style.width = pctOf(seqRow.scheduled, total) + '%';
+        var strip = h('div', { class: 'card ov-strip' },
+          h('div', { class: 'ov-progress' }, h('div', { class: 'ov-bar', role: 'img', 'aria-label': 'Sent versus scheduled emails' }, sentFill, schedFill),
+            h('div', { class: 'ov-legend' }, h('span', { tip: 'Emails that already went out, counting every email of the sequence.' }, h('i', { class: 'sent' }), h('b', { text: 'Sent ' }), fmt.num(seqRow.sent) + ' (' + fmt.pct(pctOf(seqRow.sent, total)) + ')'),
+              h('span', { tip: 'Emails still to go out: first emails and follow-ups for people who are still in the sequence.' }, h('i', { class: 'sched' }), h('b', { text: 'Scheduled ' }), fmt.num(seqRow.scheduled) + ' (' + fmt.pct(pctOf(seqRow.scheduled, total)) + ')'))),
+          h('div', { class: 'ov-cells' },
+            cell('Opened', tr ? fmt.num(seqRow.opened) : '—', tr ? fmt.pct(pctOf(seqRow.opened, seqRow.delivered)) + ' of delivered' : 'Tracking is off', M.opens),
+            cell('Clicked', '—', 'Not tracked', 'SenderBolt does not rewrite your links, which keeps emails out of spam folders. Replies are the signal to watch.'),
+            cell('Replied', fmt.num(seqRow.replied), fmt.pct(pctOf(seqRow.replied, seqRow.delivered)) + ' of delivered', M.replied),
+            cell('Successful', fmt.num(seqRow.successful), fmt.pct(pctOf(seqRow.successful, seqRow.delivered)) + ' of delivered', 'Replies tagged "Interested" in your Inbox.')));
+        var cols = [['Scheduled', 'scheduled', 'Emails still to go out for this step.'], ['Sent', 'sent', 'Emails of this step that went out.'], ['Delivered', 'delivered', 'Sent minus bounced.'],
+          ['Opened', 'opened', M.opens], ['Replied', 'replied', 'People who wrote back, counted under the email they answered.'], ['Successful', 'successful', 'Replies tagged "Interested".'],
+          ['Bounced', 'bounced', M.bounced], ['Unsubscribed', 'unsubscribed', 'People who asked to stop (unsubscribe link or replying "stop campaign"), under the last email they got.']];
+        function val(r, k) {
+          if (k === 'scheduled' || k === 'sent' || k === 'delivered') return fmt.num(r[k]);
+          if (k === 'opened') return pc(r.opened, r.delivered, tr);
+          if (k === 'bounced') return pc(r.bounced, r.sent);
+          return pc(r[k], r.delivered);
+        }
+        var breakdown = h('div', null,
+          h('div', { class: 'section-title' }, h('div', { class: 'actions' }, h('h3', { text: 'Metrics breakdown' }), ui.info('One row for the whole sequence and one for every email. The Sequence row counts each person once, so it is not the sum of the rows below it.'))),
+          h('div', { class: 'card flush' }, h('div', { class: 'table-wrap' }, h('table', { class: 'table metrics-table' },
+            h('thead', null, h('tr', null, h('th'), cols.map(function (c) { return h('th', { class: 'num' }, c[0], ' ', ui.info(c[2])); }))),
+            h('tbody', null, m.rows.map(function (r, i) {
+              return h('tr', { class: i === 0 ? 'mt-seq' : '' }, h('td', null, h('b', { text: i === 0 ? 'Sequence' : (i + '. ' + r.label) }), i && r.subject ? h('div', { class: 'small faint', text: r.subject }) : null),
+                cols.map(function (c) { return h('td', { class: 'num' + (c[1] === 'bounced' && r.bounced ? ' bad' : '') }, val(r, c[1])); }));
+            }))))));
+        SB.mount(body, h('div', null, trackWarn(), strip,
+          h('div', { class: 'card pad-t' }, h('div', { class: 'actions' }, h('h3', { text: 'Sequence overview' }), ui.info(SB.S.steps.segTip + ' Hover to see every step.')), h('div', { class: 'section-title' }), ui.stepBar(camp.steps.map(function (s) { return { step: s.step_no, sent: s.sent, capacity: s.capacity }; }))),
+          breakdown,
           t.replied ? h('div', { class: 'card pad-t' }, h('h3', null, 'Reply sentiment'), h('div', { class: 'section-title' }), ui.sentimentBar(t.sentiment)) : null,
           a.batches.length ? h('div', null, h('div', { class: 'section-title' }, h('div', { class: 'actions' }, h('h3', { text: 'Batches' }), ui.info('Large lists are split into smaller batches that send in parallel, so contacts at the same company are not emailed at the same moment.'))),
             h('div', { class: 'table-wrap card' }, h('table', { class: 'table' }, h('thead', null, h('tr', null, h('th', { text: 'Batch' }), h('th', { text: 'Status' }), h('th', { text: 'Sequence progress' }), h('th', { text: 'Replies' }))),
@@ -184,34 +237,125 @@
     }
 
     // ---------------- People ----------------
-    var pst = { status: 'all', page: 1, size: 50 };
+    var pst = { status: 'all', page: 1, size: 50, sel: {} };
+    function selIds() { return Object.keys(pst.sel).map(Number); }
+    function bulk(action, label) {
+      var idsNow = selIds(); if (!idsNow.length) return;
+      function run() {
+        return SB.api.post('/api/campaigns/' + id + '/leads/bulk', { action: action, ids: idsNow }).then(function (r) {
+          var msg = fmt.num(r.done.length) + ' ' + label + (r.skipped.length ? '. ' + r.skipped.length + ' skipped: ' + r.skipped[0].message : '');
+          ui.toast(msg, r.done.length === 0 && r.skipped.length > 0); pst.sel = {}; return load(true);
+        }, function (e) { ui.toast(SB.api.friendly(e), true); });
+      }
+      if (action === 'remove') {
+        ui.confirm({ title: 'Remove ' + idsNow.length + ' ' + (idsNow.length === 1 ? 'person' : 'people') + '?', message: T.removeNote, confirmLabel: 'Remove', danger: true, onConfirm: run });
+      } else run();
+    }
     function paintPeople() {
-      var table = h('div', null, h('div', { class: 'skeleton' }));
-      var chips = SB.lists.chips([['all', 'All'], ['active', 'In sequence'], ['replied', 'Replied'], ['unsubscribed', 'Opted out'], ['bounced', 'Bounced'], ['completed', 'Finished'], ['pending', 'Waiting']].map(function (c) {
+      var table = h('div', null, h('div', { class: 'skeleton' })), barBox = h('div');
+      var chips = SB.lists.chips([['all', 'All'], ['active', 'In sequence'], ['paused', 'Paused'], ['replied', 'Replied'], ['unsubscribed', 'Opted out'], ['bounced', 'Bounced'], ['error', 'Problem'], ['completed', 'Finished'], ['pending', 'Waiting']].map(function (c) {
         return { key: c[0], label: c[1], n: c[0] === 'all' ? camp.stats.total : (camp.stats[c[0]] || 0), tip: c[0] === 'unsubscribed' ? 'People who asked to stop, by replying "stop campaign" or with the unsubscribe link.' : undefined };
-      }), pst.status, function (k) { pst.status = k; pst.page = 1; paintPeople(); });
-      SB.mount(body, h('div', null, chips, h('div', { class: 'pad-t' }), table));
+      }).filter(function (c) { return c.key === 'all' || c.n > 0 || c.key === pst.status; }), pst.status, function (k) { pst.status = k; pst.page = 1; pst.sel = {}; paintPeople(); });
+      SB.mount(body, h('div', null, chips, barBox, h('div', { class: 'pad-t' }), table));
+      function paintBar() {
+        var n = selIds().length;
+        SB.mount(barBox, h('div', null, SB.lists.selectionBar(n, 'person', [
+          { label: 'Pause', icon: 'pause', tip: 'Hold these people back. They get nothing more until you resume them.', onClick: function () { bulk('pause', 'paused'); } },
+          { label: 'Resume', icon: 'play', tip: 'Let paused people continue where they stopped.', onClick: function () { bulk('resume', 'resumed'); } },
+          { label: 'Re-queue', icon: 'undo', tip: T.requeueTip, onClick: function () { bulk('requeue', 'put back in the queue'); } },
+          { label: 'Remove', icon: 'trash', kind: 'danger', tip: T.removeTip, onClick: function () { bulk('remove', 'removed'); } }], function () { pst.sel = {}; paintPeople(); })));
+      }
+      paintBar();
       SB.api.get('/api/campaigns/' + id + '/leads?status=' + encodeURIComponent(pst.status) + '&page=' + pst.page + '&pageSize=' + pst.size).then(function (r) {
         if (dead || tab !== 'people') return;
         if (!r.items.length) { SB.mount(table, h('div', { class: 'card empty' }, h('h2', { text: 'Nobody here' }), h('p', { text: 'No people match this filter.' }))); return; }
         var total = camp.steps.length, pages = Math.max(1, Math.ceil(r.total / r.pageSize));
+        var all = h('input', { type: 'checkbox', 'aria-label': 'Select everyone on this page' });
+        all.checked = r.items.every(function (m) { return pst.sel[m.id]; });
+        all.addEventListener('change', function () { r.items.forEach(function (m) { if (all.checked) pst.sel[m.id] = true; else delete pst.sel[m.id]; }); paintPeople(); });
         SB.mount(table, h('div', { class: 'card flush' }, h('div', { class: 'table-wrap' }, h('table', { class: 'table leads-table' },
-          h('thead', null, h('tr', null, h('th', { text: 'Person' }), h('th', { text: 'Status' }), h('th', null, 'Progress ', ui.info('How many emails of the sequence this person has received.')), h('th', { text: 'Last email' }), camp.settings.track_opens ? h('th', null, 'Opened ', ui.info('How many times this person opened your emails, and when they last did. Counts are estimates.')) : null, h('th', { text: 'Reply' }), h('th', { text: 'Sender' }))),
+          h('thead', null, h('tr', null, h('th', { class: 'c-check' }, all), h('th', { text: 'Person' }), h('th', { text: 'Status' }), h('th', null, 'Progress ', ui.info('How many emails of the sequence this person has received.')), h('th', { text: 'Last email' }), camp.settings.track_opens ? h('th', null, 'Opened ', ui.info('How many times this person opened your emails, and when they last did. Counts are estimates.')) : null, h('th', { text: 'Reply' }), h('th', { text: 'Sender' }))),
           h('tbody', null, r.items.map(function (m) {
             var st = LEAD_STATUS[m.status] || LEAD_STATUS.pending;
-            return h('tr', { class: m.opt_out ? 'row-optout ro-' + m.opt_out : '' },
+            var cb = h('input', { type: 'checkbox', 'aria-label': 'Select ' + m.email }); cb.checked = !!pst.sel[m.id];
+            cb.addEventListener('click', function (ev) { ev.stopPropagation(); });
+            cb.addEventListener('change', function () { if (cb.checked) pst.sel[m.id] = true; else delete pst.sel[m.id]; tr.classList.toggle('sel', cb.checked); paintBar(); });
+            var tr = h('tr', { class: 'row-link' + (m.opt_out ? ' row-optout ro-' + m.opt_out : '') + (pst.sel[m.id] ? ' sel' : ''), tabindex: 0, on: { click: function () { openDrawer(m.id); }, keydown: function (ev) { if (ev.key === 'Enter') openDrawer(m.id); } } },
+              h('td', { class: 'c-check' }, cb),
               h('td', { class: 'c-email break' }, h('b', { text: name(m) || m.email }), name(m) ? h('div', { class: 'small faint', text: m.email + (m.company ? ' · ' + m.company : '') }) : (m.company ? h('div', { class: 'small faint', text: m.company }) : null)),
-              h('td', null, m.opt_out ? ui.optBadge(m.opt_out) : h('span', { class: 'pill pill-' + st[1], tip: st[2] }, st[0])),
+              h('td', null, m.opt_out ? ui.optBadge(m.opt_out) : h('span', { class: 'pill pill-' + st[1], tip: st[2] }, st[0]), m.status_note && !m.opt_out ? h('div', { class: 'small faint', text: m.status_note }) : null),
               h('td', { class: 'nowrap', text: Math.min(m.current_step, total) + ' of ' + total }),
               h('td', { class: 'nowrap', tip: fmt.full(m.last_sent_at), text: m.last_sent_at ? fmt.ago(m.last_sent_at) : '—' }),
-              camp.settings.track_opens ? h('td', { class: 'nowrap', tip: m.last_opened_at ? 'Last opened ' + fmt.full(m.last_opened_at) : 'Not opened yet' }, m.opens ? h('span', null, h('b', { text: m.opens + '\u00d7' }), h('span', { class: 'small faint', text: ' ' + fmt.ago(m.last_opened_at) })) : h('span', { class: 'faint', text: '\u2014' })) : null,
+              camp.settings.track_opens ? h('td', { class: 'nowrap', tip: m.last_opened_at ? 'Last opened ' + fmt.full(m.last_opened_at) : 'Not opened yet' }, m.opens ? h('span', null, h('b', { text: m.opens + '×' }), h('span', { class: 'small faint', text: ' ' + fmt.ago(m.last_opened_at) })) : h('span', { class: 'faint', text: '—' })) : null,
               h('td', { class: 'nowrap', text: m.replied_at ? fmt.ago(m.replied_at) : '—' }),
               h('td', { class: 'small break', text: m.sender_email || '—' }));
+            return tr;
           })))),
-          h('div', { class: 'table-foot' }, h('span', { class: 'small muted', text: fmt.num(r.total) + ' people' }), pages > 1 ? h('div', { class: 'pager' },
+          h('div', { class: 'table-foot' }, h('span', { class: 'small muted', text: fmt.num(r.total) + ' people · click a person for their full history' }), pages > 1 ? h('div', { class: 'pager' },
             h('button', { class: 'btn btn-sm', type: 'button', disabled: pst.page <= 1, on: { click: function () { pst.page--; paintPeople(); } } }, 'Previous'), h('span', { class: 'pager-n small', text: 'Page ' + pst.page + ' of ' + pages }),
             h('button', { class: 'btn btn-sm', type: 'button', disabled: pst.page >= pages, on: { click: function () { pst.page++; paintPeople(); } } }, 'Next')) : null)));
       }, function (e) { SB.mount(table, h('div', { class: 'form-error', text: SB.api.friendly(e) })); });
+    }
+
+    // Side drawer: who this is, their merge fields (editable), step progression and every message sent or received.
+    function openDrawer(clId) {
+      var pnl = ui.panel('Person'), box = pnl.body; drawerClose = pnl.close;
+      pnl.body.parentNode.classList.add('panel-wide');
+      SB.mount(box, h('div', { class: 'skeleton' }));
+      function paint(hi) {
+        var l = hi.lead, st = LEAD_STATUS[l.status] || LEAD_STATUS.pending;
+        var opt = l.status === 'bounced' ? 'bounce' : (l.status === 'unsubscribed' ? (/stop campaign/i.test(l.status_note || '') ? 'stop_campaign' : null) : null);
+        var f = { first_name: h('input', { class: 'input', maxlength: 200, value: l.first_name || '', 'aria-label': 'First name' }), last_name: h('input', { class: 'input', maxlength: 200, value: l.last_name || '', 'aria-label': 'Last name' }),
+          company: h('input', { class: 'input', maxlength: 200, value: l.company || '', 'aria-label': 'Company' }) };
+        var customRows = h('div', { class: 'cf-rows' }), err = h('div', { class: 'form-error hidden', role: 'alert' });
+        function addRow(k, val) {
+          var key = h('input', { class: 'input', maxlength: 40, value: k || '', placeholder: 'field_name', 'aria-label': 'Field name' }), v = h('input', { class: 'input', maxlength: 500, value: val || '', placeholder: 'Value', 'aria-label': 'Field value' });
+          var row = h('div', { class: 'cf-row' }, key, v, h('button', { class: 'btn btn-ghost btn-sm', type: 'button', 'aria-label': 'Remove field', on: { click: function () { customRows.removeChild(row); } } }, SB.icon('x')));
+          row.__get = function () { return [key.value.trim(), v.value]; }; customRows.appendChild(row);
+        }
+        Object.keys(l.custom || {}).forEach(function (k) { addRow(k, l.custom[k]); });
+        var save = h('button', { class: 'btn btn-primary btn-sm', type: 'button', tip: T.leadSaveTip }, 'Save changes');
+        save.addEventListener('click', function () {
+          var custom = {}; Array.prototype.forEach.call(customRows.children, function (r) { var kv = r.__get(); if (kv[0]) custom[kv[0]] = kv[1]; });
+          save.disabled = true; err.classList.add('hidden');
+          SB.api.patch('/api/campaigns/' + id + '/leads/' + clId, { first_name: f.first_name.value, last_name: f.last_name.value, company: f.company.value, custom: custom }).then(function (r) {
+            ui.toast('Saved. The next email to this person uses the new values.'); paint(r);
+            if (tab === 'people') paintPeople();
+          }, function (e) { save.disabled = false; err.textContent = SB.api.friendly(e); err.classList.remove('hidden'); });
+        });
+        var requeue = l.can_requeue ? h('button', { class: 'btn btn-sm', type: 'button', tip: T.requeueTip, on: { click: function () {
+          SB.api.post('/api/campaigns/' + id + '/leads/bulk', { action: 'requeue', ids: [clId] }).then(function (r) {
+            ui.toast(r.done.length ? 'Back in the queue. The next email goes out in the next sending window.' : (r.skipped[0] ? r.skipped[0].message : 'Nothing changed'), !r.done.length);
+            return Promise.all([SB.api.get('/api/campaigns/' + id + '/leads/' + clId + '/history').then(paint), load(true)]);
+          }, function (e) { ui.toast(SB.api.friendly(e), true); });
+        } } }, SB.icon('undo'), 'Re-queue this person') : null;
+        function when(ms) { return ms ? fmt.full(ms) : ''; }
+        var prog = h('div', { class: 'sd-prog' }, hi.steps.map(function (x) {
+          var ic = x.state === 'sent' ? 'check' : (x.state === 'scheduled' ? 'clock' : 'hourglass');
+          var tx = x.state === 'sent' ? 'Sent ' + when(x.sent_at) : (x.state === 'scheduled' ? 'Scheduled ' + when(x.scheduled_at) : 'Not sent');
+          return h('div', { class: 'sd-prog-row sp-' + x.state }, SB.icon(ic), h('span', { class: 'sp-lbl', text: stepLabel(x.step_no) }), h('span', { class: 'small muted', text: tx }), x.opens ? h('span', { class: 'chip chip-sm', tip: 'Opened ' + x.opens + ' time' + (x.opens === 1 ? '' : 's') }, SB.icon('eye'), x.opens + '×') : null);
+        }));
+        var thread = hi.messages.length ? h('div', { class: 'thread' }, hi.messages.map(function (m) {
+          var out = m.direction === 'out', bodyEl = h('div', { class: 'wz-mail-body' });
+          if (out && m.body_html) bodyEl.appendChild(SB.editor.render(m.body_html)); else bodyEl.appendChild(h('div', { class: 'msg-text', text: m.body_text || '' }));
+          return h('div', { class: 'msg ' + (out ? 'msg-out' : 'msg-in') },
+            h('div', { class: 'msg-head' }, h('b', { text: out ? (m.step_no === 0 ? 'Initial email' : (m.step_no !== null ? 'Follow-up ' + m.step_no : 'Your reply')) : (m.kind === 'bounce' ? 'Bounce notice' : 'Their reply') }),
+              h('span', { class: 'small faint', tip: fmt.full(m.at), text: fmt.ago(m.at) }), m.error ? h('span', { class: 'chip chip-sm chip-bad', text: 'Not sent' }) : null),
+            h('div', { class: 'msg-subj small', text: m.subject || '(no subject)' }), bodyEl, m.error ? h('div', { class: 'small bad', text: m.error }) : null);
+        })) : h('p', { class: 'muted', text: 'No email has been sent to this person yet.' });
+        SB.mount(box, h('div', { class: 'drawer' },
+          h('div', { class: 'drawer-head' }, h('div', null, h('h3', { text: name(l) || l.email }), h('div', { class: 'small muted break', text: l.email + (l.sender_email ? ' · sending from ' + l.sender_email : '') })),
+            opt ? ui.optBadge(opt, true) : h('span', { class: 'pill pill-' + st[1], tip: st[2] }, st[0])),
+          l.status_note ? h('p', { class: 'small muted', text: l.status_note }) : null,
+          requeue || l.requeue_blocked ? h('div', { class: 'callout' }, requeue, l.requeue_blocked ? h('span', { class: 'small', text: l.requeue_blocked }) : null) : null,
+          h('h4', { class: 'drawer-h', text: 'Details' }), err,
+          h('div', { class: 'cf-grid' }, h('label', null, 'First name', f.first_name), h('label', null, 'Last name', f.last_name), h('label', null, 'Company', f.company)),
+          h('div', { class: 'cf-title small muted' }, 'Custom fields ', ui.info(T.customTip)), customRows,
+          h('div', { class: 'actions pad-t' }, h('button', { class: 'btn btn-sm', type: 'button', on: { click: function () { addRow('', ''); } } }, SB.icon('plus'), 'Add field'), save),
+          h('h4', { class: 'drawer-h', text: 'Progress' }), prog,
+          h('h4', { class: 'drawer-h', text: 'Messages' }), thread));
+      }
+      SB.api.get('/api/campaigns/' + id + '/leads/' + clId + '/history').then(paint, function (e) { SB.mount(box, h('div', { class: 'form-error', text: SB.api.friendly(e) })); });
     }
 
     // ---------------- Opens ----------------
@@ -243,15 +387,56 @@
       }, function (e) { SB.mount(body, h('div', { class: 'form-error', text: SB.api.friendly(e) })); });
     }
 
-    // ---------------- Settings (read-only) ----------------
+    // ---------------- Settings (editable, also while running) ----------------
+    var DAYS = [['Mon', 2], ['Tue', 4], ['Wed', 8], ['Thu', 16], ['Fri', 32], ['Sat', 64], ['Sun', 1]];
+    function tzLabel(off) { var a = Math.abs(off); return 'UTC' + (off >= 0 ? '+' : '-') + (Math.floor(a / 60) < 10 ? '0' : '') + Math.floor(a / 60) + ':' + (a % 60 ? '30' : '00'); }
     function paintSettings() {
-      var s = camp.settings, pad = function (n) { return (n < 10 ? '0' : '') + n + ':00'; }, off = s.utc_offset_min, tz = 'UTC' + (off >= 0 ? '+' : '-') + Math.floor(Math.abs(off) / 60) + (Math.abs(off) % 60 ? ':' + (Math.abs(off) % 60) : '');
-      function row(k, v) { return h('div', { class: 'wz-sum-row' }, h('div', { class: 'k', text: k }), h('div', { class: 'v' }, v)); }
-      SB.mount(body, h('div', { class: 'card wz-narrow' },
-        h('div', { class: 'callout' }, camp.status === 'draft' ? T.draftNote : 'Senders and schedule are fixed once a campaign has started, so results stay comparable. Start a new campaign to change them.'),
-        row('Sending window', pad(s.window_start_hour) + ' to ' + pad(s.window_end_hour) + ' (' + tz + ')'), row('Weekends', s.weekdays_only ? 'Skipped' : 'Included'),
-        row('Stop on reply', s.stop_on_reply ? 'Yes: nobody gets a follow-up after answering' : 'No'), row('Open tracking', s.track_opens ? 'On' : 'Off'),
-        row('Senders', camp.senders.map(function (x) { return x.label || x.email; }).join(', ') || '—'), row('Created', fmt.full(camp.created_at))));
+      var s = camp.settings, locked = camp.status === 'completed' || camp.status === 'preparing', pad = function (n) { return (n < 10 ? '0' : '') + n + ':00'; };
+      SB.mount(body, h('div', { class: 'skeleton' }));
+      SB.api.get('/api/senders').then(function (r) {
+        if (dead || tab !== 'settings') return;
+        var all = r.items || r.senders || [], chosen = {}; camp.senders.forEach(function (x) { chosen[x.id] = true; });
+        var days = s.active_days, err = h('div', { class: 'form-error hidden', role: 'alert' });
+        var start = h('select', { class: 'input', 'aria-label': 'Start hour' }), end = h('select', { class: 'input', 'aria-label': 'End hour' }), tz = h('select', { class: 'input', 'aria-label': 'Time zone' });
+        for (var i = 0; i <= 23; i++) start.appendChild(h('option', { value: i }, pad(i)));
+        for (var j = 1; j <= 24; j++) end.appendChild(h('option', { value: j }, pad(j === 24 ? 0 : j) + (j === 24 ? ' (midnight)' : '')));
+        var offs = []; for (var o = -720; o <= 840; o += 30) offs.push(o); if (offs.indexOf(s.utc_offset_min) === -1) offs.push(s.utc_offset_min);
+        offs.sort(function (x, y) { return x - y; }).forEach(function (o) { tz.appendChild(h('option', { value: o }, tzLabel(o))); });
+        start.value = s.window_start_hour; end.value = s.window_end_hour; tz.value = s.utc_offset_min;
+        var dayBtns = DAYS.map(function (d) {
+          var b = h('button', { type: 'button', class: 'chip day-chip' + ((days & d[1]) ? ' on' : ''), 'aria-pressed': (days & d[1]) ? 'true' : 'false', tip: d[0] === 'Sat' || d[0] === 'Sun' ? 'Weekend sending usually gets fewer opens.' : undefined }, d[0]);
+          b.addEventListener('click', function () { days ^= d[1]; if (!days) days = d[1]; paintDays(); });
+          return b;
+        });
+        function paintDays() { dayBtns.forEach(function (b, k) { var on = !!(days & DAYS[k][1]); b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); }); }
+        function sw(label, hint, val) { var cb = h('input', { type: 'checkbox', class: 'switch', role: 'switch', 'aria-label': label }); cb.checked = !!val; return { cb: cb, row: h('div', { class: 'set-row' }, h('div', { class: 'set-txt' }, h('label', { text: label }), h('div', { class: 'hint', text: hint })), cb) }; }
+        var stop = sw('Stop when someone replies', 'Nobody gets a follow-up after answering you.', s.stop_on_reply), track = sw('Track opens', 'Adds a tiny invisible image to emails that go out from now on. Counts are estimates.', s.track_opens);
+        var sendRows = all.map(function (x) {
+          var cb = h('input', { type: 'checkbox', 'aria-label': (x.label || x.email) }); cb.checked = !!chosen[x.id]; cb.disabled = x.status !== 'active' && !chosen[x.id];
+          cb.addEventListener('change', function () { if (cb.checked) chosen[x.id] = true; else delete chosen[x.id]; });
+          return h('label', { class: 'sender-opt' + (cb.disabled ? ' dim' : '') }, cb, h('div', null, h('b', { text: x.label || x.email }), h('div', { class: 'small muted', text: x.email + ' · ' + fmt.num(x.sent_today) + ' of ' + fmt.num(x.limit_today) + ' sent today' + (x.status !== 'active' ? ' · ' + x.status : '') })));
+        });
+        var save = h('button', { class: 'btn btn-primary', type: 'button', disabled: locked }, 'Save settings');
+        save.addEventListener('click', function () {
+          var sids = Object.keys(chosen).map(Number);
+          if (!sids.length) { err.textContent = 'Choose at least one sending account.'; err.classList.remove('hidden'); return; }
+          save.disabled = true; err.classList.add('hidden');
+          SB.api.patch('/api/campaigns/' + id, { window_start_hour: Number(start.value), window_end_hour: Number(end.value), utc_offset_min: Number(tz.value), active_days: days, stop_on_reply: stop.cb.checked ? 1 : 0, track_opens: track.cb.checked ? 1 : 0, sender_ids: sids }).then(function (r) {
+            camp = r.campaign; ui.toast('Saved. Changes apply from the next email.'); paintHead(); paintSettings();
+          }, function (e) { save.disabled = false; err.textContent = SB.api.friendly(e); err.classList.remove('hidden'); });
+        });
+        function section(title, desc, kids) { return h('div', { class: 'card set-sec' }, h('div', { class: 'set-sec-h' }, h('h3', { text: title }), h('p', { class: 'muted small', text: desc })), h('div', { class: 'set-sec-b' }, kids)); }
+        SB.mount(body, h('div', { class: 'wz-narrow' }, err,
+          h('div', { class: 'callout' }, locked ? 'This campaign has finished, so its settings are fixed.' : T.settingsNote),
+          section('Sending accounts', 'Add or remove accounts while the campaign runs. People who have not been emailed yet are spread over the new set; people mid-sequence keep their account so follow-ups stay in one thread.', h('div', { class: 'sender-opts' }, sendRows)),
+          section('Sending window', 'Emails only go out between these hours, in this time zone.', h('div', { class: 'win-row' }, h('label', null, 'From', start), h('label', null, 'Until', end), h('label', null, 'Time zone', tz))),
+          section('Active days', 'Choose the days emails may go out, weekends included.', h('div', { class: 'chips' }, dayBtns, h('button', { type: 'button', class: 'btn btn-ghost btn-sm', on: { click: function () { days = 62; paintDays(); } } }, 'Weekdays'), h('button', { type: 'button', class: 'btn btn-ghost btn-sm', on: { click: function () { days = 127; paintDays(); } } }, 'Every day'))),
+          section('Behaviour', 'How the campaign treats replies and tracking.', [stop.row, track.row]),
+          section('Gaps between emails', 'The wait before each follow-up is set per email in the Sequence tab (only for emails nobody has received). The pause between two emails from one account is set per account.',
+            h('div', { class: 'actions' }, h('a', { class: 'btn btn-sm', href: '#/campaign/' + id + '/sequence' }, 'Edit waits in Sequence'), h('a', { class: 'btn btn-sm', href: '#/senders' }, 'Sending accounts'))),
+          h('div', { class: 'panel-foot' }, h('span', { class: 'small faint', text: 'Created ' + fmt.full(camp.created_at) }), save)));
+        if (locked) Array.prototype.forEach.call(body.querySelectorAll('input,select,button.day-chip'), function (el) { el.disabled = true; });
+      }, function (e) { SB.mount(body, h('div', { class: 'form-error', text: SB.api.friendly(e) })); });
     }
 
     function paintTab() {
@@ -276,7 +461,7 @@
     return {
       el: root,
       isDirty: isDirty, dirtyMessage: T.leave,
-      destroy: function () { dead = true; if (stopPoll) stopPoll(); window.removeEventListener('beforeunload', beforeUnload); }
+      destroy: function () { dead = true; if (drawerClose) { try { drawerClose(); } catch (e) {} } if (stopPoll) stopPoll(); window.removeEventListener('beforeunload', beforeUnload); }
     };
   };
 })();

@@ -67,18 +67,44 @@
   }
   // Hunter-style segmented bar: one segment per email step, each filled by sent / capacity.
   // steps: [{ step, sent, capacity, pct }]. compact = bar only (tables); otherwise adds "Email 1  34 / 112" captions.
+  function stepState(s) {
+    if (s.capacity > 0 && s.sent >= s.capacity) return { icon: 'check', cls: 'done', text: 'finished' };
+    if (s.sent > 0) return { icon: 'play', cls: 'run', text: SB.fmt.num(s.sent) + ' / ' + SB.fmt.num(s.capacity) };
+    return { icon: 'hourglass', cls: 'wait', text: 'not started' };
+  }
+  // One shared popover (position: fixed, so table scrollers never clip it) listing every step and where it stands.
+  var pop = null;
+  function showStepPop(anchor, steps) {
+    if (!pop) { pop = h('div', { class: 'step-pop', role: 'tooltip' }); document.body.appendChild(pop); }
+    var P = SB.S.steps;
+    SB.mount(pop, h('div', null, steps.map(function (s) {
+      var st = stepState(s);
+      return h('div', { class: 'sp-row sp-' + st.cls }, SB.icon(st.icon), h('span', { class: 'sp-name', text: s.step === 0 ? 'Initial email' : P.follow(s.step) }), h('b', { text: st.text }));
+    })));
+    pop.classList.add('on');
+    var r = anchor.getBoundingClientRect(), pw = pop.offsetWidth, ph = pop.offsetHeight;
+    var left = Math.max(8, Math.min(window.innerWidth - pw - 8, r.left + r.width / 2 - pw / 2));
+    var top = r.top - ph - 10; if (top < 8) top = r.bottom + 10;
+    pop.style.left = left + 'px'; pop.style.top = top + 'px';
+  }
+  function hideStepPop() { if (pop) pop.classList.remove('on'); }
   function stepBar(steps, opts) {
     opts = opts || {};
     var P = SB.S.steps;
     if (!steps || !steps.length) return h('span', { class: 'faint small', text: '\u2014' });
     var segs = steps.map(function (s) {
       var fill = h('span'); fill.style.width = Math.max(0, Math.min(100, s.capacity ? s.sent / s.capacity * 100 : 0)) + '%';
-      var name = s.step === 0 ? P.first : P.follow(s.step);
-      return h('div', { class: 'stepseg' + (s.capacity && s.sent >= s.capacity ? ' full' : '') + (s.sent === 0 ? ' idle' : ''), tip: name + ': ' + SB.fmt.num(s.sent) + ' sent of ' + SB.fmt.num(s.capacity) + ' people who can still get it. ' + P.segTip,
-        role: 'img', 'aria-label': name + ' ' + s.sent + ' of ' + s.capacity }, h('div', { class: 'stepfill' }, fill),
+      return h('div', { class: 'stepseg' + (s.capacity && s.sent >= s.capacity ? ' full' : '') + (s.sent === 0 ? ' idle' : '') }, h('div', { class: 'stepfill' }, fill),
         opts.compact ? null : h('div', { class: 'stepcap' }, h('span', { class: 'small', text: s.step === 0 ? P.short : P.shortFollow(s.step) }), h('b', { class: 'small', text: SB.fmt.num(s.sent) + ' / ' + SB.fmt.num(s.capacity) })));
     });
-    return h('div', { class: 'stepbar' + (opts.compact ? ' compact' : '') }, segs);
+    var bar = h('div', { class: 'stepbar' + (opts.compact ? ' compact' : ''), tabindex: 0, role: 'img',
+      'aria-label': steps.map(function (s) { return (s.step === 0 ? 'Initial email' : P.follow(s.step)) + ' ' + stepState(s).text; }).join(', ') });
+    segs.forEach(function (x) { bar.appendChild(x); });
+    // Re-read the steps on every hover so a background refresh never shows stale numbers.
+    bar.addEventListener('mouseenter', function () { showStepPop(bar, steps); });
+    bar.addEventListener('focus', function () { showStepPop(bar, steps); });
+    bar.addEventListener('mouseleave', hideStepPop); bar.addEventListener('blur', hideStepPop);
+    return bar;
   }
   // Badge for people who were stopped: kind is 'stop_campaign' | 'unsubscribe_link' | 'bounce'
   function optBadge(kind, big) {

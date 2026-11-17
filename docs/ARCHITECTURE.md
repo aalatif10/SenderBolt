@@ -298,3 +298,17 @@ Frontend-only overhaul; the single additive backend change is `folder_ids`.
 - `public/js/screens/home.js`: at-a-glance row (rates, health alerts) above the expandable project list.
 - `public/js/screens/senders.js`: "Sending limits" usage card.
 - `public/css/app.css`: v1.5 block. No backend changes.
+
+## v1.6 additions (running campaigns, per-person drawer, metrics breakdown, Reporting tabs)
+Backend
+- `src/db/migrations/010_active_days.sql`: `campaigns.active_days` bit mask (Sun=1 ... Sat=64); NULL keeps the old weekdays_only meaning. `sendEngine.inWindow` honours it.
+- `src/services/campaignLive.js` (new, mixed into `CampaignsService`): `addSteps` (append follow-ups to a running campaign, max 6 emails), `leadHistory`, `updateLead` (merge fields, shared with the person's list), `bulkLeads` (pause / resume / remove / re-queue), `metrics` (per-step breakdown + people-once sequence row), `homeOverview` (Home cards).
+- `src/services/campaigns.js` `update()`: senders and schedule (window, time zone, active days, stop-on-reply, tracking) can now change while a campaign is active or paused; people not yet emailed, or whose sender was removed, are redistributed; people mid-sequence keep their sender. The sequence itself still changes only through `updateSteps` (unsent emails) / `addSteps`.
+- Routes (`src/routes/campaigns.js`): `POST /api/campaigns/:id/steps`, `GET|PATCH /api/campaigns/:id/leads/:lid[/history]`, `POST /api/campaigns/:id/leads/bulk`, `GET /api/campaigns/:id/metrics`, `GET /api/overview`.
+- Safety rules: bounced people and people who used the unsubscribe link / complained can never be re-queued; only our own "stop campaign" suppression (`replied_stop`) can be lifted by the owner. Incoming mail is returned as plain text only; outgoing HTML is re-sanitized. All queries are user-scoped and parameterized.
+Frontend
+- `public/js/ui.js`: `stepBar` popover (one shared fixed-position element, never clipped by table scrollers).
+- `public/js/screens/home.js`: Active / Replies / Sent today / Scheduled cards; Archived chip aligned in its own row.
+- `public/js/screens/studio.js`: Overview (stat strip, sequence bar, Metrics breakdown), People (checkboxes, bulk bar, drawer with history and inline editing), Sequence "Add follow-up", editable Settings.
+- `public/js/screens/reports.js`: Reporting with Campaigns / Team members / Email accounts / Email domains tabs, six metric cards, Day/Week/Month line chart, Top list.
+- Tests: `test/live.js`.
