@@ -65,8 +65,7 @@
           h('div', { class: 'sd-step-top' }, h('b', { text: stepLabel(s.step_no) }),
             s.locked ? h('span', { class: 'chip chip-sm', tip: T.lockedTip }, SB.icon('lock'), T.locked) : h('span', { class: 'chip chip-sm chip-good', tip: T.editableTip }, edits[s.step_no] ? T.unsaved : T.editable)),
           h('div', { class: 'small muted sd-subj', text: v.subject || (s.step_no === 0 ? '(no subject)' : 'Re: previous subject') }),
-          ui.stepBar([{ step: s.step_no, sent: s.sent, capacity: s.capacity }], { compact: true }),
-          h('div', { class: 'small faint', text: fmt.num(s.sent) + ' sent of ' + fmt.num(s.capacity) }));
+          ui.stepBar([{ step: s.step_no, sent: s.sent, capacity: s.capacity }], { compact: true }));
       }));
       var cur = steps.filter(function (s) { return s.step_no === activeStep; })[0];
       var canAdd = camp.status !== 'draft' && camp.status !== 'completed' && camp.status !== 'preparing' && steps.length < 6;
@@ -171,7 +170,17 @@
         h('div', { class: 'field' }, h('label', null, 'Email text'), ed.el, h('div', { class: 'hint', text: W.fieldsHelp })),
         h('div', { class: 'section-title' }, h('div', { class: 'actions' }, h('h3', { text: 'Preview' }), ui.info(W.previewTip))), previewBox,
         h('div', { class: 'panel-foot' }, h('button', { class: 'btn', type: 'button', tip: W.testTip, on: { click: testSend } }, SB.icon('mail'), 'Send me a test'),
-          h('div', { class: 'actions' }, status, saveBtn)));
+          h('div', { class: 'actions' }, s.step_no > 0 && camp.status !== 'draft' ? removeBtn() : null, status, saveBtn)));
+
+      function removeBtn() {
+        return h('button', { class: 'btn btn-danger', type: 'button', tip: T.removeStepTip, on: { click: function () {
+          ui.confirm({ title: 'Remove ' + stepLabel(s.step_no) + '?', message: T.removeStepNote, confirmLabel: 'Remove follow-up', danger: true, onConfirm: function () {
+            return SB.api.del('/api/campaigns/' + id + '/steps/' + s.step_no).then(function (r) {
+              edits = {}; camp = r.campaign; activeStep = null; ui.toast(stepLabel(s.step_no) + ' removed.'); paintHead(); paintSequence();
+            }, function (e) { ui.toast(SB.api.friendly(e), true); if (e.status === 409) load(true); throw e; });
+          } });
+        } } }, SB.icon('trash'), 'Remove');
+      }
 
       function save() {
         var patch = Object.keys(edits).map(function (k) { return Object.assign({ step_no: Number(k) }, edits[k]); });
@@ -224,7 +233,7 @@
                 cols.map(function (c) { return h('td', { class: 'num' + (c[1] === 'bounced' && r.bounced ? ' bad' : '') }, val(r, c[1])); }));
             }))))));
         SB.mount(body, h('div', null, trackWarn(), strip,
-          h('div', { class: 'card pad-t' }, h('div', { class: 'actions' }, h('h3', { text: 'Sequence overview' }), ui.info(SB.S.steps.segTip + ' Hover to see every step.')), h('div', { class: 'section-title' }), ui.stepBar(camp.steps.map(function (s) { return { step: s.step_no, sent: s.sent, capacity: s.capacity }; }))),
+          h('div', { class: 'card pad-t' }, h('div', { class: 'actions' }, h('h3', { text: 'Sequence overview' }), ui.info(SB.S.steps.segTip + ' Hover to see every step.')), h('div', { class: 'section-title' }), ui.stepBar(camp.steps.map(function (s) { return { step: s.step_no, sent: s.sent, capacity: s.capacity }; }), { compact: true })),
           breakdown,
           t.replied ? h('div', { class: 'card pad-t' }, h('h3', null, 'Reply sentiment'), h('div', { class: 'section-title' }), ui.sentimentBar(t.sentiment)) : null,
           a.batches.length ? h('div', null, h('div', { class: 'section-title' }, h('div', { class: 'actions' }, h('h3', { text: 'Batches' }), ui.info('Large lists are split into smaller batches that send in parallel, so contacts at the same company are not emailed at the same moment.'))),
@@ -251,6 +260,43 @@
         ui.confirm({ title: 'Remove ' + idsNow.length + ' ' + (idsNow.length === 1 ? 'person' : 'people') + '?', message: T.removeNote, confirmLabel: 'Remove', danger: true, onConfirm: run });
       } else run();
     }
+    // Move or add the selected people to a campaign in ANY project (not only this one).
+    function moveModal() {
+      var idsNow = selIds(); if (!idsNow.length) return;
+      var err = h('div', { class: 'form-error hidden', role: 'alert' });
+      var projSel = h('select', { class: 'input', id: 'mv-proj', 'aria-label': 'Project' }, h('option', { value: '' }, 'Loading...'));
+      var campSel = h('select', { class: 'input', id: 'mv-camp', 'aria-label': 'Campaign' }, h('option', { value: '' }, 'Choose a project first'));
+      var modeMove = h('input', { type: 'radio', name: 'mv-mode', value: 'move', id: 'mv-move' }), modeAdd = h('input', { type: 'radio', name: 'mv-mode', value: 'add', id: 'mv-add' });
+      modeMove.checked = true;
+      function fillCamps(list) {
+        var ok = list.filter(function (c) { return c.id !== id && c.status !== 'completed' && c.status !== 'preparing'; });
+        while (campSel.firstChild) campSel.removeChild(campSel.firstChild);
+        (ok.length ? [h('option', { value: '' }, 'Choose a campaign')].concat(ok.map(function (c) { return h('option', { value: c.id }, c.name + ' (' + c.status + ')'); })) : [h('option', { value: '' }, 'No campaign available here')]).forEach(function (o) { campSel.appendChild(o); });
+      }
+      SB.api.get('/api/projects').then(function (r) {
+        while (projSel.firstChild) projSel.removeChild(projSel.firstChild);
+        projSel.appendChild(h('option', { value: '' }, 'Choose a project'));
+        r.items.forEach(function (p) { projSel.appendChild(h('option', { value: p.id }, p.name)); });
+      }, function (e) { err.textContent = SB.api.friendly(e); err.classList.remove('hidden'); });
+      projSel.addEventListener('change', function () {
+        if (!projSel.value) return;
+        SB.api.get('/api/projects/' + projSel.value).then(function (r) { fillCamps(r.project.campaigns || []); }, function (e) { err.textContent = SB.api.friendly(e); err.classList.remove('hidden'); });
+      });
+      var body = h('div', null, err, h('p', { class: 'muted', text: T.moveIntro }),
+        h('div', { class: 'field' }, h('label', { for: 'mv-proj' }, 'Project'), projSel),
+        h('div', { class: 'field' }, h('label', { for: 'mv-camp' }, 'Campaign'), campSel),
+        h('div', { class: 'field mv-modes' },
+          h('label', { class: 'mv-mode', tip: T.moveTip }, modeMove, h('span', { text: 'Move: take them out of this campaign' })),
+          h('label', { class: 'mv-mode', tip: T.addCopyTip }, modeAdd, h('span', { text: 'Add: keep them here and add them there too' }))));
+      ui.modal({ title: 'Move ' + idsNow.length + ' ' + (idsNow.length === 1 ? 'person' : 'people'), body: body, actions: [{ label: 'Cancel' }, { label: 'Continue', kind: 'primary', onClick: function (close) {
+        err.classList.add('hidden');
+        if (!campSel.value) { err.textContent = 'Choose the campaign they should go to.'; err.classList.remove('hidden'); throw new Error('no target'); }
+        return SB.api.post('/api/campaigns/' + id + '/leads/move', { ids: idsNow, target_campaign_id: Number(campSel.value), mode: modeAdd.checked ? 'add' : 'move' }).then(function (r) {
+          close(); ui.toast(fmt.num(r.done.length) + (r.mode === 'add' ? ' added to ' : ' moved to ') + r.target.name + (r.skipped.length ? '. ' + r.skipped.length + ' skipped: ' + r.skipped[0].message : ''), r.done.length === 0);
+          pst.sel = {}; return load(true);
+        }, function (e) { err.textContent = SB.api.friendly(e); err.classList.remove('hidden'); throw e; });
+      } }] });
+    }
     function paintPeople() {
       var table = h('div', null, h('div', { class: 'skeleton' })), barBox = h('div');
       var chips = SB.lists.chips([['all', 'All'], ['active', 'In sequence'], ['paused', 'Paused'], ['replied', 'Replied'], ['unsubscribed', 'Opted out'], ['bounced', 'Bounced'], ['error', 'Problem'], ['completed', 'Finished'], ['pending', 'Waiting']].map(function (c) {
@@ -263,6 +309,7 @@
           { label: 'Pause', icon: 'pause', tip: 'Hold these people back. They get nothing more until you resume them.', onClick: function () { bulk('pause', 'paused'); } },
           { label: 'Resume', icon: 'play', tip: 'Let paused people continue where they stopped.', onClick: function () { bulk('resume', 'resumed'); } },
           { label: 'Re-queue', icon: 'undo', tip: T.requeueTip, onClick: function () { bulk('requeue', 'put back in the queue'); } },
+          { label: 'Move to...', icon: 'chevron', tip: T.moveTip, onClick: moveModal },
           { label: 'Remove', icon: 'trash', kind: 'danger', tip: T.removeTip, onClick: function () { bulk('remove', 'removed'); } }], function () { pst.sel = {}; paintPeople(); })));
       }
       paintBar();

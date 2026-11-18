@@ -312,3 +312,22 @@ Frontend
 - `public/js/screens/studio.js`: Overview (stat strip, sequence bar, Metrics breakdown), People (checkboxes, bulk bar, drawer with history and inline editing), Sequence "Add follow-up", editable Settings.
 - `public/js/screens/reports.js`: Reporting with Campaigns / Team members / Email accounts / Email domains tabs, six metric cards, Day/Week/Month line chart, Top list.
 - Tests: `test/live.js`.
+
+
+## v1.7.0 - refinements (UI/UX and logic)
+
+| Item | Where | What |
+|---|---|---|
+| All-time replies | `src/services/campaignLive.js` `homeOverview`, `public/js/screens/home.js` | `/api/overview` now returns `replies` (people who ever wrote back) and `replies_unread`; `replies_7d` is kept as an alias for old clients. |
+| Home layout | `public/js/screens/home.js`, `public/css/app.css` (`.overview`) | Four small metric boxes (2x2) on the left, large Campaign health card on the right. Backend alert logic unchanged. |
+| Project card stats | `home.js` `stat()` | Label first, number below, note under it; singular/plural fixed ("1 person"). |
+| Tooltips never clipped | `public/js/tooltip.js` (new), `app.css` `.sb-tip` | One fixed-position bubble driven by `[data-tip]` (hover and keyboard focus). z-index 1000, flips below when there is no room above, `textContent` only. Replaces the CSS `::after` tooltips. |
+| Remove unsent follow-up | `campaignLive.js` `removeStep`, `DELETE /api/campaigns/:id/steps/:no`, Studio "Remove" button | Refused for the first email, for a step (or later step) that was already sent, and for finished campaigns. Later steps move up (delete + reinsert is not needed: renumbering runs in ascending order). People waiting for it continue with the next step, or complete if it was the last. |
+| Resume / re-queue schedule | `campaignLive.js` `naturalDue` | `next_send_at = max(now, last_sent_at + delay of the step still to send)`. Missed step: sent now. Everything on time: the normal gap is respected, the sequence never jumps ahead. Nothing sent yet: now. |
+| No raw "x/y" text | `studio.js`, `project.js` | Progress is the bar plus its hover popover. |
+| Move / add to another project | `campaignLive.js` `moveLeads`, `POST /api/campaigns/:id/leads/move`, People tab "Move to..." | `mode: move` closes them here (history kept) and starts them in the target; `mode: add` keeps them here too. Target part with the fewest people is used; replied, bounced, suppressed and already-present people are skipped and reported. |
+| Duplicate prompt | `campaigns.js` `duplicates`, `POST /api/campaigns/duplicates`, `wizard.js` `paintDup` | Audience step lists who already sits in another campaign. [Remove them] sends `exclude_duplicates`, [Continue anyway] sends `skip_in_active: false`. The choice is saved in the draft (`dup`). The wizard cannot continue until one is chosen. |
+| Scroll jump | `public/js/dom.js` `mount` | While the page is scrolled, a replaced container keeps its old height for 1.5 s and the scroll position is restored. Background refreshes no longer yank the page. |
+| Wizard Sending tab | `app.css` (v1.7 block) | One card per section, evenly padded rows with dividers, no nested boxes. |
+
+No migration in v1.7.0.

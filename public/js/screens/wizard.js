@@ -13,7 +13,7 @@
   var STATUSES = ['valid', 'unverified', 'risky', 'catch_all'];
 
   function blankState() {
-    return { step: 0, name: '', steps: [{ subject: '', body_html: '', delay_days: null }], sender_ids: [], folder_ids: [], exclude_role: false,
+    return { step: 0, name: '', steps: [{ subject: '', body_html: '', delay_days: null }], sender_ids: [], folder_ids: [], exclude_role: false, dup: null,
       lead_statuses: STATUSES.slice(), split: { enabled: false, batch_size: 26, seed: null },
       settings: { window_start_hour: 9, window_end_hour: 17, utc_offset_min: -new Date().getTimezoneOffset(), weekdays_only: true, stop_on_reply: true, track_opens: false } };
   }
@@ -21,7 +21,7 @@
     var s = base; d = d || {};
     s.step = d.step || 0; s.name = d.name || '';
     if (d.steps && d.steps.length) s.steps = d.steps.map(function (x, i) { return { subject: x.subject || '', body_html: x.body_html || '', delay_days: i === 0 ? null : x.delay_days }; });
-    s.sender_ids = d.sender_ids || []; s.folder_ids = d.folder_ids && d.folder_ids.length ? d.folder_ids.slice() : (d.folder_id ? [d.folder_id] : []); s.exclude_role = !!d.exclude_role;
+    s.sender_ids = d.sender_ids || []; s.folder_ids = d.folder_ids && d.folder_ids.length ? d.folder_ids.slice() : (d.folder_id ? [d.folder_id] : []); s.exclude_role = !!d.exclude_role; s.dup = d.dup === 'remove' || d.dup === 'keep' ? d.dup : null;
     if (d.lead_statuses && d.lead_statuses.length) s.lead_statuses = d.lead_statuses;
     if (d.split) { s.split.enabled = !!d.split.enabled; if (d.split.batch_size) s.split.batch_size = d.split.batch_size; s.split.seed = d.split.seed; }
     if (d.settings) Object.keys(s.settings).forEach(function (k) { if (d.settings[k] !== null && d.settings[k] !== undefined) s.settings[k] = d.settings[k]; });
@@ -35,6 +35,7 @@
     var st = blankState(), draft = null /* { id, rev } */, root = h('div'), body = h('div'), stepsEl = h('div', { class: 'wz-steps' });
     var defaultDelay = 3, dead = false, dirty = false, saving = false, saveTimer = null, conflict = false, lastSaved = null, saveEl = h('span', { class: 'wz-save', role: 'status' });
     var editId = params.editId || null, userEmail = params.userEmail || '', folders = [], senders = [], projects = [], projectId = params.projectId || null, activeIdx = 0, editors = [], launching = false;
+    var dupCount = 0, dupBox = null;
     var previewTimer = null, previewBox = null, coverageBox = null, splitBox = null, countBox = null, previewSeq = 0, audSeq = 0;
 
     // ---------- autosave ----------
@@ -42,7 +43,7 @@
       var t = conflict ? W.conflict : saving ? W.saving : dirty ? W.unsaved : lastSaved ? W.saved + ' ' + new Date(lastSaved).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
       saveEl.textContent = t; saveEl.className = 'wz-save' + (conflict ? ' bad' : dirty ? ' dirty' : '');
     }
-    function payload() { return { name: st.name, step: st.step, steps: st.steps, sender_ids: st.sender_ids, folder_ids: st.folder_ids, exclude_role: st.exclude_role, lead_statuses: st.lead_statuses, split: st.split, settings: st.settings }; }
+    function payload() { return { name: st.name, step: st.step, steps: st.steps, sender_ids: st.sender_ids, folder_ids: st.folder_ids, exclude_role: st.exclude_role, dup: st.dup, lead_statuses: st.lead_statuses, split: st.split, settings: st.settings }; }
     function saveNow() {
       clearTimeout(saveTimer);
       if (editId || saving || conflict || !dirty || !hasContent(st)) return Promise.resolve();
@@ -235,6 +236,8 @@
     // ---------- step 2: audience ----------
     function leadSource() {
       var o = { folder_ids: st.folder_ids, exclude_role: st.exclude_role, lead_statuses: st.lead_statuses };
+      if (st.dup === 'remove') o.exclude_duplicates = true;          // [Remove]: leave out everybody already in another campaign
+      else if (st.dup === 'keep') o.skip_in_active = false;           // [Continue anyway]: include them
       return o;
     }
     function refreshAudience() {
@@ -242,8 +245,10 @@
       if (!st.folder_ids.length || !st.lead_statuses.length) { SB.mount(countBox, h('p', { class: 'muted', text: st.folder_ids.length ? 'Choose at least one address type.' : W.pickFolder })); SB.clear(coverageBox); return; }
       SB.mount(countBox, h('div', { class: 'skeleton' }));
       var src = leadSource();
-      Promise.all([SB.api.post('/api/campaigns/split-preview', Object.assign({ batch_size: 1000000 }, src)), SB.api.post('/api/campaigns/variable-coverage', Object.assign({ steps: st.steps }, src))]).then(function (r) {
+      Promise.all([SB.api.post('/api/campaigns/split-preview', Object.assign({ batch_size: 1000000 }, src)), SB.api.post('/api/campaigns/variable-coverage', Object.assign({ steps: st.steps }, src)),
+        SB.api.post('/api/campaigns/duplicates', { folder_ids: st.folder_ids, exclude_role: st.exclude_role, lead_statuses: st.lead_statuses })]).then(function (r) {
         if (mine !== audSeq || dead) return;
+        paintDup(r[2]);
         SB.mount(countBox, h('div', { class: 'wz-count' }, h('b', { text: fmt.num(r[0].total) }), ' people will be emailed ', ui.info(W.eligibleTip)));
         var cov = r[1], vars = cov.variables.filter(function (v) { return v.missing > 0; });
         var covNode = (vars.length
@@ -257,6 +262,25 @@
         SB.mount(countBox, h('div', { class: e.status === 400 ? 'callout warn' : 'form-error', text: e.status === 400 ? e.message : SB.api.friendly(e) })); SB.clear(coverageBox);
       });
     }
+    // People who already sit in another campaign: ask before anything is sent twice. [Remove] leaves them out, [Continue anyway] keeps them.
+    function paintDup(d) {
+      if (!dupBox) return;
+      dupCount = d.duplicates;
+      if (!d.duplicates) { st.dup = null; SB.clear(dupBox); return; }
+      function pick(v) { st.dup = v; touch(); refreshAudience(); }
+      var names = d.samples.map(function (x) { return x.email + ' (' + x.campaigns.join(', ') + ')'; });
+      var what = fmt.num(d.duplicates) + (d.duplicates === 1 ? ' person is' : ' people are') + ' already in another campaign';
+      if (st.dup) {
+        SB.mount(dupBox, h('div', { class: 'callout' }, h('b', { text: what + '. ' }), st.dup === 'remove' ? 'They are left out of this campaign.' : 'They will be emailed by this campaign as well.', ' ',
+          h('button', { class: 'btn btn-sm btn-ghost', type: 'button', tip: 'Choose again.', on: { click: function () { pick(null); } } }, 'Change')));
+        return;
+      }
+      SB.mount(dupBox, h('div', { class: 'callout warn', role: 'alert' }, h('b', { text: what + '.' }),
+        h('p', { class: 'small', text: 'For example: ' + names.slice(0, 3).join('; ') + (d.duplicates > 3 ? ' and ' + fmt.num(d.duplicates - 3) + ' more' : '') + '. Emailing the same person from two campaigns can look like spam.' }),
+        h('div', { class: 'actions' },
+          h('button', { class: 'btn btn-primary btn-sm', type: 'button', id: 'wz-dup-remove', tip: 'Leave these people out. Only people who are in no other campaign receive this one.', on: { click: function () { pick('remove'); } } }, 'Remove them'),
+          h('button', { class: 'btn btn-sm', type: 'button', id: 'wz-dup-keep', tip: 'Keep them in this campaign too. They may get emails from both.', on: { click: function () { pick('keep'); } } }, 'Continue anyway'))));
+    }
     function stepAudience() {
       if (editId) return h('div', { class: 'wz-narrow' }, h('div', { class: 'card' }, h('h2', { text: 'Audience' }), h('p', { class: 'muted', text: 'The people in a campaign are fixed once it is created, so the sequence you send stays consistent. To email different people, create a new campaign.' })));
       var listsBox = h('div'), manualBox = h('div');
@@ -268,14 +292,14 @@
       });
       var role = h('input', { type: 'checkbox', id: 'wz-role' }); role.checked = st.exclude_role;
       role.addEventListener('change', function () { st.exclude_role = role.checked; touch(); refreshAudience(); });
-      countBox = h('div'); coverageBox = h('div');
+      countBox = h('div'); coverageBox = h('div'); dupBox = h('div');
       var node = h('div', { class: 'card wz-narrow' }, h('h2', { text: 'Who should receive this?' }),
         folders.length ? null : h('div', { class: 'callout warn' }, 'You have no lead folders yet. ', h('a', { href: '#/leads' }, 'Add leads first'), ' - your draft is saved and waiting.'),
         h('div', { class: 'field' }, h('label', null, 'Lead lists ', ui.info(W.listsTip)), listsBox, h('div', { class: 'hint', text: W.folderHint })),
         manualBox,
         h('div', { class: 'field' }, h('label', { text: 'Include addresses that are' }), checks),
         h('div', { class: 'field check' }, role, h('label', { for: 'wz-role' }, 'Skip role addresses (info@, sales@, support@…)'), h('div', { class: 'hint', text: W.roleHint })),
-        h('div', { class: 'wz-result' }, countBox, coverageBox),
+        h('div', { class: 'wz-result' }, countBox, dupBox, coverageBox),
         h('p', { class: 'hint', text: W.audienceAuto }));
       paintLists(listsBox); paintManual(manualBox, listsBox);
       refreshAudience();
@@ -291,7 +315,7 @@
         var cb = h('input', { type: 'checkbox', id: 'wz-list-' + f.id, 'aria-label': f.name }); cb.checked = st.folder_ids.indexOf(f.id) !== -1;
         cb.addEventListener('change', function () {
           st.folder_ids = folders.map(function (x) { return x.id; }).filter(function (id) { return id === f.id ? cb.checked : st.folder_ids.indexOf(id) !== -1; });
-          st.split.seed = null; touch(); paintLists(box); refreshAudience();
+          st.split.seed = null; st.dup = null; touch(); paintLists(box); refreshAudience();
         });
         return h('label', { class: 'list-pick' + (cb.checked ? ' on' : ''), for: 'wz-list-' + f.id }, cb, h('span', { class: 'lp-name', text: f.name }),
           h('span', { class: 'lp-n small muted', tip: fmt.num(f.valid_count || 0) + ' of ' + fmt.num(f.lead_count) + ' are checked and valid.', text: fmt.num(f.lead_count) + ' people' }));
@@ -436,6 +460,7 @@
       });
       if (!st.folder_ids.length) p.push({ s: 1, t: 'Choose at least one lead list.' });
       if (!st.lead_statuses.length) p.push({ s: 1, t: 'Choose at least one address type.' });
+      if (dupCount && !st.dup) p.push({ s: 1, t: 'Some people are already in another campaign. Choose Remove or Continue anyway.' });
       if (!st.sender_ids.length) p.push({ s: 2, t: 'Choose at least one sender account.' });
       if (st.settings.window_end_hour <= st.settings.window_start_hour) p.push({ s: 2, t: 'The sending window must end after it starts.' });
       if (st.split.enabled && !st.split.batch_size) p.push({ s: 2, t: 'Enter a batch size.' });
@@ -470,6 +495,7 @@
       if (launching || problems().length) return; launching = true;
       var body = { name: st.name.trim(), steps: st.steps.map(function (s, i) { return { subject: s.subject, body_html: s.body_html, delay_days: i === 0 ? undefined : s.delay_days }; }), sender_ids: st.sender_ids,
         folder_ids: st.folder_ids, exclude_role: st.exclude_role, lead_statuses: st.lead_statuses, settings: st.settings };
+      if (st.dup === 'remove') body.exclude_duplicates = true; else if (st.dup === 'keep') body.skip_in_active = false;
       body.window_start_hour = st.settings.window_start_hour; body.window_end_hour = st.settings.window_end_hour; body.utc_offset_min = st.settings.utc_offset_min;
       body.weekdays_only = st.settings.weekdays_only; body.stop_on_reply = st.settings.stop_on_reply; body.track_opens = st.settings.track_opens;
       if (st.split.enabled) body.split = { batch_size: st.split.batch_size, seed: st.split.seed === null ? undefined : st.split.seed };

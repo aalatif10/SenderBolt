@@ -30,6 +30,7 @@ function normalise(d) {
   out.folder_ids = ids(d.folder_ids, 50);
   if (!out.folder_ids.length && out.folder_id) out.folder_ids = [out.folder_id];
   out.exclude_role = !!d.exclude_role;
+  out.dup = d.dup === 'remove' || d.dup === 'keep' ? d.dup : null;     // answer to "some of these people are already in another campaign"
   out.lead_statuses = (Array.isArray(d.lead_statuses) ? d.lead_statuses : []).filter(function (s, i, a) { return LEAD_STATUSES.indexOf(s) !== -1 && a.indexOf(s) === i; });
   var sp = d.split && typeof d.split === 'object' ? d.split : {};
   out.split = { enabled: !!sp.enabled, batch_size: numOrNull(sp.batch_size, 1, 1000000), seed: numOrNull(sp.seed, 0, 4294967295) };

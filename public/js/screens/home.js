@@ -26,7 +26,7 @@
 
   function rate(n) { return n === null || n === undefined ? '-' : fmt.num(n) + '%'; }
   function stat(label, value, tipText, sub) {
-    return h('div', { class: 'hx-stat', tip: tipText }, h('b', { text: value }), h('span', { text: label }), sub ? h('i', { text: sub }) : null);
+    return h('div', { class: 'hx-stat', tip: tipText }, h('span', { text: label }), h('b', { text: value }), sub ? h('i', { text: sub }) : null);
   }
 
   // One Hunter-style project row. The chevron expands it to show its campaigns underneath, loaded on demand.
@@ -39,13 +39,13 @@
       tip: open ? 'Hide the campaigns in this project.' : 'Show the campaigns in this project with their results.', on: { click: function () { toggle(p.id); } } }, SB.icon('chevron'));
     var head = h('div', { class: 'hx-head' }, chev,
       h('div', { class: 'hx-title' }, h('a', { class: 'hx-name', href: '#/project/' + p.id, text: p.name }),
-        h('div', { class: 'small faint', text: p.campaign_count ? fmt.num(p.campaign_count) + ' campaign' + (p.campaign_count === 1 ? '' : 's') + ' \u00b7 ' + fmt.num(t.leads) + ' people' : 'No campaigns yet' })),
+        h('div', { class: 'small faint', text: p.campaign_count ? fmt.num(p.campaign_count) + ' campaign' + (p.campaign_count === 1 ? '' : 's') + ' \u00b7 ' + fmt.num(t.leads) + (t.leads === 1 ? ' person' : ' people') : 'No campaigns yet' })),
       ui.statusPill(p.status),
       p.campaign_count ? h('div', { class: 'hx-stats' },
         stat('Sent', fmt.num(t.sent), SB.S.metric.sent),
         stat('Opened', t.opens_tracked ? rate(t.open_rate) : 'Off', t.opens_tracked ? 'Share of delivered emails that were opened at least once. Open counts are estimates.' : 'Open tracking is off for these campaigns.'),
-        stat('Replied', rate(t.reply_rate), SB.S.metric.replied, fmt.num(t.replied) + ' people'),
-        stat('Bounced', rate(t.bounce_rate), SB.S.metric.bounced, fmt.num(t.bounced) + ' people'),
+        stat('Replied', rate(t.reply_rate), SB.S.metric.replied, fmt.num(t.replied) + (t.replied === 1 ? ' person' : ' people')),
+        stat('Bounced', rate(t.bounce_rate), SB.S.metric.bounced, fmt.num(t.bounced) + (t.bounced === 1 ? ' person' : ' people')),
         stat('Next email', fmt.until(t.next_send_at), SB.S.metric.next)) : h('div', { class: 'hx-stats' }),
       h('div', { class: 'hx-prog' }, p.campaign_count ? ui.progress(t.progress_pct) : null));
     var body = null;
@@ -209,10 +209,10 @@
         return h('a', { class: 'card stat-card', href: href, tip: tipText }, h('div', { class: 'stat-h' }, SB.icon(icon), h('span', { text: label })),
           h('div', { class: 'stat-v', text: fmt.num(value) }), h('div', { class: 'stat-n small muted', text: note }));
       }
-      var tiles = h('div', null,
+      var tiles = h('div', { class: 'overview' },
         h('div', { class: 'stat-row' },
           stat('send', 'Active', ov.active_campaigns, ov.active_campaigns === 1 ? 'campaign running' : 'campaigns running', '#/', 'Campaigns that are sending right now.'),
-          stat('inbox', 'Replies', ov.replies_7d, 'people, last 7 days' + (unread ? ' · ' + fmt.num(unread) + ' unread' : ''), '#/inbox', 'People who wrote back to one of your emails in the last 7 days. Open the inbox to answer them.'),
+          stat('inbox', 'Replies', ov.replies, (ov.replies === 1 ? 'person' : 'people') + ', all time' + (ov.replies_unread ? ' · ' + fmt.num(ov.replies_unread) + ' unread' : ' · all read'), '#/inbox', 'Everyone who ever wrote back to one of your emails, with how many replies you have not opened yet.'),
           stat('mail', 'Sent today', sent, cap ? 'of ' + fmt.num(cap) + ' daily capacity' : 'no active sender', '#/senders', 'Emails sent since midnight, compared with what your active sending accounts may send per day.'),
           stat('clock', 'Scheduled', ov.scheduled, 'upcoming emails', '#/queue', 'Every email still to go out in running campaigns: first emails and follow-ups, for people who have not replied or opted out.')),
         health);

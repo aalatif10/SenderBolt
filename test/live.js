@@ -184,9 +184,90 @@ h.test('metrics breakdown: per step rows + people-once sequence row; home overvi
           assert.strictEqual(u1.scheduled, 2); assert.strictEqual(u2.scheduled, 3); assert.strictEqual(f.scheduled, 0);
           return c.camps.homeOverview(c.a, { tz: 0 });
         }).then(function (o) {
-          assert.strictEqual(o.active_campaigns, 1); assert.strictEqual(o.replies_7d, 0, 'the only reply is 20 days old');
+          assert.strictEqual(o.active_campaigns, 1); assert.strictEqual(o.replies, 1, 'replies are all-time, so the 20-day-old reply counts'); assert.strictEqual(o.replies_unread, 1);
           assert.strictEqual(o.sent_today, 0, 'sent weeks ago, not today');
           assert.strictEqual(o.scheduled, 1 + 2 + 2);       // #1 has 1 email left, #2 and #3 have 2; #0 replied, #4 bounced
+        });
+    });
+  });
+});
+
+h.group('v1.7 live rules');
+h.test('resume / re-queue: missed step goes now, future step keeps its schedule, first email goes now', function () {
+  return setup().then(function (c) {
+    return start(c).then(function () { return cls(c); }).then(function (rows) {
+      var now = c.now;
+      return c.db.run("UPDATE campaign_leads SET status = 'paused', current_step = 1, last_sent_at = ?, next_send_at = ? WHERE id = ?", [now - DAY, now + 2 * DAY, rows[0].id])
+        .then(function () { return c.db.run("UPDATE campaign_leads SET status = 'paused', current_step = 1, last_sent_at = ?, next_send_at = ? WHERE id = ?", [now - 10 * DAY, now - 7 * DAY, rows[1].id]); })
+        .then(function () { return c.db.run("UPDATE campaign_leads SET status = 'paused', current_step = 0 WHERE id = ?", [rows[2].id]); })
+        .then(function () { return c.camps.bulkLeads(c.a, c.camp.id, { action: 'resume', ids: [rows[0].id, rows[1].id, rows[2].id] }); })
+        .then(function () { return c.db.all('SELECT id, next_send_at FROM campaign_leads WHERE id IN (?,?,?) ORDER BY id', [rows[0].id, rows[1].id, rows[2].id]); })
+        .then(function (r) {
+          assert.strictEqual(r[0].next_send_at, now - DAY + 3 * DAY, 'step delay after the last email is respected, no jump ahead');
+          assert.strictEqual(r[1].next_send_at, now, 'missed step is caught up immediately');
+          assert.strictEqual(r[2].next_send_at, now, 'nothing sent yet: first email goes now');
+        });
+    });
+  });
+});
+h.test('remove an unsent follow-up: renumbers, moves people up, refuses first / sent / unknown steps', function () {
+  return setup().then(function (c) {
+    return start(c).then(function () { return cls(c); }).then(function (rows) {
+      return Promise.all(rows.map(function (r) { return sendMsg(c, r.id, 0, c.now - DAY); })).then(function () {
+        return c.db.run("UPDATE campaign_leads SET current_step = 1, last_sent_at = ?, next_send_at = ? WHERE campaign_id = ?", [c.now - DAY, c.now + 2 * DAY, c.camp.id]);
+      }).then(function () { return c.camps.removeStep(c.a, c.camp.id, 0).then(function () { assert.fail('first email must stay'); }, function (e) { assert.strictEqual(e.status, 400); }); })
+        .then(function () { return c.camps.removeStep(c.a, c.camp.id, 5).then(function () { assert.fail('unknown step'); }, function (e) { assert.strictEqual(e.status, 404); }); })
+        .then(function () { return c.camps.removeStep(c.a, c.camp.id, 1); })
+        .then(function (camp) {
+          assert.strictEqual(camp.steps.length, 2); assert.strictEqual(camp.steps[1].subject, 'Last'); assert.strictEqual(camp.steps[1].step_no, 1);
+          return c.db.all('SELECT current_step, next_send_at FROM campaign_leads WHERE campaign_id = ?', [c.camp.id]);
+        }).then(function (r) {
+          r.forEach(function (x) { assert.strictEqual(x.current_step, 1); assert.strictEqual(x.next_send_at, c.now - DAY + 5 * DAY, 'now waits the gap of the email that took its place'); });
+          return sendMsg(c, rows[0].id, 1, c.now);
+        }).then(function () { return c.camps.removeStep(c.a, c.camp.id, 1).then(function () { assert.fail('sent step'); }, function (e) { assert.strictEqual(e.status, 409); }); });
+    });
+  });
+});
+h.test('remove the last follow-up: people waiting for it are completed', function () {
+  return setup().then(function (c) {
+    return start(c).then(function () { return cls(c); }).then(function (rows) {
+      return c.db.run("UPDATE campaign_leads SET current_step = 2, last_sent_at = ? WHERE campaign_id = ?", [c.now - DAY, c.camp.id])
+        .then(function () { return c.camps.removeStep(c.a, c.camp.id, 2); })
+        .then(function () { return c.db.all("SELECT DISTINCT status FROM campaign_leads WHERE campaign_id = ?", [c.camp.id]); })
+        .then(function (r) { assert.deepStrictEqual(r.map(function (x) { return x.status; }), ['completed']); });
+    });
+  });
+});
+h.test('move / add people to a campaign in another project; duplicate detection', function () {
+  return setup().then(function (c) {
+    return start(c).then(function () { return cls(c); }).then(function (rows) {
+      return c.leads.createFolder(c.a, 'F2').then(function (f2) {
+        return c.leads.importLeads(c.a, f2.id, 'paste', 'z@co9.com').then(function () {
+          return c.camps.create(c.a, { name: 'Other', steps: JSON.parse(JSON.stringify(STEPS)), sender_ids: [c.sid], folder_id: f2.id });
+        });
+      }).then(function (other) {
+        c.other = other;
+        return c.camps.moveLeads(c.a, c.camp.id, { mode: 'move', ids: [rows[0].id, rows[1].id], target_campaign_id: other.id });
+      }).then(function (res) {
+        assert.strictEqual(res.done.length, 2);
+        return Promise.all([c.db.get('SELECT COUNT(*) AS n FROM campaign_leads WHERE campaign_id = ?', [c.camp.id]), c.db.get('SELECT COUNT(*) AS n FROM campaign_leads WHERE campaign_id = ?', [c.other.id])]);
+      }).then(function (n) {
+        assert.strictEqual(n[0].n, 3, 'moved people left the source'); assert.strictEqual(n[1].n, 3, 'and joined the target');
+        return c.camps.moveLeads(c.a, c.camp.id, { mode: 'add', ids: [rows[2].id], target_campaign_id: c.other.id });
+      }).then(function (res) {
+        assert.strictEqual(res.done.length, 1);
+        return c.db.get('SELECT COUNT(*) AS n FROM campaign_leads WHERE campaign_id = ?', [c.camp.id]);
+      }).then(function (n) {
+        assert.strictEqual(n.n, 3, 'add keeps them in the source');
+        return c.camps.moveLeads(c.a, c.camp.id, { mode: 'add', ids: [rows[2].id], target_campaign_id: c.other.id });
+      }).then(function (res) {
+        assert.strictEqual(res.done.length, 0); assert.strictEqual(res.skipped.length, 1, 'already in the target');
+        return c.camps.moveLeads(c.a, c.camp.id, { mode: 'move', ids: [rows[2].id], target_campaign_id: c.camp.id }).then(function () { assert.fail('same campaign'); }, function (e) { assert.strictEqual(e.status, 400); });
+      }).then(function () { return c.db.get('SELECT id FROM folders WHERE user_id = ? AND name = ?', [c.a, 'F']); })
+        .then(function (f) { return c.camps.duplicates(c.a, { folder_id: f.id }); })
+        .then(function (d) {
+          assert.strictEqual(d.total, 5); assert.strictEqual(d.duplicates, 5, 'all five already sit in a campaign');
+          assert.ok(d.samples.length > 0 && d.samples[0].campaigns.length > 0);
         });
     });
   });

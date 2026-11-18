@@ -15,6 +15,7 @@ module.exports = function register(router, d) {
     return S.create(ctx.user.id, ctx.body, ctx.ip).then(function (c) { return reply(201, { campaign: c }); });
   });
   router.post('/api/campaigns/split-preview', { limit: heavy }, function (ctx) { return S.previewSplit(ctx.user.id, ctx.body); });
+  router.post('/api/campaigns/duplicates', { limit: heavy }, function (ctx) { return S.duplicates(ctx.user.id, ctx.body); });
   router.post('/api/campaigns/variable-coverage', { maxBody: 200000, limit: heavy }, function (ctx) { return S.variableCoverage(ctx.user.id, ctx.body); });
   router.post('/api/campaigns/test-send', { maxBody: 200000, limit: testLimit }, function (ctx) { return d.testSend.send(ctx.user, ctx.body, ctx.ip); });
   router.post('/api/templates/preview', { maxBody: 200000 }, function (ctx) { return S.previewTemplate(ctx.user.id, ctx.body); });
@@ -32,9 +33,13 @@ module.exports = function register(router, d) {
   router.post('/api/campaigns/:id/steps', { maxBody: BODY, limit: heavy }, function (ctx) {
     return S.addSteps(ctx.user.id, parseId(ctx.params.id), ctx.body, ctx.ip).then(function (c) { return { campaign: c }; });
   });
+  router.delete('/api/campaigns/:id/steps/:no', function (ctx) {
+    return S.removeStep(ctx.user.id, parseId(ctx.params.id), parseInt(ctx.params.no, 10), ctx.ip).then(function (c) { return { campaign: c }; });
+  });
   router.get('/api/campaigns/:id/leads/:lid/history', function (ctx) { return S.leadHistory(ctx.user.id, parseId(ctx.params.id), parseId(ctx.params.lid)); });
   router.patch('/api/campaigns/:id/leads/:lid', function (ctx) { return S.updateLead(ctx.user.id, parseId(ctx.params.id), parseId(ctx.params.lid), ctx.body, ctx.ip); });
   router.post('/api/campaigns/:id/leads/bulk', { limit: heavy }, function (ctx) { return S.bulkLeads(ctx.user.id, parseId(ctx.params.id), ctx.body, ctx.ip); });
+  router.post('/api/campaigns/:id/leads/move', { limit: heavy }, function (ctx) { return S.moveLeads(ctx.user.id, parseId(ctx.params.id), ctx.body, ctx.ip); });
   router.get('/api/campaigns/:id/metrics', function (ctx) { return S.metrics(ctx.user.id, parseId(ctx.params.id)); });
   router.get('/api/overview', function (ctx) { return S.homeOverview(ctx.user.id, ctx.query || {}); });
   router.delete('/api/campaigns/:id', function (ctx) { return S.remove(ctx.user.id, parseId(ctx.params.id), ctx.ip); });

@@ -64,6 +64,50 @@ function install(C, h) {
     }).then(function () { return self.get(userId, id); });
   };
 
+  // ---------- remove an unsent follow-up ----------
+  // Only a follow-up nobody has been sent (and no later one has been sent either) can go: later emails move up one place.
+  C.removeStep = function (userId, id, stepNo, ip) {
+    var self = this, fam, n = v.intIn(stepNo, 0, h.MAX_STEPS - 1), t = self.now(), count;
+    return Promise.resolve().then(function () { return family(self, userId, id); }).then(function (f) {
+      fam = f;
+      if (n === null) throw bad('step', 'Invalid step');
+      if (n === 0) throw bad('step', 'The first email cannot be removed. Edit it or delete the campaign.');
+      if (f.leaves.some(function (l) { return l.status === 'completed' || l.status === 'preparing'; })) throw new AppError('conflict', 'A finished campaign cannot be changed', 409);
+      return Promise.all([
+        self.db.all('SELECT step_no, delay_days FROM campaign_steps WHERE campaign_id = ? ORDER BY step_no', [id]),
+        require('./stepProgress').lockedSteps(self.db, userId, ids(f.leaves))
+      ]);
+    }).then(function (r) {
+      var steps = r[0], locked = r[1];
+      count = steps.length;
+      if (n >= count) throw new AppError('not_found', 'This follow-up does not exist', 404);
+      for (var k = n; k < count; k++) if (locked[k]) throw new AppError('conflict', 'This follow-up (or one after it) has already been sent to some people, so it cannot be removed. Pause those people instead.', 409, { step: n });
+      var newDelay = n + 1 < count ? steps[n + 1].delay_days : 0;
+      return self.db.transaction(function (tx) {
+        return seq(fam.all, function (c) {
+          return tx.run('DELETE FROM campaign_steps WHERE campaign_id = ? AND step_no = ?', [c.id, n]).then(function () {
+            var rest = []; for (var k = n + 1; k < count; k++) rest.push(k);
+            return seq(rest, function (k) { return tx.run('UPDATE campaign_steps SET step_no = ? WHERE campaign_id = ? AND step_no = ?', [k - 1, c.id, k]); });
+          });
+        }).then(function () {
+          return seq(fam.leaves, function (c) {
+            // Everyone who was waiting for the removed email now waits for the one that took its place (or is done if it was the last).
+            var p;
+            if (n === count - 1) {
+              p = tx.run("UPDATE campaign_leads SET status = 'completed', next_send_at = NULL WHERE campaign_id = ? AND current_step = ? AND status IN ('pending','active','paused')", [c.id, n]);
+            } else {
+              p = tx.run("UPDATE campaign_leads SET next_send_at = MAX(?, COALESCE(last_sent_at, ?) + ?) WHERE campaign_id = ? AND current_step = ? AND status IN ('active','pending') AND last_sent_at IS NOT NULL", [t, t, newDelay * 86400000, c.id, n]);
+            }
+            return p.then(function () { return tx.run('UPDATE campaign_leads SET current_step = current_step - 1 WHERE campaign_id = ? AND current_step > ?', [c.id, n]); });
+          });
+        }).then(function () { return seq(fam.leaves, function (c) { return state.completeIfDone(tx, c.id, t); }); })
+          .then(function () { return fam.kids.length ? state.syncMain(tx, id, t) : null; })
+          .then(function () { return tx.run('UPDATE campaigns SET updated_at = ? WHERE id = ?', [t, id]); })
+          .then(function () { return audit.log(tx, { userId: userId, action: 'campaign.step_remove', entity: 'campaign', entityId: id, ip: ip, meta: { step: n } }, self.now); });
+      });
+    }).then(function () { return self.get(userId, id); });
+  };
+
   // ---------- one person ----------
   function leadRow(self, userId, id, clId) {
     return family(self, userId, id).then(function (f) {
@@ -76,6 +120,15 @@ function install(C, h) {
         return { fam: f, row: row };
       });
     });
+  }
+  // When the next email of someone coming back into the queue is due. A step that was missed while they were paused goes out
+  // right away (catch-up); if everything before it was delivered, the normal gap after the last email is respected, so the
+  // sequence never jumps ahead. First email (nothing sent yet) goes now.
+  var DAY_MS = 86400000;
+  function naturalDue(row, delays, now) {
+    if (!row.current_step || !row.last_sent_at) return now;
+    var due = row.last_sent_at + (delays[row.current_step] || 0) * DAY_MS;
+    return due > now ? due : now;
   }
   // Why this person can (not) be put back in the queue, in words the UI shows.
   function requeueInfo(row, stepCount) {
@@ -154,7 +207,7 @@ function install(C, h) {
 
   // ---------- multi-select actions ----------
   C.bulkLeads = function (userId, id, input, ip) {
-    var self = this, fam, rows, stepCount, action, t = self.now();
+    var self = this, fam, rows, stepCount, action, t = self.now(), delays = {};
     return Promise.resolve().then(function () {
       input = input || {};
       action = input.action;
@@ -163,10 +216,11 @@ function install(C, h) {
       if (!list) throw bad('ids', 'Select between 1 and ' + MAX_BULK + ' people');
       return family(self, userId, id).then(function (f) {
         fam = f;
-        return self.db.get('SELECT COUNT(*) AS n FROM campaign_steps WHERE campaign_id = ?', [id]);
+        return self.db.all('SELECT step_no, delay_days FROM campaign_steps WHERE campaign_id = ? ORDER BY step_no', [id]);
       }).then(function (sc) {
-        stepCount = sc.n;
-        return self.db.all('SELECT cl.id, cl.campaign_id, cl.status, cl.current_step, cl.next_send_at, cl.sender_id, l.email, sp.reason AS suppression_reason, ' +
+        stepCount = sc.length;
+        sc.forEach(function (x) { delays[x.step_no] = x.delay_days; });
+        return self.db.all('SELECT cl.id, cl.campaign_id, cl.status, cl.current_step, cl.next_send_at, cl.last_sent_at, cl.sender_id, l.email, sp.reason AS suppression_reason, ' +
           '(SELECT COUNT(*) FROM messages m WHERE m.campaign_lead_id = cl.id AND m.direction = \'out\' AND m.status IN (\'sent\',\'sending\')) AS mails ' +
           'FROM campaign_leads cl JOIN leads l ON l.id = cl.lead_id LEFT JOIN suppression sp ON sp.user_id = ? AND sp.email = l.email ' +
           'WHERE cl.id IN (' + v.placeholders(list.length) + ') AND cl.campaign_id IN (' + v.placeholders(fam.leaves.length) + ')', [userId].concat(list, ids(fam.leaves)));
@@ -185,7 +239,7 @@ function install(C, h) {
           }
           if (action === 'resume') {
             if (r.status !== 'paused') return skip('This person is not paused');
-            return tx.run("UPDATE campaign_leads SET status = 'active', next_send_at = MAX(?, COALESCE(next_send_at, ?)) WHERE id = ? AND status = 'paused'", [t, t, r.id]).then(ok);
+            return tx.run("UPDATE campaign_leads SET status = 'active', next_send_at = ? WHERE id = ? AND status = 'paused'", [naturalDue(r, delays, t), r.id]).then(ok);
           }
           if (action === 'remove') {
             if (r.mails) return tx.run("UPDATE campaign_leads SET status = 'completed', next_send_at = NULL, status_note = 'Removed from the campaign' WHERE id = ? AND status IN ('pending','active','paused','error','replied')", [r.id]).then(ok);
@@ -196,7 +250,7 @@ function install(C, h) {
           // Our own "stop campaign" keyword rule put them on the suppression list; the owner overrides it, only for that reason.
           var p = r.status === 'unsubscribed' ? tx.run("DELETE FROM suppression WHERE user_id = ? AND email = ? AND reason = 'replied_stop'", [userId, r.email]) : Promise.resolve();
           return p.then(function () {
-            return tx.run("UPDATE campaign_leads SET status = 'active', next_send_at = ?, status_note = NULL WHERE id = ?", [t, r.id]);
+            return tx.run("UPDATE campaign_leads SET status = 'active', next_send_at = ?, status_note = NULL WHERE id = ?", [naturalDue(r, delays, t), r.id]);
           }).then(function () {
             // A finished campaign that gets somebody back starts working again.
             return tx.run("UPDATE campaigns SET status = 'active', updated_at = ? WHERE id = ? AND status = 'completed'", [t, r.campaign_id]);
@@ -213,6 +267,74 @@ function install(C, h) {
           (input.ids || []).forEach(function (x) { if (!seen[x]) res.skipped.push({ id: x, email: '', message: 'Not found in this campaign' }); });
           return res;
         });
+      });
+    });
+  };
+
+  // ---------- move / add people to another campaign (any project) ----------
+  // mode 'move': they leave this campaign (closed like "Remove") and start in the target. mode 'add': they stay here and are added there too.
+  C.moveLeads = function (userId, id, input, ip) {
+    var self = this, fam, rows, tfam, leaf, mode, t = self.now();
+    return Promise.resolve().then(function () {
+      input = input || {};
+      mode = input.mode === 'add' ? 'add' : input.mode === 'move' ? 'move' : null;
+      if (!mode) throw bad('mode', 'Choose move or add');
+      var list = v.idArray(input.ids, 1, MAX_BULK), target = v.intIn(input.target_campaign_id, 1, 9007199254740991);
+      if (!list) throw bad('ids', 'Select between 1 and ' + MAX_BULK + ' people');
+      if (target === null) throw bad('target_campaign_id', 'Choose a campaign');
+      if (target === id) throw bad('target_campaign_id', 'Choose a different campaign');
+      return Promise.all([family(self, userId, id), family(self, userId, target)]).then(function (ff) {
+        fam = ff[0]; tfam = ff[1];
+        if (tfam.leaves.every(function (l) { return l.status === 'completed' || l.status === 'preparing'; })) throw new AppError('conflict', 'That campaign is finished or still being prepared. Choose another one.', 409);
+        return self.db.all('SELECT cl.id, cl.campaign_id, cl.status, cl.lead_id, l.email, sp.reason AS suppression_reason, ' +
+          '(SELECT COUNT(*) FROM messages m WHERE m.campaign_lead_id = cl.id AND m.direction = \'out\' AND m.status IN (\'sent\',\'sending\')) AS mails ' +
+          'FROM campaign_leads cl JOIN leads l ON l.id = cl.lead_id LEFT JOIN suppression sp ON sp.user_id = ? AND sp.email = l.email ' +
+          'WHERE cl.id IN (' + v.placeholders(list.length) + ') AND cl.campaign_id IN (' + v.placeholders(fam.leaves.length) + ')', [userId].concat(list, ids(fam.leaves)));
+      });
+    }).then(function (found) {
+      rows = found;
+      // The target part with the fewest people receives them, so a split stays balanced.
+      var open = tfam.leaves.filter(function (l) { return l.status !== 'completed' && l.status !== 'preparing'; });
+      return Promise.all(open.map(function (l) {
+        return self.db.get('SELECT COUNT(*) AS n, COALESCE(MAX(position), -1) AS pos FROM campaign_leads WHERE campaign_id = ?', [l.id]).then(function (r) { return { l: l, n: r.n, pos: r.pos }; });
+      }));
+    }).then(function (counts) {
+      counts.sort(function (a, b) { return a.n - b.n || a.l.id - b.l.id; });
+      leaf = counts[0];
+      return Promise.all([
+        self.db.all('SELECT sender_id FROM campaign_senders WHERE campaign_id = ? ORDER BY sender_id', [leaf.l.id]),
+        self.db.all('SELECT lead_id FROM campaign_leads WHERE campaign_id IN (' + v.placeholders(tfam.leaves.length) + ')', ids(tfam.leaves))
+      ]);
+    }).then(function (rr) {
+      var senders = rr[0].map(function (x) { return x.sender_id; }), inTarget = {};
+      rr[1].forEach(function (x) { inTarget[x.lead_id] = true; });
+      var res = { mode: mode, target: { id: tfam.camp.id, name: tfam.camp.name }, done: [], skipped: [] }, pos = leaf.pos, touched = {};
+      var live = leaf.l.status === 'active' || leaf.l.status === 'paused';
+      return self.db.transaction(function (tx) {
+        return seq(rows, function (r) {
+          function skip(why) { res.skipped.push({ id: r.id, email: r.email, message: why }); return null; }
+          if (r.status === 'bounced') return skip('The address bounced');
+          if (r.status === 'replied') return skip('This person replied. Move them only after you decide to email them again.');
+          if (r.suppression_reason && r.suppression_reason !== 'replied_stop') return skip('This person must not be emailed (unsubscribed, complained or blocked)');
+          if (inTarget[r.lead_id]) return skip('Already in "' + tfam.camp.name + '"');
+          inTarget[r.lead_id] = true; pos++;
+          var sender = senders.length ? senders[(pos + 1) % senders.length] : null;
+          return tx.run('INSERT INTO campaign_leads (campaign_id, lead_id, sender_id, position, status, current_step, next_send_at) VALUES (?,?,?,?,?,0,?)',
+            [leaf.l.id, r.lead_id, sender, pos, live ? 'active' : 'pending', live ? t : null]).then(function () {
+            res.done.push(r.id);
+            if (mode === 'move') {
+              touched[r.campaign_id] = true;
+              if (r.mails) return tx.run("UPDATE campaign_leads SET status = 'completed', next_send_at = NULL, status_note = ? WHERE id = ? AND status IN ('pending','active','paused','error','replied')", ['Moved to "' + tfam.camp.name + '"', r.id]);
+              return tx.run('DELETE FROM campaign_leads WHERE id = ?', [r.id]);
+            }
+            return null;
+          });
+        }).then(function () {
+          return seq(Object.keys(touched).map(Number), function (cid) { return state.completeIfDone(tx, cid, t); })
+            .then(function () { return fam.kids.length ? state.syncMain(tx, id, t) : null; });
+        }).then(function () {
+          return audit.log(tx, { userId: userId, action: 'campaign.leads_' + mode, entity: 'campaign', entityId: id, ip: ip, meta: { to: tfam.camp.id, done: res.done.length, skipped: res.skipped.length } }, self.now);
+        }).then(function () { return res; });
       });
     });
   };
@@ -263,12 +385,13 @@ function install(C, h) {
     var dayStart = Math.floor((t + off * 60000) / DAY) * DAY - off * 60000;
     return Promise.all([
       self.db.get("SELECT COUNT(*) AS n FROM campaigns WHERE user_id = ? AND parent_id IS NULL AND status = 'active'", [userId]),
-      self.db.get("SELECT COUNT(DISTINCT m.campaign_lead_id) AS n FROM messages m WHERE m.user_id = ? AND m.direction = 'in' AND m.kind = 'email' AND m.campaign_lead_id IS NOT NULL AND m.received_at >= ?", [userId, t - 7 * DAY]),
+      self.db.get("SELECT COUNT(DISTINCT m.campaign_lead_id) AS n FROM messages m WHERE m.user_id = ? AND m.direction = 'in' AND m.kind = 'email' AND m.campaign_lead_id IS NOT NULL", [userId]),
+      self.db.get("SELECT COUNT(DISTINCT m.campaign_lead_id) AS n FROM messages m WHERE m.user_id = ? AND m.direction = 'in' AND m.kind = 'email' AND m.campaign_lead_id IS NOT NULL AND m.read_at IS NULL", [userId]),
       self.db.get("SELECT COUNT(*) AS n FROM messages m WHERE m.user_id = ? AND m.direction = 'out' AND m.status = 'sent' AND m.sent_at >= ?", [userId, dayStart]),
       self.db.get("SELECT COALESCE(SUM(ns.n - cl.current_step), 0) AS n FROM campaign_leads cl JOIN campaigns c ON c.id = cl.campaign_id " +
         "JOIN (SELECT campaign_id, COUNT(*) AS n FROM campaign_steps GROUP BY campaign_id) ns ON ns.campaign_id = cl.campaign_id " +
         "WHERE c.user_id = ? AND c.status = 'active' AND cl.status IN ('pending','active') AND ns.n > cl.current_step", [userId])
-    ]).then(function (r) { return { active_campaigns: r[0].n, replies_7d: r[1].n, sent_today: r[2].n, scheduled: Number(r[3].n) || 0 }; });
+    ]).then(function (r) { return { active_campaigns: r[0].n, replies: r[1].n, replies_unread: r[2].n, replies_7d: r[1].n, sent_today: r[3].n, scheduled: Number(r[4].n) || 0 }; });
   };
 }
 

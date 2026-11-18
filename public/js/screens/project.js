@@ -123,7 +123,7 @@
             return h('tr', { class: 'row-link' + (cb.checked ? ' selected' : ''), on: { click: function () { location.hash = '#/campaign/' + c.id; } } },
               h('td', { class: 'row-check' }, cb),
               h('td', null, h('b', { text: c.name }), c.batches ? h('div', { class: 'small faint', text: c.batches + ' batches' }) : null), h('td', null, ui.statusPill(c.status)),
-              h('td', { class: 'c-steps' }, ui.stepBar(c.step_progress, { compact: true }), h('div', { class: 'small faint', text: stepSummary(c) })),
+              h('td', { class: 'c-steps' }, ui.stepBar(c.step_progress, { compact: true })),
               h('td', { text: fmt.num(c.sent) }), h('td', { text: fmt.num(c.metrics.replied) }), h('td', { text: fmt.num(c.stats.bounced) }), h('td', { text: fmt.until(c.next_send_at) }),
               h('td', null, h('div', { class: 'actions' }, c.status === 'draft' ? h('a', { class: 'btn btn-sm', href: '#/campaign/edit/' + c.id, tip: 'Change the emails, senders or schedule before you start.', on: { click: function (e) { e.stopPropagation(); } } }, 'Edit') : null, lifecycle(c, load), h('span', { class: 'faint' }, SB.icon('chevron')))));
           })))));

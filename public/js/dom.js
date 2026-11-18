@@ -69,7 +69,17 @@
     return el;
   }
   function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); return el; }
-  function mount(el, node) { clear(el); el.appendChild(node); }
+  // Replace the content of el. While the page is scrolled, the old height is held for a moment so a background refresh
+  // (skeleton first, data later) can never shrink the page and make the browser jump back to the top.
+  function mount(el, node) {
+    var y = window.pageYOffset || 0, hgt = el.offsetHeight;
+    if (y > 0 && hgt > 0) {
+      el.style.minHeight = hgt + 'px'; clearTimeout(el.sbMh);
+      el.sbMh = setTimeout(function () { el.style.minHeight = ''; }, 1500);
+    }
+    clear(el); el.appendChild(node);
+    if ((window.pageYOffset || 0) !== y) window.scrollTo(0, y);
+  }
   window.SB = window.SB || {};
   SB.h = h; SB.svg = svg; SB.icon = icon; SB.clear = clear; SB.mount = mount;
 })();

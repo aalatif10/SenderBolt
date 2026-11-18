@@ -78,7 +78,7 @@ function validateName(n) {
 }
 
 function parseLeadSource(input) {
-  var out = { statuses: DEFAULT_LEAD_STATUSES, excludeRole: !!input.exclude_role, skipInActive: input.skip_in_active !== false };
+  var out = { statuses: DEFAULT_LEAD_STATUSES, excludeRole: !!input.exclude_role, skipInActive: input.skip_in_active !== false, excludeDuplicates: input.exclude_duplicates === true };
   if (input.lead_statuses !== undefined) {
     if (!Array.isArray(input.lead_statuses) || !input.lead_statuses.length || input.lead_statuses.some(function (s) { return LEAD_STATUSES.indexOf(s) === -1; })) throw bad('lead_statuses', 'Invalid lead status filter');
     out.statuses = input.lead_statuses;
@@ -121,6 +121,8 @@ C._selectLeads = function (userId, src) {
   if (src.skipInActive) {
     conds.push("NOT EXISTS (SELECT 1 FROM campaign_leads cl JOIN campaigns c ON c.id = cl.campaign_id WHERE cl.lead_id = l.id AND c.status IN ('active','paused','preparing') AND cl.status IN ('pending','active','paused'))");
   }
+  // "Remove" in the duplicate prompt: nobody who already sits in ANY campaign (running, paused, draft or finished) is added again.
+  if (src.excludeDuplicates) conds.push('NOT EXISTS (SELECT 1 FROM campaign_leads cl WHERE cl.lead_id = l.id)');
   var cols = 'SELECT l.id, l.email, l.domain FROM leads l WHERE ';
   var p;
   if (src.folderIds) {
@@ -730,6 +732,29 @@ C.batch = function (userId, input, ip) {
 
 // Wizard check: how many of the chosen leads lack a value for each {{variable}} that has no fallback.
 // input: lead source (folder_id | lead_ids, same filters as create) + steps [{subject, body_html}].
+// Who in the chosen audience is already in another campaign? Used by the wizard to ask [Remove] / [Continue anyway].
+C.duplicates = function (userId, input) {
+  var self = this;
+  return Promise.resolve().then(function () {
+    input = Object.assign({}, input || {}, { skip_in_active: false, exclude_duplicates: false });
+    var src = parseLeadSource(input);
+    return self._selectLeads(userId, src);
+  }).then(function (rows) {
+    var found = {}, order = [], total = rows.length;
+    return seq(v.chunk(rows.map(function (r) { return r.id; }), 400), function (part) {
+      return self.db.all('SELECT cl.lead_id, l.email, COALESCE(p.name, c.name) AS campaign FROM campaign_leads cl JOIN campaigns c ON c.id = cl.campaign_id LEFT JOIN campaigns p ON p.id = c.parent_id ' +
+        'JOIN leads l ON l.id = cl.lead_id WHERE c.user_id = ? AND cl.lead_id IN (' + v.placeholders(part.length) + ') ORDER BY cl.id', [userId].concat(part)).then(function (hits) {
+        hits.forEach(function (x) {
+          if (!found[x.lead_id]) { found[x.lead_id] = { email: x.email, campaigns: [] }; order.push(x.lead_id); }
+          if (found[x.lead_id].campaigns.indexOf(x.campaign) === -1) found[x.lead_id].campaigns.push(x.campaign);
+        });
+      });
+    }).then(function () {
+      return { total: total, duplicates: order.length, samples: order.slice(0, 8).map(function (k) { return { email: found[k].email, campaigns: found[k].campaigns.slice(0, 3) }; }) };
+    });
+  });
+};
+
 C.variableCoverage = function (userId, input) {
   var self = this;
   return Promise.resolve().then(function () {
