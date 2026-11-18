@@ -141,7 +141,7 @@ S.processMessage = function (sender, m) {
               if (cl.status !== 'active') return null;
               return tx.run("UPDATE campaign_leads SET next_send_at = ? WHERE id = ? AND status = 'active' AND next_send_at < ?", [t + OOO_DELAY_MS, cl.id, t + OOO_DELAY_MS]);
             }
-            return self._applyReply(tx, cl, stop, t);
+            return self._applyReply(tx, cl, stop, t, sender.reply_detection !== 0);
           });
         }).then(function () {
           if (bounce && (bounce.kind === 'hard' || bounce.kind === 'policy')) return senderHealth.recompute(self.db, sender.id, t);
@@ -171,9 +171,12 @@ S._applyBounce = function (tx, cl, bounce, t) {
 //  - normal reply: the lead's own sequence ends as 'replied' (when the campaign has stop_on_reply);
 //  - stop request: THIS person only: status 'unsubscribed' in every sequence aimed at their address, address added to the
 //    do-not-email list. Everybody else in the campaign keeps going.
-S._applyReply = function (tx, cl, stop, t) {
+// A reply only ever ends THE REPLYING PERSON'S sequence (this campaign_lead row): every other person in the campaign keeps
+// receiving their emails. `detect` is the sender's "Replies detected" switch: when it is off, normal replies still land in the
+// Inbox but do not stop follow-ups. "stop campaign" requests are a legal opt-out, so they are honoured whatever the switch says.
+S._applyReply = function (tx, cl, stop, t, detect) {
   if (!stop) {
-    if (cl.stop_on_reply === 1 && STOPPABLE.indexOf(cl.status) !== -1) {
+    if (detect !== false && cl.stop_on_reply === 1 && STOPPABLE.indexOf(cl.status) !== -1) {
       return tx.run("UPDATE campaign_leads SET status = 'replied', next_send_at = NULL, status_note = NULL WHERE id = ? AND status IN ('active','pending','paused','completed')", [cl.id])
         .then(function () { return state.completeIfDone(tx, cl.campaign_id, t); });
     }

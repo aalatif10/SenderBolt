@@ -15,7 +15,7 @@
   function blankState() {
     return { step: 0, name: '', steps: [{ subject: '', body_html: '', delay_days: null }], sender_ids: [], folder_ids: [], exclude_role: false, dup: null,
       lead_statuses: STATUSES.slice(), split: { enabled: false, batch_size: 26, seed: null },
-      settings: { window_start_hour: 9, window_end_hour: 17, utc_offset_min: -new Date().getTimezoneOffset(), weekdays_only: true, stop_on_reply: true, track_opens: false } };
+      settings: { window_start_hour: 9, window_end_hour: 17, utc_offset_min: -new Date().getTimezoneOffset(), weekdays_only: true, stop_on_reply: true, track_opens: false, start_date: null, priority_mode: 'followups_first' } };
   }
   function merge(base, d) {            // draft data -> full state (draft fields may be null)
     var s = base; d = d || {};
@@ -391,6 +391,11 @@
           r.same_company_in_one_batch ? h('p', { class: 'hint warn', text: r.same_company_in_one_batch + ' company contact(s) still share a batch. Shuffle again or use a smaller batch size.' }) : h('p', { class: 'hint ok', text: 'People from the same company are spread across different batches.' })));
       }, function (e) { if (mine === audSeq) SB.mount(splitBox, h('div', { class: 'callout warn', text: e.message })); });
     }
+    var PRIORITY = [
+      ['followups_first', 'Follow-ups first (recommended)', 'People who already heard from you are served before brand-new contacts, so a follow-up is never delayed by a big first-email batch.'],
+      ['balanced', 'Balanced', 'Whoever has been waiting longest goes first, whether it is a first email or a follow-up.'],
+      ['new_first', 'New emails first', 'Reach new contacts as fast as possible; follow-ups go out as capacity allows.']
+    ];
     function stepSending() {
       var list = senders.length ? h('div', { class: 'table-wrap wz-tbl' }, h('table', { class: 'table' },
         h('thead', null, h('tr', null, h('th', { class: 'row-check' }), h('th', { text: 'Sending account' }), h('th', { text: 'Status' }), h('th', null, 'Daily limit ', ui.info('How many emails this account may send per day, including its warm-up ramp.')), h('th', { text: 'Sent today' }))),
@@ -399,7 +404,7 @@
           var ok = s.status === 'active';
           cb.addEventListener('change', function () { st.sender_ids = senders.map(function (x) { return x.id; }).filter(function (id) { return id === s.id ? cb.checked : st.sender_ids.indexOf(id) !== -1; }); touch(); paintCap(); });
           return h('tr', null, h('td', { class: 'row-check' }, cb),
-            h('td', null, h('label', { for: 'wz-sd-' + s.id, class: 'b' }, s.label || s.email), s.label && s.label !== s.email ? h('div', { class: 'small faint', text: s.email }) : null),
+            h('td', null, h('label', { for: 'wz-sd-' + s.id, class: 'b' }, ui.email(s.label || s.email)), s.label && s.label !== s.email ? h('div', { class: 'small faint' }, ui.email(s.email)) : null),
             h('td', null, h('span', { class: 'pill pill-' + (s.status === 'active' ? 'active' : 'paused'), text: s.status === 'active' ? 'Ready to send' : (SB.S.status[s.status] ? SB.S.status[s.status].label : String(s.status)) })),
             h('td', { text: ok ? fmt.num(s.limit_today) + (s.warmup_enabled ? ' (warming up)' : '') : '-' }),
             h('td', { text: fmt.num(s.sent_today || 0) }));
@@ -409,21 +414,52 @@
         var cap = 0; senders.forEach(function (s) { if (st.sender_ids.indexOf(s.id) !== -1 && s.status === 'active') cap += s.limit_today; });
         capBox.textContent = st.sender_ids.length ? 'Together they can send up to ' + fmt.num(cap) + ' emails per day.' : 'Choose at least one account.';
       }
-      var ss = st.settings;
+      var ss = st.settings, startRepaint = null;
       function hourSel(id, val, from, to, onPick) {
-        var s = h('select', { class: 'input', id: id }, (function () { var a = []; for (var x = from; x <= to; x++) a.push(h('option', { value: x }, (x % 24 < 10 ? '0' : '') + (x % 24) + ':00')); return a; })());
-        s.value = String(val); s.addEventListener('change', function () { onPick(Number(s.value)); touch(); }); return s;
+        var s = h('select', { class: 'input', id: id }, (function () { var a = []; for (var x = from; x <= to; x++) a.push(h('option', { value: x }, fmt.hour12(x) + (x === 24 ? ' (midnight)' : ''))); return a; })());
+        s.value = String(val); s.addEventListener('change', function () { onPick(Number(s.value)); touch(); if (startRepaint) startRepaint(); }); return s;
       }
       var tz = h('select', { class: 'input', id: 'wz-tz' }, (function () {
         var a = [], seen = {}; for (var m = -720; m <= 840; m += 30) a.push(m);
         if (a.indexOf(ss.utc_offset_min) === -1) a.push(ss.utc_offset_min);
         return a.sort(function (x, y) { return x - y; }).map(function (m) { var ab = Math.abs(m); return h('option', { value: m }, 'UTC' + (m < 0 ? '-' : '+') + (ab / 60 | 0) + (ab % 60 ? ':30' : '') + (m === -new Date().getTimezoneOffset() ? '  (this device)' : '')); });
       })());
-      tz.value = String(ss.utc_offset_min); tz.addEventListener('change', function () { ss.utc_offset_min = Number(tz.value); touch(); });
+      tz.value = String(ss.utc_offset_min); tz.addEventListener('change', function () { ss.utc_offset_min = Number(tz.value); touch(); if (startRepaint) startRepaint(); });
       function toggle(id, key, label, hint) {
         var cb = h('input', { type: 'checkbox', id: id }); cb.checked = !!ss[key]; cb.addEventListener('change', function () { ss[key] = cb.checked; touch(); });
         cb.className = 'switch'; cb.setAttribute('role', 'switch');
         return h('div', { class: 'set-row' }, h('div', { class: 'set-txt' }, h('label', { for: id, text: label }), h('div', { class: 'hint', text: hint })), cb);
+      }
+      // ---- scheduled start (v1.8) ----
+      function startControls() {
+        var later = !!ss.start_date, note = h('div', { class: 'sched-note' });
+        var date = h('input', { class: 'input', id: 'wz-start-date', type: 'date', min: fmt.todayAt(ss.utc_offset_min), value: ss.start_date || '', 'aria-label': 'Start date' });
+        var now = h('input', { type: 'radio', name: 'wz-start-mode', id: 'wz-start-now' }), sched = h('input', { type: 'radio', name: 'wz-start-mode', id: 'wz-start-later' });
+        now.checked = !later; sched.checked = later;
+        var cardNow = h('label', { class: 'radio-card' + (later ? '' : ' on'), for: 'wz-start-now' }, now, h('div', null, h('b', { text: 'Start as soon as I press Start' }), h('span', { class: 'hint', text: 'Emails go out during your sending hours, from today.' })));
+        var dateRow = h('div', { class: 'field' + (later ? '' : ' hidden'), id: 'wz-start-row' }, h('label', { for: 'wz-start-date' }, 'Start date'), date, note);
+        var cardLater = h('label', { class: 'radio-card' + (later ? ' on' : ''), for: 'wz-start-later' }, sched, h('div', null, h('b', { text: 'Schedule for a specific date' }), h('span', { class: 'hint', text: 'Press Start now and the first emails begin on the day you choose, at the opening of your sending hours. Close the page: nothing else to do.' })));
+        function paint() {
+          cardNow.classList.toggle('on', !later); cardLater.classList.toggle('on', later); dateRow.classList.toggle('hidden', !later);
+          note.textContent = later && ss.start_date ? 'Starts ' + fmt.isoDate(ss.start_date) + ' at ' + fmt.hour12(ss.window_start_hour) + ' (' + tzName(ss.utc_offset_min) + '). Until then nothing is sent.' : '';
+        }
+        now.addEventListener('change', function () { if (now.checked) { later = false; ss.start_date = null; touch(); paint(); } });
+        sched.addEventListener('change', function () { if (sched.checked) { later = true; if (!ss.start_date) { var d = fmt.todayAt(ss.utc_offset_min); ss.start_date = d; date.value = d; } touch(); paint(); } });
+        date.addEventListener('change', function () { ss.start_date = date.value || null; touch(); paint(); });
+        startRepaint = paint; paint();
+        return h('div', { class: 'radio-stack' }, cardNow, cardLater, dateRow);
+      }
+      function tzName(m) { var ab = Math.abs(m); return 'UTC' + (m < 0 ? '-' : '+') + (ab / 60 | 0) + (ab % 60 ? ':30' : ''); }
+      // ---- priority (v1.8) ----
+      function priorityControls() {
+        var box = h('div', { class: 'radio-stack', role: 'radiogroup', 'aria-label': 'Send priority' });
+        PRIORITY.forEach(function (o) {
+          var r = h('input', { type: 'radio', name: 'wz-prio', id: 'wz-prio-' + o[0] }); r.checked = ss.priority_mode === o[0];
+          var lab = h('label', { class: 'radio-card' + (r.checked ? ' on' : ''), for: 'wz-prio-' + o[0] }, r, h('div', null, h('b', { text: o[1] }), h('span', { class: 'hint', text: o[2] })));
+          r.addEventListener('change', function () { if (!r.checked) return; ss.priority_mode = o[0]; touch(); Array.prototype.forEach.call(box.children, function (c) { c.classList.remove('on'); }); lab.classList.add('on'); });
+          box.appendChild(lab);
+        });
+        return box;
       }
       var split = st.split, batch = h('input', { class: 'input wz-days', id: 'wz-batch', type: 'text', inputmode: 'numeric', maxlength: 6, value: String(split.batch_size || ''), 'aria-label': 'Batch size' });
       batch.addEventListener('input', function () { var d = batch.value.replace(/\D/g, '').slice(0, 6); if (d !== batch.value) batch.value = d; split.batch_size = d ? parseInt(d, 10) : null; split.seed = null; touch(); refreshSplit(); });
@@ -438,6 +474,8 @@
         section('Sender accounts', 'Select the account(s) that send this campaign. With several, the emails are shared between them.', [list, capBox, h('p', { class: 'hint', text: W.sendersHint })]),
         section('Tracking', 'Choose whether to track email opens. Tracking works for HTML emails only.', [toggle('wz-to', 'track_opens', 'Track email opens', W.opensHint),
           st.settings.track_opens && SB.status && SB.status.public_origin_set === false ? h('div', { class: 'banner banner-warn inline', role: 'status' }, SB.icon('alert'), SB.S.studio.trackingInactive) : null]),
+        section('Start', 'Begin right away, or schedule the campaign to start on a specific day.', [startControls()]),
+        section('Priority', 'When an account has both new first emails and follow-ups waiting, which should go out first?', [priorityControls()]),
         section('Sending window', 'Pick when this campaign\u2019s emails may go out.', [
           toggle('wz-wd', 'weekdays_only', 'Weekdays only', W.weekdaysHint),
           h('div', { class: 'wz-row set-hours' }, h('div', { class: 'field' }, h('label', { for: 'wz-ws' }, 'Sending hours: from'), hourSel('wz-ws', ss.window_start_hour, 0, 23, function (x) { ss.window_start_hour = x; })),
@@ -463,6 +501,7 @@
       if (dupCount && !st.dup) p.push({ s: 1, t: 'Some people are already in another campaign. Choose Remove or Continue anyway.' });
       if (!st.sender_ids.length) p.push({ s: 2, t: 'Choose at least one sender account.' });
       if (st.settings.window_end_hour <= st.settings.window_start_hour) p.push({ s: 2, t: 'The sending window must end after it starts.' });
+      if (st.settings.start_date && st.settings.start_date < fmt.todayAt(st.settings.utc_offset_min)) p.push({ s: 2, t: 'The scheduled start date (' + fmt.isoDate(st.settings.start_date) + ') has passed. Pick today or a later day, or choose to start right away.' });
       if (st.split.enabled && !st.split.batch_size) p.push({ s: 2, t: 'Enter a batch size.' });
       return editId ? p.filter(function (x) { return x.s !== 1; }) : p;
     }
@@ -480,7 +519,9 @@
         probs.length ? h('div', { class: 'callout warn' }, h('b', { text: 'Fix these before launching:' }), h('ul', null, probs.map(function (p) { return h('li', null, p.t + ' ', h('a', { href: '#', on: { click: function (e) { e.preventDefault(); go(p.s); } } }, 'Go there')); }))) : h('p', { class: 'hint ok', text: 'Everything is filled in. Nothing is sent until you press Start.' }),
         row('Campaign', st.name || '-'), row('Emails', st.steps.length + ' (first email' + (st.steps.length > 1 ? ' + ' + (st.steps.length - 1) + ' follow-up' + (st.steps.length > 2 ? 's' : '') : '') + ')' + (totalDays ? ', over ' + totalDays + ' days' : '')),
         editId ? null : row('Audience', chosenLists.length ? chosenLists.map(function (f) { return f.name; }).join(', ') : '-'), row('Senders', chosen.length ? chosen.map(function (s) { return s.label || s.email; }).join(', ') : '-'),
-        row('Window', pad(st.settings.window_start_hour) + ':00 to ' + pad(st.settings.window_end_hour % 24) + ':00, ' + (st.settings.weekdays_only ? 'weekdays' : 'every day')),
+        row('Starts', st.settings.start_date ? fmt.isoDate(st.settings.start_date) + ' at ' + fmt.hour12(st.settings.window_start_hour) : 'As soon as you press Start'),
+        row('Window', fmt.hourRange(st.settings.window_start_hour, st.settings.window_end_hour) + ', ' + (st.settings.weekdays_only ? 'weekdays' : 'every day')),
+        row('Priority', (PRIORITY.filter(function (o) { return o[0] === st.settings.priority_mode; })[0] || PRIORITY[0])[1].replace(' (recommended)', '')),
         editId ? null : row('Smart Split', st.split.enabled ? 'Batches of ' + st.split.batch_size : 'Off'),
         editId ? null : h('div', { class: 'field pad-t' }, h('label', { for: 'wz-project' }, 'Add to project'), projSel)));
       out.appendChild(h('div', { class: 'actions wz-final' },
@@ -498,6 +539,7 @@
       if (st.dup === 'remove') body.exclude_duplicates = true; else if (st.dup === 'keep') body.skip_in_active = false;
       body.window_start_hour = st.settings.window_start_hour; body.window_end_hour = st.settings.window_end_hour; body.utc_offset_min = st.settings.utc_offset_min;
       body.weekdays_only = st.settings.weekdays_only; body.stop_on_reply = st.settings.stop_on_reply; body.track_opens = st.settings.track_opens;
+      body.start_date = st.settings.start_date || null; body.priority_mode = st.settings.priority_mode || 'followups_first';
       if (st.split.enabled) body.split = { batch_size: st.split.batch_size, seed: st.split.seed === null ? undefined : st.split.seed };
       if (editId) {
         delete body.folder_ids; delete body.exclude_role; delete body.lead_statuses; delete body.split;
@@ -553,6 +595,7 @@
           st.steps = cc.steps.map(function (x, i) { return { subject: x.subject || '', body_html: x.body_html || '', delay_days: i === 0 ? null : x.delay_days }; });
           st.sender_ids = cc.senders.map(function (x) { return x.id; });
           Object.keys(st.settings).forEach(function (k) { if (cc.settings[k] !== undefined && cc.settings[k] !== null) st.settings[k] = k === 'weekdays_only' || k === 'stop_on_reply' || k === 'track_opens' ? !!cc.settings[k] : cc.settings[k]; });
+          st.settings.start_date = cc.settings.start_date || null;
           dirty = false;
         }
         else if (!projectId && projects.length === 1) { /* keep "new project" as default */ }

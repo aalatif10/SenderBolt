@@ -27,6 +27,16 @@
     return { el: h('div', { class: 'toolbar' }, h('div', { class: 'search' }, SB.icon('search'), search), sort, o.extra || null), search: search, sort: sort };
   };
 
+  // Sortable column header: first click sorts ascending, second descending. cur = { sort, dir }; onSort(key, dir).
+  // defaultDir lets date-like columns start with "newest first". Renders as <th> with an accessible aria-sort.
+  SB.lists.sortHeader = function (label, key, cur, onSort, o) {
+    o = o || {};
+    var on = cur.sort === key, dir = on ? cur.dir : null;
+    var btn = h('button', { type: 'button', class: 'th-sort' + (on ? ' on' : ''), tip: o.tip || ('Sort by ' + label.toLowerCase() + (on ? (dir === 'asc' ? ' (high to low next)' : ' (low to high next)') : '')),
+      on: { click: function () { onSort(key, on ? (dir === 'asc' ? 'desc' : 'asc') : (o.defaultDir || 'asc')); } } }, label, h('span', { class: 'arrow', 'aria-hidden': 'true' }, on ? (dir === 'asc' ? '\u25B2' : '\u25BC') : '\u21C5'));
+    return h('th', { class: o.cls || null, 'aria-sort': on ? (dir === 'asc' ? 'ascending' : 'descending') : 'none' }, btn, o.info || null);
+  };
+
   // Removable tags for active filters: tags = [{ label, onRemove }] (+ a "Clear all" link when there are several).
   SB.lists.tags = function (tags, onClear) {
     if (!tags.length) return null;
@@ -36,11 +46,11 @@
   };
 
   // Sticky bar shown while something is selected: actions = [{ label, kind, icon, tip, onClick }]
-  SB.lists.selectionBar = function (count, noun, actions, onClear, onAll) {
+  SB.lists.selectionBar = function (count, noun, actions, onClear, onAll, allLabel) {
     if (!count) return null;
     return h('div', { class: 'sel-bar', role: 'region', 'aria-label': 'Selection actions' },
       h('b', { text: count + ' ' + noun + (count === 1 ? '' : 's') + ' selected' }),
-      onAll ? h('button', { type: 'button', class: 'btn btn-ghost btn-sm', on: { click: onAll } }, 'Select all shown') : null,
+      onAll ? h('button', { type: 'button', class: 'btn btn-ghost btn-sm', on: { click: onAll } }, allLabel || 'Select all shown') : null,
       h('div', { class: 'actions' }, actions.map(function (a) {
         return h('button', { type: 'button', class: 'btn btn-sm' + (a.kind ? ' btn-' + a.kind : ''), tip: a.tip, on: { click: a.onClick } }, a.icon ? SB.icon(a.icon) : null, a.label);
       }), h('button', { type: 'button', class: 'btn btn-ghost btn-sm', on: { click: onClear } }, 'Clear')));

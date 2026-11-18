@@ -251,6 +251,26 @@
 
     function current() { for (var i = 0; i < st.folders.length; i++) if (st.folders[i].id === st.id) return st.folders[i]; return null; }
     function selIds() { return Object.keys(st.sel).map(Number); }
+    // "Risky" means everything the checker is unsure about (risky + catch-all); the server takes comma groups.
+    function statusParam() { return st.status === 'all' ? '' : st.status === 'risky' ? 'risky,catch_all' : st.status; }
+    var STATUS_CHIPS = [['all', 'All', 'Every lead in this list.'], ['valid', 'Valid', 'Checked and safe to email.'], ['invalid', 'Bounced', 'Invalid addresses and addresses that bounced. They should not be emailed: select them and remove them.'], ['risky', 'Risky', 'Risky or catch-all addresses: they might bounce.'], ['unverified', 'Not checked', 'Not checked yet. Use Check emails.']];
+    function chipCount(k, s) { return k === 'all' ? s.total : k === 'risky' ? s.risky + s.catch_all : s[k]; }
+    function renderChips() {
+      if (!st.chipBox || !st.stats) return;
+      var s = st.stats;
+      SB.mount(st.chipBox, SB.lists.chips(STATUS_CHIPS.map(function (c) { return { key: c[0], label: c[1], n: chipCount(c[0], s) || 0, tip: c[2] }; }), st.status, function (k) {
+        st.status = k; st.page = 1; st.sel = {}; loadLeads(); renderChips(); renderStats();
+      }));
+    }
+    // Everyone matching the current filters, across all pages (ids only; the server caps the list).
+    function selectAllMatching() {
+      return SB.api.get('/api/folders/' + st.id + '/lead-ids?' + qs({ search: st.q, status: statusParam(), role: st.f.role, missing: st.f.missing, in_campaign: st.f.in_campaign, domain: st.f.domain })).then(function (r) {
+        var list = r.ids.slice(0, 5000); st.sel = {}; list.forEach(function (id) { st.sel[id] = st.sel[id] || ''; });
+        st.rows.forEach(function (x) { if (st.sel[x.id] !== undefined) st.sel[x.id] = x.email; });
+        if (r.truncated || r.ids.length > 5000) ui.toast('Selected the first ' + fmt.num(list.length) + ' leads (the most one action can handle).');
+        renderTable(); renderBulk();
+      }, function (e) { ui.toast(SB.api.friendly(e), true); });
+    }
 
     function createFolder() {
       nameModal({ title: 'New list', label: 'List name', confirmLabel: 'Create list', onSave: function (name) {
@@ -311,12 +331,13 @@
         ui.confirm({ title: 'Delete "' + f.name + '"?', message: 'This permanently deletes the list and its ' + fmt.num(f.lead_count) + ' lead' + (f.lead_count === 1 ? '' : 's') + '. People already emailed are not affected. This cannot be undone.', confirmLabel: 'Delete list', danger: true,
           onConfirm: function () { return SB.api.del('/api/folders/' + f.id).then(function () { ui.toast('List deleted'); st.id = null; return loadFolders(); }); } });
       } } }, SB.icon('trash'), 'Delete');
-      SB.mount(headBox, h('div', { class: 'list-head' }, h('div', { class: 'who' }, h('h2', { text: f.name }), h('div', { class: 'small muted', text: 'Created ' + fmt.ago(f.created_at) })), h('div', { class: 'actions' }, ren, exp, del)));
+      SB.mount(headBox, h('div', { class: 'list-head' }, h('div', { class: 'who' }, h('h2', { text: f.name }), h('div', { class: 'small muted', tip: fmt.tip(f.created_at), text: fmt.created(f.created_at) })), h('div', { class: 'actions' }, ren, exp, del)));
     }
 
     function renderStats() {
       var s = st.stats; if (!s) return;
       var risky = s.risky + s.catch_all, checked = s.total - s.unverified;
+      renderChips();
       // Tiles with a status act as one-click filters. ("Risky" filters 'risky' only: the checker never produces 'catch_all'.)
       function t(label, value, note, tip, status) {
         var el = ui.tile(label, value, note, null);
@@ -341,11 +362,6 @@
       var search = h('input', { class: 'input', type: 'search', placeholder: 'Search email, name or company', maxlength: 100, 'aria-label': 'Search leads' });
       search.value = st.q || ''; var timer = null;
       search.addEventListener('input', function () { clearTimeout(timer); timer = setTimeout(function () { st.q = search.value.trim(); st.page = 1; loadLeads(); }, 300); });
-      var sel = h('select', { class: 'input', 'aria-label': 'Filter by status' },
-        h('option', { value: 'all' }, 'All statuses'), h('option', { value: 'valid' }, 'Valid'), h('option', { value: 'invalid' }, 'Invalid'),
-        h('option', { value: 'risky' }, 'Risky'), h('option', { value: 'catch_all' }, 'Catch-all'), h('option', { value: 'unverified' }, 'Not checked'));
-      sel.value = st.status; st.statusSel = sel;
-      sel.addEventListener('change', function () { st.status = sel.value; st.page = 1; st.sel = {}; loadLeads(); renderStats(); });
       var check = h('button', { class: 'btn btn-primary', type: 'button', tip: S.verifyNote, on: { click: function () { if (st.stats) checkModal(st.id, st.stats, selIds(), afterCheck); } } }, SB.icon('shield'), 'Check emails');
       var imp = h('button', { class: 'btn', type: 'button', on: { click: function () { openImport(); } } }, SB.icon('upload'), 'Import');
       function pickSel(label, key, opts) {
@@ -366,7 +382,9 @@
         pickSel('Campaign usage', 'in_campaign', [['', 'In any campaign or not'], ['0', 'Not in a campaign'], ['1', 'In a campaign']]),
         domain, sortSel);
       st.bulkBox = h('div'); st.tagBox = h('div');
-      SB.mount(toolBox, h('div', null, h('div', { class: 'toolbar' }, h('div', { class: 'search' }, SB.icon('search'), search), sel, h('div', { class: 'actions' }, imp, check)), filters, st.tagBox, st.bulkBox));
+      st.chipBox = h('div');
+      SB.mount(toolBox, h('div', null, st.chipBox, h('div', { class: 'toolbar' }, h('div', { class: 'search' }, SB.icon('search'), search), h('div', { class: 'actions' }, imp, check)), filters, st.tagBox, st.bulkBox));
+      renderChips();
       renderFilterTags();
     }
 
@@ -401,17 +419,18 @@
 
     function renderBulk() {
       var ids = selIds(); SB.clear(st.bulkBox); if (!ids.length) return;
-      var emails = ids.map(function (id) { return st.sel[id]; });
+      var emails = ids.map(function (id) { return st.sel[id]; }), emailsKnown = emails.every(Boolean);
       var sup = h('button', { class: 'btn btn-sm', type: 'button', tip: 'Never email these people again, in any list or campaign.', on: { click: function () {
         ui.confirm({ title: 'Add ' + fmt.num(ids.length) + ' to the do-not-email list?', message: 'These people will never be emailed again by any campaign. You can remove them from the do-not-email list later.', confirmLabel: 'Add to do-not-email list',
           onConfirm: function () { return SB.api.post('/api/suppression', { emails: emails, reason: 'manual' }).then(function (r) { ui.toast(fmt.num(r.added) + ' added to the do-not-email list'); }); } });
       } } }, SB.icon('shield'), 'Do not email');
       var del = h('button', { class: 'btn btn-sm btn-danger', type: 'button', on: { click: function () {
-        ui.confirm({ title: 'Delete ' + fmt.num(ids.length) + ' lead' + (ids.length === 1 ? '' : 's') + '?', message: 'They are removed from this list permanently. Leads that are waiting in a running or paused campaign cannot be deleted.', confirmLabel: 'Delete', danger: true,
+        ui.confirm({ title: 'Remove ' + fmt.num(ids.length) + ' lead' + (ids.length === 1 ? '' : 's') + ' from this list?', message: (st.status === 'invalid' ? 'Bounced and invalid addresses are the right ones to clean out. ' : '') + 'They are deleted from your lists permanently. People who are waiting in a running or paused campaign cannot be removed here; remove them from the campaign\u2019s People tab first.', confirmLabel: 'Delete', danger: true,
           onConfirm: function () { return SB.api.post('/api/leads/delete', { ids: ids }).then(function (r) { ui.toast(fmt.num(r.deleted) + ' deleted'); st.sel = {}; return refresh().then(loadFoldersQuiet); }); } });
-      } } }, SB.icon('trash'), 'Delete');
+      } } }, SB.icon('trash'), 'Remove');
+      var allBtn = st.total > ids.length ? h('button', { class: 'btn btn-ghost btn-sm', type: 'button', on: { click: selectAllMatching } }, 'Select all ' + fmt.num(st.total) + ' in this view') : null;
       var mv = h('button', { class: 'btn btn-sm', type: 'button', tip: 'Move the selected people into another list. People already in that list are left where they are.', on: { click: function () { moveModal(ids); } } }, 'Move to list');
-      st.bulkBox.appendChild(h('div', { class: 'bulk' }, h('b', { text: fmt.num(ids.length) + ' selected' }), h('div', { class: 'actions' }, mv, sup, del,
+      st.bulkBox.appendChild(h('div', { class: 'bulk' }, h('b', { text: fmt.num(ids.length) + ' selected' }), allBtn, h('div', { class: 'actions' }, mv, emailsKnown ? sup : null, del,
         h('button', { class: 'btn btn-ghost btn-sm', type: 'button', on: { click: function () { st.sel = {}; renderTable(); renderBulk(); } } }, 'Clear'))));
     }
 
@@ -443,8 +462,8 @@
         var note = r.verify_error ? S.reason(r.verify_error) : '';
         return h('tr', null,
           h('td', { class: 'c-check' }, cb),
-          h('td', { class: 'c-email', tip: 'Added ' + fmt.ago(r.created_at) + ' · ' + fmt.full(r.created_at) },
-            h('div', null, h('span', { class: 'break', text: r.email }), r.is_role ? h('span', { class: 'chip chip-warn role', tip: 'A shared mailbox like info@ or sales@. These get fewer replies and are often filtered, so you can exclude them from campaigns.' }, 'Role') : null),
+          h('td', { class: 'c-email', tip: 'Added ' + fmt.tip(r.created_at) },
+            h('div', null, ui.email(r.email), r.is_role ? h('span', { class: 'chip chip-warn role', tip: 'A shared mailbox like info@ or sales@. These get fewer replies and are often filtered, so you can exclude them from campaigns.' }, 'Role') : null),
             name ? h('div', { class: 'small muted', text: name }) : null),
           h('td', { text: r.company || '—', class: 'break' + (r.company ? '' : ' faint') }),
           h('td', null, pill(S.status, r.verify_status, S.status.unverified)),
@@ -461,7 +480,7 @@
 
     function loadLeads() {
       var my = ++st.req;
-      return SB.api.get('/api/folders/' + st.id + '/leads?' + qs({ page: st.page, pageSize: st.size, search: st.q, status: st.status === 'all' ? '' : st.status, role: st.f.role, missing: st.f.missing, in_campaign: st.f.in_campaign, domain: st.f.domain, sort: st.sort, dir: st.dir })).then(function (r) {
+      return SB.api.get('/api/folders/' + st.id + '/leads?' + qs({ page: st.page, pageSize: st.size, search: st.q, status: statusParam(), role: st.f.role, missing: st.f.missing, in_campaign: st.f.in_campaign, domain: st.f.domain, sort: st.sort, dir: st.dir })).then(function (r) {
         if (my !== st.req || shared.destroyed) return;
         if (!r.items.length && r.total > 0 && st.page > 1) { st.page = Math.ceil(r.total / st.size); return loadLeads(); }   // rows were deleted from the last page
         st.rows = r.items; st.total = r.total; renderTable(); renderBulk();
@@ -479,7 +498,6 @@
 
   // ---- do-not-email list tab -----------------------------------------------------------------------
   function suppressionTab(box, shared) {
-    var st = { page: 1, size: 50, total: 0, items: [], req: 0 };
     var listBox = h('div');
     SB.mount(box, h('div', null,
       h('div', { class: 'callout' }, h('b', { text: 'People on this list are never emailed. ' }),
@@ -501,39 +519,18 @@
           if (found.length > 5000) { err.textContent = 'Please add at most 5,000 addresses at a time.'; err.classList.remove('hidden'); return Promise.reject(new Error('v')); }
           return SB.api.post('/api/suppression', { emails: found, reason: why.value }).then(function (r) {
             close(); var skipped = found.length - r.added;
-            ui.toast(fmt.num(r.added) + ' added' + (skipped ? ' · ' + fmt.num(skipped) + ' were already on the list or not valid' : '')); st.page = 1; load();
+            ui.toast(fmt.num(r.added) + ' added' + (skipped ? ' · ' + fmt.num(skipped) + ' were already on the list or not valid' : '')); if (shared.reloadSuppression) shared.reloadSuppression();
           }, function (e) { showErr(err, e); throw e; });
         } }
       ] });
     }
     shared.openAdd = addModal;
 
-    function render() {
-      if (!st.items.length && st.total === 0) {
-        SB.mount(listBox, h('div', { class: 'card empty' }, h('h2', { text: 'Nobody is blocked yet' }), h('p', { text: 'Unsubscribes and bounces will appear here automatically. You can also add addresses yourself.' }),
-          h('button', { class: 'btn btn-primary', type: 'button', on: { click: addModal } }, SB.icon('plus'), 'Add emails')));
-        return;
-      }
-      var rows = st.items.map(function (r) {
-        var rm = h('button', { class: 'btn btn-sm', type: 'button', tip: 'Allow this address to be emailed again', on: { click: function () {
-          ui.confirm({ title: 'Remove ' + r.email + '?', message: 'This address can be emailed again by future campaigns. Only do this if the person asked to hear from you again: emailing people who opted out can get your accounts reported.', confirmLabel: 'Remove', danger: true,
-            onConfirm: function () { return SB.api.post('/api/suppression/remove', { email: r.email }).then(function () { ui.toast('Removed'); return load(); }); } });
-        } } }, 'Remove');
-        return h('tr', null, h('td', { class: 'break', text: r.email }), h('td', null, pill(S.suppression, r.reason, S.suppression.manual)), h('td', { class: 'small muted nowrap', tip: fmt.full(r.created_at) }, fmt.ago(r.created_at)), h('td', { class: 'right' }, rm));
-      });
-      SB.mount(listBox, h('div', { class: 'card flush' },
-        h('div', { class: 'table-wrap' }, h('table', { class: 'table' }, h('thead', null, h('tr', null, h('th', { text: 'Email' }), h('th', { text: 'Reason' }), h('th', { text: 'Added' }), h('th', null))), h('tbody', null, rows))),
-        h('div', { class: 'table-foot' }, pager(st.page, st.size, st.total, function (p) { st.page = p; load(); }))));
-    }
-    function load() {
-      var my = ++st.req;
-      return SB.api.get('/api/suppression?' + qs({ page: st.page, pageSize: st.size })).then(function (r) {
-        if (my !== st.req || shared.destroyed) return;
-        if (!r.items.length && r.total > 0 && st.page > 1) { st.page = Math.ceil(r.total / st.size); return load(); }
-        st.items = r.items; st.total = r.total; render();
-      }, function (e) { if (e.code !== 'offline') SB.mount(listBox, h('div', { class: 'form-error', text: SB.api.friendly(e) })); });
-    }
-    return load();
+    var panel = SB.suppress.panel({ tabs: [['all', 'All'], ['manual', 'Added by you'], ['unsubscribed', 'Unsubscribed'], ['bounced', 'Bounced'], ['complaint', 'Complaints']],
+      onAdd: addModal, empty: { title: 'Nobody is blocked yet', text: 'Unsubscribes and bounces will appear here automatically. You can also add addresses yourself.' } });
+    SB.mount(listBox, panel.el);
+    shared.reloadSuppression = panel.reload;
+    var prevDestroy = shared.onDestroy; shared.onDestroy = function () { panel.destroy(); if (prevDestroy) prevDestroy(); };
   }
 
   // ---- screen -----------------------------------------------------------------------------------
@@ -550,6 +547,6 @@
       h('a', { class: 'seg' + (tab === 'suppression' ? ' active' : ''), href: '#/leads/suppression', tip: 'Addresses that must never be emailed' }, 'Do-not-email list')));
     root.appendChild(body);
     (tab === 'lists' ? listsTab : suppressionTab)(body, shared);
-    return { el: root, destroy: function () { shared.destroyed = true; } };
+    return { el: root, destroy: function () { shared.destroyed = true; if (shared.onDestroy) shared.onDestroy(); } };
   };
 })();

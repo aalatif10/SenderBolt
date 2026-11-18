@@ -40,7 +40,9 @@ function normalise(d) {
     utc_offset_min: typeof st.utc_offset_min === 'number' && st.utc_offset_min % 1 === 0 && st.utc_offset_min >= -720 && st.utc_offset_min <= 840 ? st.utc_offset_min : null,
     weekdays_only: st.weekdays_only === undefined ? true : !!st.weekdays_only,
     stop_on_reply: st.stop_on_reply === undefined ? true : !!st.stop_on_reply,
-    track_opens: !!st.track_opens
+    track_opens: !!st.track_opens,
+    start_date: typeof st.start_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(st.start_date) ? st.start_date : null,
+    priority_mode: ['followups_first', 'balanced', 'new_first'].indexOf(st.priority_mode) !== -1 ? st.priority_mode : 'followups_first'
   };
   return out;
 }

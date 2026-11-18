@@ -111,7 +111,7 @@
     function bubble(m, lead) {
       var out = m.direction === 'out', label = msgLabel(m), when = m.sent_at || m.received_at || m.created_at;
       return h('div', { class: 'ib-msg ' + (out ? 'out' : 'in') + (m.kind !== 'email' && !out ? ' sys' : '') + (m.status === 'failed' ? ' failed' : '') },
-        h('div', { class: 'ib-msg-head small' }, h('b', { text: out ? 'You' : (lead.first_name || lead.email) }), label ? h('span', { class: 'tag tag-sys', text: label }) : null, h('span', { class: 'faint', tip: fmt.full(when), text: fmt.ago(when) })),
+        h('div', { class: 'ib-msg-head small' }, (out || lead.first_name) ? h('b', { text: out ? 'You' : lead.first_name }) : ui.email(lead.email, 'strong', 'b'), label ? h('span', { class: 'tag tag-sys', text: label }) : null, h('span', { class: 'faint', tip: fmt.full(when), text: fmt.ago(when) })),
         m.subject ? h('div', { class: 'ib-msg-subj small muted', text: m.subject }) : null,
         m.view ? replyParts(m.view) : h('div', { class: 'ib-msg-body', text: m.body_text || '' }),
         m.has_html ? formattedToggle(m) : null,

@@ -39,7 +39,7 @@
       tip: open ? 'Hide the campaigns in this project.' : 'Show the campaigns in this project with their results.', on: { click: function () { toggle(p.id); } } }, SB.icon('chevron'));
     var head = h('div', { class: 'hx-head' }, chev,
       h('div', { class: 'hx-title' }, h('a', { class: 'hx-name', href: '#/project/' + p.id, text: p.name }),
-        h('div', { class: 'small faint', text: p.campaign_count ? fmt.num(p.campaign_count) + ' campaign' + (p.campaign_count === 1 ? '' : 's') + ' \u00b7 ' + fmt.num(t.leads) + (t.leads === 1 ? ' person' : ' people') : 'No campaigns yet' })),
+        h('div', { class: 'small faint', tip: fmt.tip(p.created_at) }, (p.campaign_count ? fmt.num(p.campaign_count) + ' campaign' + (p.campaign_count === 1 ? '' : 's') + ' \u00b7 ' + fmt.num(t.leads) + (t.leads === 1 ? ' person' : ' people') : 'No campaigns yet') + (p.created_at ? ' \u00b7 ' + fmt.created(p.created_at) : ''))),
       ui.statusPill(p.status),
       p.campaign_count ? h('div', { class: 'hx-stats' },
         stat('Sent', fmt.num(t.sent), SB.S.metric.sent),
@@ -68,7 +68,7 @@
         var m = c.metrics || {}, tracked = !!c.track_opens, emailed = m.emailed || 0;
         function pctOf(n) { return emailed ? Math.round(n / emailed * 1000) / 10 + '%' : '0%'; }
         return h('tr', { class: 'row-link', on: { click: function () { location.hash = '#/campaign/' + c.id; } } },
-          h('td', null, h('b', { text: c.name }), c.batches ? h('div', { class: 'small faint', text: c.batches + ' batches' }) : null),
+          h('td', null, h('b', { text: c.name }), h('div', { class: 'small faint', tip: fmt.tip(c.created_at), text: (c.batches ? c.batches + ' batches \u00b7 ' : '') + fmt.created(c.created_at) })),
           h('td', null, ui.statusPill(c.status)),
           h('td', { class: 'c-steps' }, ui.stepBar(c.step_progress, { compact: true })),
           h('td', { text: fmt.num(c.sent) }),
@@ -188,21 +188,32 @@
       var attnNote = badSenders.length ? badSenders[0].label + ': ' + (badSenders[0].last_error || (badSenders[0].status === 'paused' ? 'paused' : badSenders[0].status)) : (r[0].counts.error ? 'A campaign is blocked' : 'Everything looks healthy');
       // At-a-glance row: replies waiting, people waiting for an email, today's sending, and a health list of anything that needs action.
       var waiting = 0; projects.forEach(function (p) { waiting += p.totals.active || 0; });
-      var alerts = [];
+      var alerts = [], seen = (r[6] && r[6].settings && r[6].settings.health_seen) || [];
       projects.forEach(function (p) {
         var t = p.totals;
-        if (t.emailed >= 20 && t.bounce_rate >= 5) alerts.push({ lvl: 'critical', t: p.name + ': high bounce rate (' + t.bounce_rate + '%)', d: 'Pause the campaign and verify your lead list to protect your sending accounts.', href: '#/project/' + p.id, l: 'Review' });
-        else if (t.errors) alerts.push({ lvl: 'warning', t: p.name + ': a campaign is blocked', d: 'Open the project to see which campaign needs attention.', href: '#/project/' + p.id, l: 'Review' });
+        if (t.emailed >= 20 && t.bounce_rate >= 5) alerts.push({ key: 'p:' + p.id + ':bounce', lvl: 'critical', t: p.name + ': high bounce rate (' + t.bounce_rate + '%)', d: 'Pause the campaign and verify your lead list to protect your sending accounts.', href: '#/project/' + p.id, l: 'Review' });
+        else if (t.errors) alerts.push({ key: 'p:' + p.id + ':blocked', lvl: 'warning', t: p.name + ': a campaign is blocked', d: 'Open the project to see which campaign needs attention.', href: '#/project/' + p.id, l: 'Review' });
       });
-      badSenders.forEach(function (s) { alerts.push({ lvl: s.status === 'active' ? 'warning' : 'critical', t: (s.label || s.email) + ': ' + (s.last_error ? 'reporting an error' : s.status), d: s.last_error || 'This account is not sending right now.', href: '#/senders', l: 'Open' }); });
+      badSenders.forEach(function (s) { alerts.push({ key: 's:' + s.id + ':' + (s.last_error ? 'err' : 'down'), lvl: s.status === 'active' ? 'warning' : 'critical', t: (s.label || s.email) + ': ' + (s.last_error ? 'reporting an error' : s.status), d: s.last_error || 'This account is not sending right now.', href: '#/senders', l: 'Open' }); });
+      alerts.forEach(function (x) { x.isNew = seen.indexOf(x.key) === -1; });
+      alerts.sort(function (x, y) { return (x.lvl === y.lvl ? 0 : x.lvl === 'critical' ? -1 : 1) || (y.isNew - x.isNew); });
+      var critical = alerts.filter(function (x) { return x.lvl === 'critical'; }).length, unseen = alerts.filter(function (x) { return x.isNew; }).length;
+      // Reviewed state lives on the server (nothing is stored in the browser); only alerts still showing are kept, so a problem that returns counts as new.
+      function markSeen(keys) { return SB.api.put('/api/settings/health-seen', { keys: keys }).then(function () { return load(); }, function (e) { ui.toast(SB.api.friendly(e), true); }); }
       function glance(icon, label, value, note, href, btn, tipText) {
         return h('div', { class: 'card glance', tip: tipText }, h('div', { class: 'glance-h' }, SB.icon(icon), h('span', { text: label })),
           h('div', { class: 'glance-v' }, h('b', { text: value }), h('span', { class: 'muted', text: note })), h('a', { class: 'btn btn-sm', href: href }, btn));
       }
-      var health = h('div', { class: 'card glance-health' }, h('div', { class: 'glance-h' }, SB.icon('alert'), h('span', { text: 'Campaign health' }), alerts.length ? h('span', { class: 'pill pill-error', text: String(alerts.length) }) : null,
-        ui.info('Problems found in your campaigns and sending accounts, most urgent first. Nothing here means all is well.')),
-        alerts.length ? h('div', { class: 'health-list' }, alerts.sort(function (x, y) { return x.lvl === y.lvl ? 0 : x.lvl === 'critical' ? -1 : 1; }).slice(0, 6).map(function (x) {
-          return h('div', { class: 'health-item ' + x.lvl }, h('div', null, h('b', { text: x.t }), h('div', { class: 'small muted', text: x.d })), h('div', { class: 'health-side' }, h('span', { class: 'small faint', text: x.lvl === 'critical' ? 'Critical' : 'Warning' }), h('a', { class: 'btn btn-sm', href: x.href }, x.l)));
+      var health = h('div', { class: 'card glance-health' }, h('div', { class: 'glance-h' },
+        h('span', { class: 'health-badge', tip: unseen ? fmt.num(unseen) + (unseen === 1 ? ' alert you have not reviewed yet' : ' alerts you have not reviewed yet') : 'Nothing new to review' }, SB.icon('alert'), unseen ? h('span', { class: 'dot-n' + (alerts.some(function (x) { return x.isNew && x.lvl === 'critical'; }) ? ' crit' : ''), text: unseen > 9 ? '9+' : String(unseen) }) : null),
+        h('span', { text: 'Campaign health' }),
+        critical ? h('span', { class: 'pill pill-error', tip: 'Problems that can hurt your sending accounts and need action now.', text: fmt.num(critical) + ' critical' }) : null,
+        alerts.length > critical ? h('span', { class: 'pill pill-paused', tip: 'Problems worth a look that are not urgent.', text: fmt.num(alerts.length - critical) + (alerts.length - critical === 1 ? ' warning' : ' warnings') }) : null,
+        ui.info('Problems found in your campaigns and sending accounts, most urgent first. The badge counts alerts you have not reviewed yet. Nothing here means all is well.'),
+        unseen ? h('button', { class: 'btn btn-ghost btn-sm', type: 'button', tip: 'Mark everything here as reviewed. A problem that comes back will show as new again.', on: { click: function () { markSeen(alerts.map(function (x) { return x.key; })); } } }, 'Mark all reviewed') : null),
+        alerts.length ? h('div', { class: 'health-list' }, alerts.slice(0, 6).map(function (x) {
+          return h('div', { class: 'health-item ' + x.lvl }, h('div', null, h('b', { text: x.t }), x.isNew ? h('span', { class: 'tag tag-new', text: 'New' }) : null, h('div', { class: 'small muted', text: x.d })), h('div', { class: 'health-side' }, h('span', { class: 'small faint', text: x.lvl === 'critical' ? 'Critical' : 'Warning' }),
+            h('a', { class: 'btn btn-sm', href: x.href, on: { click: function () { if (x.isNew) SB.api.put('/api/settings/health-seen', { keys: seen.concat([x.key]).filter(function (k) { return alerts.some(function (a) { return a.key === k; }); }) }).catch(function () {}); } } }, x.l)));
         })) : h('p', { class: 'muted', text: attnNote + '.' }));
       var ov = r[5];
       function stat(icon, label, value, note, href, tipText) {
@@ -224,7 +235,7 @@
     }
 
     function load() {
-      return Promise.all([SB.api.get('/api/projects' + (st.archived ? '?archived=1' : '')), SB.api.get('/api/senders'), SB.api.get('/api/stats'), SB.api.get('/api/inbox?limit=1'), SB.api.get('/api/drafts'), SB.api.get('/api/overview?tz=' + (-new Date().getTimezoneOffset()))]).then(render, function (e) {
+      return Promise.all([SB.api.get('/api/projects' + (st.archived ? '?archived=1' : '')), SB.api.get('/api/senders'), SB.api.get('/api/stats'), SB.api.get('/api/inbox?limit=1'), SB.api.get('/api/drafts'), SB.api.get('/api/overview?tz=' + (-new Date().getTimezoneOffset())), SB.api.get('/api/settings')]).then(render, function (e) {
         if (e.code !== 'offline' && !built) SB.mount(topSlot, h('div', { class: 'form-error', text: SB.api.friendly(e) }));
       });
     }

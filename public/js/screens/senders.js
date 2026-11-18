@@ -12,19 +12,36 @@
     if (score >= 50) return { label: 'Needs care', cls: 'warn' };
     return { label: 'At risk', cls: 'bad' };
   }
-  var HEALTH_TIP = 'A 0-100 score based on recent bounces and send failures. 90+ is excellent, below 50 and SenderBolt pauses this account automatically to protect it.';
+  var HEALTH_TIP = 'A 0-100 score based on recent bounces and send failures. 90+ is excellent. When it falls below this account\u2019s protection threshold (see Protection level in its settings), SenderBolt stops using the account automatically to protect it.';
+  var LEVELS = {
+    low: { label: 'Low', below: 30, tip: 'Pauses only when the account is clearly in trouble (health below 30, or 8 failed sends in a row). For accounts you can afford to push.' },
+    medium: { label: 'Medium', below: 50, tip: 'The balanced default: pauses below health 50, or after 5 failed sends in a row.' },
+    high: { label: 'High', below: 70, tip: 'Strictest: pauses early, below health 70 or after 3 failed sends in a row. Best for your most valuable accounts.' }
+  };
+  function isForced(s) { return !!s.force_active; }
 
   function state(s) {
     if (s.status === 'disabled') return { key: 'draft', label: 'Disabled', tip: 'This account is switched off and will never be used.' };
     if (s.status === 'paused') return { key: 'paused', label: 'Paused', tip: s.last_error ? 'Paused automatically: ' + s.last_error : 'Nothing is sent from this account until you resume it.' };
-    if (s.health_score < 50) return { key: 'error', label: 'Needs attention', tip: 'The health score is very low, so this account is not used until it recovers.' };
+    if (s.health_score < (s.health_floor || 50) && !isForced(s)) return { key: 'error', label: 'Needs attention', tip: 'The health score (' + s.health_score + ') is below this account\u2019s protection threshold (' + (s.health_floor || 50) + '), so it is not used until it recovers. You can override this with Force continue in its settings.' };
     if (s.warmup_enabled && s.limit_today < s.daily_limit) return { key: 'active', label: s.warmup_slowed ? 'Warming up (slowed)' : 'Warming up', tip: 'Warm-up day ' + s.warmup_day + ' of about ' + s.warmup_reaches_day + '. Today: up to ' + s.limit_today + ' emails, growing each day the account is really used.' + (s.warmup_slowed ? ' Growth is slowed because of recent bounces.' : '') };
+    if (isForced(s)) return { key: 'active', label: 'Active (forced)', tip: 'Force continue is on until ' + fmt.dateTime(s.force_until) + ': automatic health pauses are skipped for this account.' };
     return { key: 'active', label: 'Active', tip: 'Ready to send.' };
+  }
+  // Does this account need the owner? Returns a list of plain-language problems (empty = all good).
+  function problems(s, rt) {
+    var out = [];
+    if (s.status === 'paused') out.push({ code: 'paused', text: s.last_error ? 'Paused: ' + s.last_error : 'Paused: nothing is sent from this account until you resume it.' });
+    if (s.status === 'active' && s.health_score < (s.health_floor || 50) && !isForced(s)) out.push({ code: 'health', text: 'Health score ' + s.health_score + ' is below the protection threshold (' + (s.health_floor || 50) + ').' });
+    if (s.status === 'active' && s.last_error) out.push({ code: 'error', text: 'Last problem: ' + s.last_error });
+    if (s.status === 'active' && rt === 'error') out.push({ code: 'imap', text: 'The inbox cannot be read, so replies and bounces are not being detected.' });
+    return out;
   }
   function pill(st) { return h('span', { class: 'pill pill-' + st.key, tip: st.tip }, st.label); }
 
   function trackingChip(rt) {
     var map = {
+      off: ['warn', 'Replies detection off', 'Reply detection is switched off for this account: replies still reach your Inbox, but follow-ups keep going to people who answer. Turn it on in the account settings.'],
       ok: ['good', 'Replies detected', 'SenderBolt can see replies sent to this account, so it stops following up when someone answers.'],
       pending: ['warn', 'Checking replies…', 'Waiting for the first successful check of this inbox. Run "Test connection" if this stays for more than a few minutes.'],
       error: ['bad', 'Replies not detected', 'SenderBolt cannot read this inbox, so follow-ups will not run for it. Run "Test connection" to see why.'],
@@ -150,7 +167,7 @@
   function showTest(sender, result) {
     var ok = result.smtp && result.smtp.ok;
     ui.modal({ title: ok ? 'Connection works' : 'Connection problem', body: h('div', null,
-      h('p', { class: 'muted', text: sender.email }), testResult(result),
+      h('p', { class: 'muted' }, ui.email(sender.email)), testResult(result),
       ok ? null : h('p', { class: 'small muted', text: 'Check the App Password and that 2-Step Verification is on, then open the sender and test again.' })),
       actions: [{ label: 'Done', kind: 'primary' }] });
   }
@@ -164,6 +181,8 @@
   // ---- settings slide-over -----------------------------------------------------------------
   function settingsPanel(s, onDone) {
     var p = ui.panel(s.email), err = h('div', { class: 'form-error hidden', role: 'alert' });
+    var ph = p.body.parentNode && p.body.parentNode.querySelector('.panel-head h2');
+    if (ph) { while (ph.firstChild) ph.removeChild(ph.firstChild); ph.appendChild(ui.email(s.email)); }
     var name = h('input', { class: 'input', id: 'st-name', maxlength: 80, value: s.from_name || '' });
     var limit = h('input', { class: 'input', id: 'st-limit', type: 'number', min: 1, max: CAP, value: s.daily_limit });
     var warm = warmControls(s, 'st');
@@ -180,6 +199,36 @@
     var track = h('input', { class: 'input', id: 'st-track', maxlength: 253, placeholder: 'Optional', value: s.tracking_domain || '' });
     var newPass = h('input', { class: 'input', id: 'st-pass', type: 'password', autocomplete: 'new-password', placeholder: 'Leave empty to keep the current one', maxlength: 64 });
 
+    // ---- replies + protection (v1.8) ----
+    var replyOn = h('input', { type: 'checkbox', id: 'st-reply', class: 'switch', role: 'switch' }); replyOn.checked = s.reply_detection !== 0;
+    var level = s.protection_level || 'medium';
+    var levelBtns = {};
+    var levelBox = h('div', { class: 'seg-level', role: 'radiogroup', 'aria-label': 'Protection level' }, ['low', 'medium', 'high'].map(function (k) {
+      var b = h('button', { class: 'level-opt' + (k === level ? ' on' : ''), type: 'button', role: 'radio', 'aria-checked': k === level ? 'true' : 'false', tip: LEVELS[k].tip }, h('b', { text: LEVELS[k].label }), h('span', { class: 'small', text: 'pause below ' + LEVELS[k].below }));
+      b.addEventListener('click', function () { level = k; Object.keys(levelBtns).forEach(function (x) { levelBtns[x].classList.toggle('on', x === k); levelBtns[x].setAttribute('aria-checked', x === k ? 'true' : 'false'); }); });
+      levelBtns[k] = b; return b;
+    }));
+    var forceBtn = h('button', { class: 'btn btn-sm', type: 'button' });
+    var forceTxt = h('div', { class: 'small' });
+    var forceBox = h('div', { class: 'force-box' });
+    function paintForce(on, until) {
+      forceBox.classList.toggle('on', on);
+      forceTxt.textContent = on ? 'Force continue is ON until ' + fmt.dateTime(until) + '. Automatic health and failure pauses are skipped for this account. Wrong passwords and provider limits still stop it.' :
+        'Use this for a large or experimental campaign when the automatic safety pause would interrupt it. It lasts 72 hours, then protection applies again. Use with care: a damaged account can be blocked by Google.';
+      forceBtn.textContent = on ? 'Turn off Force continue' : (s.status === 'paused' ? 'Force start' : 'Force continue');
+      forceBtn.onclick = function () {
+        function go() {
+          forceBtn.disabled = true;
+          return SB.api.patch('/api/senders/' + s.id, { force_continue: !on }).then(function (r) { ui.toast(!on ? 'Force continue is on for 72 hours' : 'Force continue turned off'); onDone(); on = r.sender.force_active; paintForce(on, r.sender.force_until); },
+            function (e) { ui.toast(SB.api.friendly(e), true); }).then(function () { forceBtn.disabled = false; });
+        }
+        if (on) return go();
+        ui.confirm({ title: (s.status === 'paused' ? 'Force start' : 'Force continue') + ' ' + s.email + '?', message: 'Automatic pauses for low health or repeated failures will be skipped for 72 hours. Only do this if you accept the risk to this account\u2019s reputation.', confirmLabel: s.status === 'paused' ? 'Force start' : 'Force continue', danger: true, onConfirm: go });
+      };
+    }
+    forceBox.appendChild(h('div', { class: 'small muted' }, forceTxt)); forceBox.appendChild(h('div', null, forceBtn));
+    paintForce(!!s.force_active, s.force_until);
+
     var usage = h('div', { class: 'usage' },
       h('div', { class: 'usage-top' }, h('span', { text: 'Today' }), h('b', { text: fmt.num(s.sent_today) + ' of ' + fmt.num(s.limit_today) })), ui.progress(s.limit_today ? s.sent_today / s.limit_today * 100 : 0));
 
@@ -188,7 +237,7 @@
       err.classList.add('hidden');
       var lim = num(limit);
       if (!isFinite(lim) || lim < 1 || lim > CAP) { err.textContent = 'Emails per day must be between 1 and ' + CAP + '.'; err.classList.remove('hidden'); return; }
-      var body = { from_name: name.value, daily_limit: lim, warmup_enabled: warm.box.checked, warmup_pace: warm.pace.value, delay_mode: mode.value, signature_html: textToSig(sig.value), tracking_domain: track.value.trim() };
+      var body = { reply_detection: replyOn.checked, protection_level: level, from_name: name.value, daily_limit: lim, warmup_enabled: warm.box.checked, warmup_pace: warm.pace.value, delay_mode: mode.value, signature_html: textToSig(sig.value), tracking_domain: track.value.trim() };
       if (mode.value === 'random') { body.delay_min_sec = num(dmin); body.delay_max_sec = num(dmax); } else body.delay_fixed_sec = num(dfix);
       if (newPass.value) body.password = newPass.value;
       save.disabled = true;
@@ -213,6 +262,12 @@
       field('Emails per day', limit, 'Maximum ' + CAP + '. Gmail allows about 500 per day, so ' + CAP + ' keeps a safe 100-email buffer and protects your account.', 'st-limit'),
       warm.node,
       field('Pause between emails', mode, 'Random pauses look like a human. Very short pauses can trigger spam filters.', 'st-mode'), randBox, fixBox,
+      h('h3', { class: 'sub-h', text: 'Replies' }),
+      h('div', { class: 'set-row' }, h('div', { class: 'set-txt' }, h('label', { for: 'st-reply', text: 'Replies detected' }, ' ', ui.info('SenderBolt reads this account\u2019s inbox to notice replies. Each reply stops follow-ups for THAT person only; everyone else in the campaign keeps going.')),
+        h('div', { class: 'hint', text: 'When someone replies, stop follow-ups for that person only. Turn off to keep following up regardless (replies still reach your Inbox). "stop campaign" requests and bounces are always respected.' })), replyOn),
+      h('h3', { class: 'sub-h', text: 'Protection' }),
+      field('Protection level', levelBox, 'How early SenderBolt pauses this account to protect its reputation. Based on the account\u2019s health score and failed sends.', 'st-level'),
+      forceBox,
       h('h3', { class: 'sub-h', text: 'Signature' }),
       field('Added to the end of every email', sig, 'Plain text. Line breaks are kept.', 'st-sig'),
       h('h3', { class: 'sub-h', text: 'Advanced' }),
@@ -221,23 +276,63 @@
       h('div', { class: 'panel-foot' }, save, del)));
   }
 
+  // ---- quick actions (one click, right on the card) -------------------------------------------------
+  function setStatus(s, status, msg, onDone) {
+    return SB.api.post('/api/senders/' + s.id + '/status', { status: status }).then(function () { ui.toast(msg); onDone(); }, function (e) { ui.toast(SB.api.friendly(e), true); });
+  }
+  // "Needs attention" opens a short list of what is wrong, each with a one-click way to deal with it.
+  function attentionDialog(s, rt, onDone) {
+    var list = problems(s, rt), body = h('div', null, h('p', { class: 'muted' }, ui.email(s.email)));
+    var close;
+    list.forEach(function (x) { body.appendChild(h('div', { class: 'callout warn' }, SB.icon('alert'), ' ', x.text)); });
+    var acts = h('div', { class: 'actions pad-t' });
+    function act(label, fn, kind) { var b = h('button', { class: 'btn btn-sm' + (kind ? ' ' + kind : ''), type: 'button' }, label); b.addEventListener('click', function () { b.disabled = true; Promise.resolve(fn()).then(function () { b.disabled = false; }); }); acts.appendChild(b); }
+    var codes = list.map(function (x) { return x.code; });
+    if (s.status === 'paused') act('Resume sending', function () { return setStatus(s, 'active', 'Resumed', onDone).then(function () { close(); }); }, 'btn-primary');
+    if (codes.indexOf('health') !== -1 || (s.status === 'paused' && s.health_score < (s.health_floor || 50))) act(s.status === 'paused' ? 'Force start' : 'Force continue', function () {
+      return SB.api.patch('/api/senders/' + s.id, { force_continue: true }).then(function () { ui.toast('Force continue is on for 72 hours'); onDone(); close(); }, function (e) { ui.toast(SB.api.friendly(e), true); });
+    });
+    act('Test connection', function () { close(); return SB.api.post('/api/senders/' + s.id + '/test', {}).then(function (r) { showTest(s, r); onDone(); }, function (e) { ui.toast(SB.api.friendly(e), true); }); });
+    act('Open settings', function () { close(); settingsPanel(s, onDone); });
+    body.appendChild(acts);
+    close = ui.modal({ title: 'This account needs attention', body: body, actions: [{ label: 'Close' }] });
+  }
+
   // ---- cards -------------------------------------------------------------------------------
   function card(s, rt, onDone) {
-    var st = state(s), hi = healthInfo(s.health_score);
+    var st = state(s), hi = healthInfo(s.health_score), probs = problems(s, rt);
     var pct = s.limit_today ? s.sent_today / s.limit_today * 100 : 0;
     var testBtn = h('button', { class: 'btn btn-sm', type: 'button', tip: 'Logs in to this account right now to check that sending and reply detection work.' }, 'Test connection');
     testBtn.addEventListener('click', function () { runTest(s, testBtn, onDone); });
     var setBtn = h('button', { class: 'btn btn-sm', type: 'button' }, 'Settings');
     setBtn.addEventListener('click', function () { settingsPanel(s, onDone); });
+    // Pause / Resume in one click (no dialog: both are instantly reversible and change nothing about the people in campaigns).
+    var quick = [];
+    if (s.status === 'active') {
+      var pb = h('button', { class: 'btn btn-sm', type: 'button', tip: 'Stop sending from this account right now. Resume any time; nobody is lost.' }, SB.icon('pause'), 'Pause');
+      pb.addEventListener('click', function () { pb.disabled = true; setStatus(s, 'paused', 'Paused ' + s.email, onDone).then(function () { pb.disabled = false; }); });
+      quick.push(pb);
+    } else if (s.status === 'paused') {
+      var rb = h('button', { class: 'btn btn-sm btn-primary', type: 'button', tip: 'Start sending from this account again.' }, SB.icon('play'), 'Resume');
+      rb.addEventListener('click', function () { rb.disabled = true; setStatus(s, 'active', 'Resumed ' + s.email, onDone).then(function () { rb.disabled = false; }); });
+      quick.push(rb);
+    }
+    if (probs.length) {
+      var ab = h('button', { class: 'btn btn-sm btn-attn', type: 'button', tip: 'See what is wrong with this account and fix it in one click.' }, SB.icon('alert'), 'Needs attention (' + probs.length + ')');
+      ab.addEventListener('click', function () { attentionDialog(s, rt, onDone); });
+      quick.push(ab);
+    }
     return h('div', { class: 'card sender-card' },
-      h('div', { class: 'top' }, h('div', { class: 'who' }, h('h3', { text: s.from_name || s.email }), s.from_name ? h('div', { class: 'small muted', text: s.email }) : null), pill(st)),
+      h('div', { class: 'top' }, h('div', { class: 'who' }, h('h3', null, ui.email(s.from_name || s.email)), s.from_name ? h('div', { class: 'small muted' }, ui.email(s.email)) : null), pill(st)),
       h('div', { class: 'usage' },
         h('div', { class: 'usage-top' }, h('span', { class: 'small muted', text: 'Sent today' }), h('b', { tip: 'Emails sent today out of what this account may send today' + (s.warmup_enabled && s.limit_today < s.daily_limit ? ' (warm-up is still growing it toward ' + s.daily_limit + ')' : '') + '. Your absolute maximum is ' + CAP + ' per day.', text: fmt.num(s.sent_today) + ' / ' + fmt.num(s.limit_today) })),
         ui.progress(pct)),
       h('div', { class: 'chips' },
         h('span', { class: 'chip chip-' + hi.cls, tip: HEALTH_TIP }, 'Health: ' + hi.label + ' (' + s.health_score + ')'),
+        h('span', { class: 'chip', tip: (LEVELS[s.protection_level] || LEVELS.medium).tip }, 'Protection: ' + (LEVELS[s.protection_level] || LEVELS.medium).label),
         trackingChip(rt)),
-      h('div', { class: 'small muted', text: s.status === 'active' && s.next_send_at ? 'Next email ' + fmt.until(s.next_send_at) : (s.last_error ? 'Last problem: ' + s.last_error : ' ') }),
+      h('div', { class: 'small muted' }, s.status === 'active' && s.next_send_at ? 'Next email ' + fmt.until(s.next_send_at) : (s.last_error ? ui.email('Last problem: ' + s.last_error) : ' ')),
+      quick.length ? h('div', { class: 'sender-quick' }, h('div', { class: 'actions' }, quick)) : null,
       h('div', { class: 'actions' }, testBtn, setBtn));
   }
 

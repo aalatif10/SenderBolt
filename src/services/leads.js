@@ -263,8 +263,10 @@ function leadFilter(userId, folderId, o) {
   var where = ['l.user_id = ?'], params = [userId];
   if (folderId) { where.push('l.folder_id = ?'); params.push(folderId); }
   if (o.status && o.status !== 'all') {
-    if (STATUSES.indexOf(o.status) === -1) throw new AppError('validation', 'Invalid status filter', 400, { status: 'Invalid status' });
-    where.push('l.verify_status = ?'); params.push(o.status);
+    // One status or a comma-separated group, e.g. "risky,catch_all" for everything the verifier is unsure about.
+    var wanted = String(o.status).split(',').filter(Boolean).slice(0, STATUSES.length);
+    if (!wanted.length || wanted.some(function (x) { return STATUSES.indexOf(x) === -1; })) throw new AppError('validation', 'Invalid status filter', 400, { status: 'Invalid status' });
+    where.push('l.verify_status IN (' + placeholders(wanted.length) + ')'); params.push.apply(params, wanted);
   }
   if (o.search) {
     var like = '%' + String(o.search).slice(0, 100).replace(/[\\%_]/g, '\\$&') + '%';
@@ -426,16 +428,88 @@ Leads.prototype.addSuppression = function (userId, emails, reason) {
   });
 };
 
-Leads.prototype.listSuppression = function (userId, page, pageSize) {
+var SUP_SORTS = { email: 'email', reason: 'reason', created_at: 'created_at' };
+var SUP_GROUPS = { unsubscribed: ["'unsubscribed'", "'replied_stop'"], bounced: ["'bounced'"], complaint: ["'complaint'"], manual: ["'manual'"] };
+// Do-not-email list / Unsubscriptions page. Filters: group (unsubscribed | bounced | complaint | manual), q (address search);
+// sorting is whitelisted. counts are always for the whole list so the tabs stay truthful whatever the filter.
+Leads.prototype.listSuppression = function (userId, page, pageSize, o) {
   var p = Math.max(1, parseInt(page, 10) || 1), s = Math.min(200, Math.max(1, parseInt(pageSize, 10) || 50)), self = this;
-  return this.db.get('SELECT COUNT(*) AS c FROM suppression WHERE user_id = ?', [userId]).then(function (t) {
-    return self.db.all('SELECT email, reason, created_at FROM suppression WHERE user_id = ? ORDER BY id DESC LIMIT ? OFFSET ?', [userId, s, (p - 1) * s])
-      .then(function (items) { return { items: items, total: t.c, page: p, pageSize: s }; });
+  o = o || {};
+  var where = 'user_id = ?', params = [userId];
+  try {
+    if (o.group && o.group !== 'all') {
+      if (!SUP_GROUPS[o.group]) throw new AppError('validation', 'Invalid filter', 400, { group: 'Invalid filter' });
+      where += ' AND reason IN (' + SUP_GROUPS[o.group].join(',') + ')';
+    }
+  } catch (e) { return Promise.reject(e); }
+  if (o.q) { where += " AND email LIKE ? ESCAPE '\\'"; params.push('%' + String(o.q).slice(0, 100).replace(/[\\%_]/g, '\\$&') + '%'); }
+  var col = SUP_SORTS[o.sort] || 'id', dir = o.dir === 'asc' ? 'ASC' : 'DESC';
+  return Promise.all([
+    this.db.get('SELECT COUNT(*) AS c FROM suppression WHERE ' + where, params),
+    this.db.all('SELECT reason, COUNT(*) AS n FROM suppression WHERE user_id = ? GROUP BY reason', [userId])
+  ]).then(function (r) {
+    var counts = { all: 0, unsubscribed: 0, bounced: 0, complaint: 0, manual: 0 };
+    r[1].forEach(function (x) { var n = Number(x.n); counts.all += n; if (x.reason === 'replied_stop') counts.unsubscribed += n; else if (counts[x.reason] !== undefined) counts[x.reason] += n; });
+    return self.db.all('SELECT email, reason, created_at FROM suppression WHERE ' + where + ' ORDER BY ' + col + ' ' + dir + ', id ' + dir + ' LIMIT ? OFFSET ?', params.concat([s, (p - 1) * s]))
+      .then(function (items) { return { items: items, total: r[0].c, page: p, pageSize: s, counts: counts }; });
   });
 };
 
-Leads.prototype.removeSuppression = function (userId, addr) {
-  return this.db.run('DELETE FROM suppression WHERE user_id = ? AND email = ?', [userId, email.normalize(addr)]).then(function (r) { return { removed: r.changes }; });
+function emailList(input, max) {
+  var list = Array.isArray(input) ? input : (typeof input === 'string' ? [input] : []);
+  if (!list.length || list.length > max) throw new AppError('validation', 'Choose between 1 and ' + max + ' addresses', 400, { emails: 'Choose between 1 and ' + max + ' addresses' });
+  var seen = {}, out = [];
+  list.forEach(function (x) { var a = email.normalize(x); if (typeof x === 'string' && a && !seen[a]) { seen[a] = true; out.push(a); } });
+  if (!out.length) throw new AppError('validation', 'No valid addresses selected', 400, { emails: 'No valid addresses selected' });
+  return out;
+}
+var MAX_SUP_BATCH = 1000;
+
+// "Remove from list / Unblock": the block is lifted so the address can be emailed again by future campaigns. The lead and all of
+// its history stay. A bounced address is reset to "unverified" so it must be checked again before it is used.
+Leads.prototype.removeSuppression = function (userId, input, ip) {
+  var self = this, list;
+  try { list = emailList(input && typeof input === 'object' && !Array.isArray(input) ? (input.emails || input.email) : input, MAX_SUP_BATCH); } catch (e) { return Promise.reject(e); }
+  return this.db.transaction(function (tx) {
+    var removed = 0, rechecks = 0;
+    return list.reduce(function (p, addr) {
+      return p.then(function () {
+        return tx.get('SELECT reason FROM suppression WHERE user_id = ? AND email = ?', [userId, addr]).then(function (row) {
+          if (!row) return null;
+          return tx.run('DELETE FROM suppression WHERE user_id = ? AND email = ?', [userId, addr]).then(function (r) {
+            removed += r.changes;
+            if (row.reason !== 'bounced') return null;
+            return tx.run("UPDATE leads SET verify_status = 'unverified', verify_error = NULL, verified_at = NULL WHERE user_id = ? AND email = ? AND verify_status = 'invalid'", [userId, addr]).then(function (u) { rechecks += u.changes; });
+          });
+        });
+      });
+    }, Promise.resolve()).then(function () {
+      return audit.log(tx, { userId: userId, action: 'suppression.unblock', ip: ip, meta: { requested: list.length, removed: removed } }, self.now);
+    }).then(function () { return { removed: removed, needs_recheck: rechecks }; });
+  });
+};
+
+// "Delete": permanent. The block is erased AND the address is purged from your lead lists (people who are in a running or
+// paused campaign are kept there: deleting them mid-sequence would break that campaign; they are reported as skipped).
+Leads.prototype.deleteSuppression = function (userId, input, ip) {
+  var self = this, list;
+  try { list = emailList(input && typeof input === 'object' && !Array.isArray(input) ? input.emails : input, MAX_SUP_BATCH); } catch (e) { return Promise.reject(e); }
+  return this.db.transaction(function (tx) {
+    var deleted = 0, leadsDeleted = 0, keptInCampaign = 0;
+    return list.reduce(function (p, addr) {
+      return p.then(function () {
+        return tx.run('DELETE FROM suppression WHERE user_id = ? AND email = ?', [userId, addr]).then(function (r) {
+          deleted += r.changes;
+          return tx.get('SELECT COUNT(*) AS c FROM campaign_leads cl JOIN leads l ON l.id = cl.lead_id WHERE l.user_id = ? AND l.email = ?', [userId, addr]);
+        }).then(function (inCamp) {
+          if (inCamp.c > 0) { keptInCampaign++; return null; }
+          return tx.run('DELETE FROM leads WHERE user_id = ? AND email = ?', [userId, addr]).then(function (r) { leadsDeleted += r.changes; });
+        });
+      });
+    }, Promise.resolve()).then(function () {
+      return audit.log(tx, { userId: userId, action: 'suppression.delete', ip: ip, meta: { requested: list.length, deleted: deleted, leads: leadsDeleted } }, self.now);
+    }).then(function () { return { deleted: deleted, leads_deleted: leadsDeleted, kept_in_campaigns: keptInCampaign }; });
+  });
 };
 
 module.exports = { Leads: Leads, parseInput: parseInput, classifyDomain: classifyDomain };

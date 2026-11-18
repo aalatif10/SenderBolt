@@ -33,7 +33,11 @@ function recompute(db, senderId, now) {
     var score = health.computeHealth({ sent: sent + rejected, hardBounces: bouncedLater + rejected, replies: replies, complaints: 0 });
     var penalty = throttle.warmupPenaltySteps(sent7, bounced7);
     return db.run('UPDATE senders SET health_score = ?, warmup_penalty = ? WHERE id = ?', [score, penalty, senderId]).then(function () {
-      if (score >= health.AUTO_PAUSE_BELOW) return score;
+      return db.get('SELECT protection_level, force_until FROM senders WHERE id = ?', [senderId]);
+    }).then(function (lv) {
+      // The pause threshold depends on the sender's protection level; a "force continue" override skips the pause.
+      var probe = { health_score: score, protection_level: lv && lv.protection_level, force_until: lv && lv.force_until };
+      if (!health.isBelowFloor(probe, now)) return score;
       return db.run("UPDATE senders SET status = 'paused', last_error = ?, updated_at = ? WHERE id = ? AND status = 'active'",
         ['Auto-paused: health score fell to ' + score + ' (too many bounces)', now, senderId]).then(function () { return score; });
     });

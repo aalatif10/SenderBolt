@@ -1,4 +1,4 @@
-# SenderBolt - Architecture Report (v1.1.0)
+# SenderBolt - Architecture Report (updated through v1.8.0)
 
 Target runtime: **Node.js 12.22.x on Windows 7 (64-bit)**. Code is written in ES2018-style JavaScript
 (no `?.`, `??`, or other post-Node-12 syntax) with promise chains.
@@ -331,3 +331,31 @@ Frontend
 | Wizard Sending tab | `app.css` (v1.7 block) | One card per section, evenly padded rows with dividers, no nested boxes. |
 
 No migration in v1.7.0.
+
+
+## v1.8.0 - sender protection, scheduling, do-not-email overhaul, global polish
+
+Migration `src/db/migrations/011_v180.sql` (forward-only): `senders.reply_detection`, `senders.protection_level`, `senders.force_until`; `campaigns.start_at`, `campaigns.priority_mode`; `campaign_leads.removed_at`; `user_settings.health_seen`.
+
+| # | Item | Where | What |
+|---|---|---|---|
+| 1 | Long emails | `public/js/ui.js` `ui.email()`, `app.css` `.email-trunc` | One helper: ellipsis, full address in the tooltip. Used on sender cards/panels, Settings, wizard sender table, People, Leads, Inbox, Reports, Do-not-email, Studio drawer. |
+| 2 | Quick sender actions | `screens/senders.js` `card()` | One-click Pause / Resume and a "Needs attention (n)" button that opens the problem list. |
+| 3, 12 | Column sorting | `lists.js` `sortHeader`, `campaigns.js` `PEOPLE_SORTS`, `leads.js` `SUP_SORTS` | Sorting is server-side with whitelisted columns (no user text reaches ORDER BY). People: email, name, company, status, step, next send, last sent, sender, opens, replied. |
+| 4 | Bounced / risky in campaigns | `campaigns.js` `listLeads`, `campaignLive.js` `bulkLeads` remove, `studio.js` People tab | Risky chip + counts, "Select all N", bulk remove. Removing sets `campaign_leads.removed_at`: the person is hidden but status, messages and analytics stay. |
+| 5 | Leads status filter | `leads.js` (service `leadFilter`, screen chips) | Chips: All, Valid, Bounced, Risky (risky + catch-all), Not checked, with counts; "Select all N in this view"; clean "Remove". |
+| 6, 12 | Do-not-email list / Unsubscriptions | `public/js/suppress.js` (new, shared panel), `screens/leads.js`, `screens/hub.js`, `routes/leads.js` | Same panel on both screens: tabs ("Added by you" first on Unsubscriptions), search, sortable headers, checkboxes + Select All (also across pages). Two different actions: **Remove from list / Unblock** (`POST /api/suppression/remove`, bounced leads go back to "unverified") and **Delete** (`POST /api/suppression/delete`, erases the entry and purges the address from lead lists, except people inside campaigns). Both bulk (max 1000 per call, chunked in the UI), user-scoped, audited. |
+| 7 | Scheduled start | `campaigns.js` `startAtFor`, wizard Sending tab | `start_date` (local day, not past, max 90 days) becomes `start_at` = first sending hour in the campaign's time zone. `start()` sets `next_send_at = max(now, start_at)`; the engine skips campaigns whose `start_at` is in the future. Not editable on a live campaign (409). |
+| 8 | Send priority | `sendEngine.js` `_nextCandidate`, `priority_mode` | `followups_first` (default), `balanced`, `new_first`, via ORDER BY CASE. |
+| 9 | Replies detected | `inboxSync.js` `_applyReply`, tooltips | A reply stops follow-ups only for the person who replied; other people in the campaign carry on. Regression-tested. |
+| 10 | Reply detection per sender | `senders.reply_detection`, senders panel switch | Off: replies are still saved to the inbox but do not stop follow-ups; "stop campaign" requests and bounces are always honoured. Wizard review warns when it is off (`reply_detection_off`). |
+| 11 | Protection levels | `lib/health.js`, `senderHealth.js`, `sendEngine.js` | Low / Medium / High set the health floor and the error-streak limit (30/8, 50/5, 70/3). **Force continue** stores `force_until` (72 h), bypasses floor and streak pause, and resumes a paused sender; it expires on its own. |
+| 13 | Home Campaign health | `screens/home.js`, `services/settings.js` `setHealthSeen`, `PUT /api/settings/health-seen` | Critical / warning counts, a badge with the number of unreviewed alerts, "New" tags, "Mark all reviewed". Reviewed state is stored server-side (`health_seen`, keys like `p:<id>:bounce`, `s:<id>:err`) because the UI keeps nothing in the browser; only keys currently shown are kept, so a returning problem is new again. |
+| 14 | 12-hour send hours | `screens/settings.js`, `wizard.js`, `format.js` `hour12` | AM/PM selects; 24 is labelled midnight. Stored values stay 0-24. |
+| 15 | Global dates | `format.js` (`date`, `dateTime`, `created`, `tip`, `hourRange`), `ui.dateStamp` | "Nov 12, 2026" on project cards, campaign rows, list headers, Studio; tooltip shows date-time plus "x days ago". |
+
+Security notes: every new endpoint is session + CSRF protected, user-scoped and parameterized; `health_seen` keys are validated against a strict pattern and capped at 200; sort/filter inputs are whitelisted; Delete/Unblock never touch other users' rows; no browser storage was added (the source-safety scan `test/ui.js` still passes).
+
+Tests: `test/v180.js` (20 tests: protection levels, force + expiry, auto-pause, reply detection, per-person replies, priority order, scheduled start, suppression sort/filter/unblock/delete/scoping, lead multi-status filter, People sort/risky/removal history, health_seen). Migration lists in `test/integration.js` and `test/projects.js` include 011. `npm test` runs it after `test/live.js`.
+
+Not verified in this build: browser rendering of the new screens (checked by syntax and the source-safety scan only), real SMTP/IMAP, and Node 12 on Windows 7 (tested on a newer Node; code stays ES5-style).

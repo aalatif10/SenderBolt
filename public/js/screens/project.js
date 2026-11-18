@@ -33,7 +33,7 @@
       var head = h('div', null,
         h('div', { class: 'crumbs' }, h('a', { href: '#/' }, 'Home'), ' / ', p.name),
         h('div', { class: 'page-head' },
-          h('div', null, h('div', { class: 'actions' }, h('h1', { text: p.name }), ui.statusPill(p.status)), p.description ? h('p', { class: 'sub', text: p.description }) : null),
+          h('div', null, h('div', { class: 'actions' }, h('h1', { text: p.name }), ui.statusPill(p.status)), p.description ? h('p', { class: 'sub', text: p.description }) : null, p.created_at ? h('p', { class: 'small faint', tip: fmt.tip(p.created_at), text: fmt.created(p.created_at) }) : null),
           h('div', { class: 'actions' },
             h('a', { class: 'btn btn-sm btn-primary', href: '#/campaign/new/' + p.id, id: 'project-new-campaign' }, SB.icon('plus'), 'New campaign'),
             h('button', { class: 'btn btn-sm', type: 'button', on: { click: function () { editModal(p, load); } } }, 'Edit'),
@@ -122,7 +122,7 @@
             cb.addEventListener('change', function () { if (cb.checked) st.sel[c.id] = c.name; else delete st.sel[c.id]; paintCampaigns(); });
             return h('tr', { class: 'row-link' + (cb.checked ? ' selected' : ''), on: { click: function () { location.hash = '#/campaign/' + c.id; } } },
               h('td', { class: 'row-check' }, cb),
-              h('td', null, h('b', { text: c.name }), c.batches ? h('div', { class: 'small faint', text: c.batches + ' batches' }) : null), h('td', null, ui.statusPill(c.status)),
+              h('td', null, h('b', { text: c.name }), h('div', { class: 'small faint', tip: fmt.tip(c.created_at), text: (c.batches ? c.batches + ' batches \u00b7 ' : '') + fmt.created(c.created_at) })), h('td', null, ui.statusPill(c.status)),
               h('td', { class: 'c-steps' }, ui.stepBar(c.step_progress, { compact: true })),
               h('td', { text: fmt.num(c.sent) }), h('td', { text: fmt.num(c.metrics.replied) }), h('td', { text: fmt.num(c.stats.bounced) }), h('td', { text: fmt.until(c.next_send_at) }),
               h('td', null, h('div', { class: 'actions' }, c.status === 'draft' ? h('a', { class: 'btn btn-sm', href: '#/campaign/edit/' + c.id, tip: 'Change the emails, senders or schedule before you start.', on: { click: function (e) { e.stopPropagation(); } } }, 'Edit') : null, lifecycle(c, load), h('span', { class: 'faint' }, SB.icon('chevron')))));

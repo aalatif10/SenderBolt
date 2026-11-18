@@ -15,4 +15,24 @@ function computeHealth(s) {
   return Math.max(0, Math.min(100, Math.round(score)));
 }
 
-module.exports = { computeHealth: computeHealth, AUTO_PAUSE_BELOW: AUTO_PAUSE_BELOW, MIN_SAMPLE: MIN_SAMPLE };
+// Protection levels (per sender): how early SenderBolt automatically pauses an account.
+//  low    - pauses only when the account is clearly in trouble (score below 30; 8 failures in a row)
+//  medium - the default (score below 50; 5 failures in a row)
+//  high   - strictest, protects valuable accounts (score below 70; 3 failures in a row)
+var LEVELS = {
+  low: { pauseBelow: 30, streakLimit: 8 },
+  medium: { pauseBelow: AUTO_PAUSE_BELOW, streakLimit: 5 },
+  high: { pauseBelow: 70, streakLimit: 3 }
+};
+var LEVEL_NAMES = ['low', 'medium', 'high'];
+var FORCE_MS = 72 * 3600000;      // a "force continue" override lasts 72 hours, then protection applies again
+
+function level(sender) { return LEVELS[sender && sender.protection_level] || LEVELS.medium; }
+function floorFor(sender) { return level(sender).pauseBelow; }
+function streakLimitFor(sender) { return level(sender).streakLimit; }
+function isForced(sender, now) { return !!(sender && sender.force_until && sender.force_until > now); }
+// True when the automatic health rule should keep this sender from sending right now.
+function isBelowFloor(sender, now) { return !isForced(sender, now) && Number(sender.health_score) < floorFor(sender); }
+
+module.exports = { computeHealth: computeHealth, AUTO_PAUSE_BELOW: AUTO_PAUSE_BELOW, MIN_SAMPLE: MIN_SAMPLE, LEVELS: LEVELS, LEVEL_NAMES: LEVEL_NAMES, FORCE_MS: FORCE_MS,
+  floorFor: floorFor, streakLimitFor: streakLimitFor, isForced: isForced, isBelowFloor: isBelowFloor };

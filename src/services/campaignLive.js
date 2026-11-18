@@ -242,6 +242,9 @@ function install(C, h) {
             return tx.run("UPDATE campaign_leads SET status = 'active', next_send_at = ? WHERE id = ? AND status = 'paused'", [naturalDue(r, delays, t), r.id]).then(ok);
           }
           if (action === 'remove') {
+            // Bounced / unsubscribed / finished people keep their row (status, messages, analytics) and are only hidden from the list,
+            // so removing problem addresses never rewrites the campaign's history.
+            if (['bounced', 'unsubscribed', 'completed'].indexOf(r.status) !== -1) return tx.run('UPDATE campaign_leads SET removed_at = ? WHERE id = ?', [t, r.id]).then(ok);
             if (r.mails) return tx.run("UPDATE campaign_leads SET status = 'completed', next_send_at = NULL, status_note = 'Removed from the campaign' WHERE id = ? AND status IN ('pending','active','paused','error','replied')", [r.id]).then(ok);
             return tx.run('DELETE FROM campaign_leads WHERE id = ?', [r.id]).then(ok);
           }

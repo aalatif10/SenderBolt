@@ -32,7 +32,8 @@ module.exports = function register(router, d) {
   router.post('/api/leads/move', function (ctx) { return L.moveLeads(ctx.user.id, ctx.body.ids, ctx.body.folder_id, ctx.ip); });
   router.post('/api/leads/verify', { limit: verifyLimit }, function (ctx) { return L.verifyLeads(ctx.user.id, ctx.body.ids, ctx.ip); });
 
-  router.get('/api/suppression', function (ctx) { return L.listSuppression(ctx.user.id, ctx.query.page, ctx.query.pageSize); });
+  router.get('/api/suppression', function (ctx) { return L.listSuppression(ctx.user.id, ctx.query.page, ctx.query.pageSize, { group: ctx.query.group, q: ctx.query.q, sort: ctx.query.sort, dir: ctx.query.dir }); });
   router.post('/api/suppression', function (ctx) { return L.addSuppression(ctx.user.id, ctx.body.emails, ctx.body.reason).then(function (r) { return reply(201, r); }); });
-  router.post('/api/suppression/remove', function (ctx) { return L.removeSuppression(ctx.user.id, ctx.body.email); });
+  router.post('/api/suppression/remove', function (ctx) { return L.removeSuppression(ctx.user.id, ctx.body, ctx.ip); });
+  router.post('/api/suppression/delete', function (ctx) { return L.deleteSuppression(ctx.user.id, ctx.body, ctx.ip); });
 };

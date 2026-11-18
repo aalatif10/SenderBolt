@@ -57,6 +57,16 @@
     var s = SB.S.status[status] || SB.S.status.draft;
     return h('span', { class: 'pill pill-' + (SB.S.status[status] ? status : 'draft'), tip: s.tip + '', 'data-status': status }, s.label);
   }
+  // Long email addresses are cut with "..." so they never break a layout; the full address is always in the tooltip.
+  // tag: element to build (default span). Use SB.ui.email(addr) wherever an address is shown.
+  function emailText(addr, extraClass, tag) {
+    var a = String(addr == null ? '' : addr);
+    return h(tag || 'span', { class: 'email-trunc' + (extraClass ? ' ' + extraClass : ''), tip: a, text: a });
+  }
+  // A date with a full date-time + "x days ago" tooltip. prefix: e.g. 'Created '.
+  function dateStamp(ts, prefix, cls) {
+    return h('span', { class: cls || 'date-stamp', tip: SB.fmt.tip(ts) }, (prefix || '') + SB.fmt.date(ts));
+  }
   function info(text) { return h('span', { class: 'info-dot', tip: text }, 'i'); }
   function tile(label, value, note, tip, attn) {
     return h('div', { class: 'tile' + (attn ? ' attn' : '') }, h('div', { class: 'label' }, label, tip ? info(tip) : null), h('div', { class: 'value' + (/^\d[\d,.%]*$/.test(String(value)) ? '' : ' value-text'), text: value }), note ? h('div', { class: 'note', text: note }) : null);
@@ -149,5 +159,5 @@
     return function stop() { stopped = true; clearInterval(timer); document.removeEventListener('visibilitychange', onVis); };
   }
 
-  SB.ui = { toast: toast, modal: modal, confirm: confirmBox, panel: panel, statusPill: statusPill, info: info, tile: tile, progress: progress, lifecycleButton: lifecycleButton, stepBar: stepBar, optBadge: optBadge, sentimentBar: sentimentBar, poll: poll };
+  SB.ui = { email: emailText, dateStamp: dateStamp, toast: toast, modal: modal, confirm: confirmBox, panel: panel, statusPill: statusPill, info: info, tile: tile, progress: progress, lifecycleButton: lifecycleButton, stepBar: stepBar, optBadge: optBadge, sentimentBar: sentimentBar, poll: poll };
 })();

@@ -51,7 +51,7 @@ Set `SENDERBOLT_PUBLIC_ORIGIN=https://your-domain` to get one-click unsubscribe 
 **Home**
 - An amber strip appears only if the sending engine is switched off (`SENDERBOLT_SENDING=off`).
 - A **Next step** card tells you what to do next (connect a sender, add leads, create a project).
-- Four tiles: emails sent today vs. capacity, replies waiting, projects running, and anything needing attention. Hover the small **i** next to any label to read what it means.
+- Four tiles: emails sent today vs. capacity, replies waiting, projects running, and anything needing attention. The **Campaign health** card counts critical problems and shows a badge for alerts you have not reviewed yet (**Mark all reviewed** clears it; a problem that returns shows as New again). Hover the small **i** next to any label to read what it means.
 - **Projects** are shown as cards with progress, sent, replies, bounces and the next email time. Click one to open it. The page refreshes itself every 10 seconds.
 
 **Projects, campaigns and drill-down**
@@ -67,20 +67,22 @@ Set `SENDERBOLT_PUBLIC_ORIGIN=https://your-domain` to get one-click unsubscribe 
 4. Each card shows status (Active / Warming up / Paused / Needs attention), health, **Sent today / today's limit**, whether replies are detected, and the next email time. Hover anything with a dotted outline or an **i** for an explanation.
 5. **Settings** opens a side panel: daily limit, warm-up, pause between emails (random looks most natural), plain-text signature, tracking domain, replace the App Password, **Pause/Resume**, and **Remove** (blocked while a running or paused campaign uses the account).
 6. Campaigns rotate emails evenly across their accounts, so more accounts means more emails per day with less load on each.
+7. **Quick actions on each card**: **Pause / Resume** in one click, and **Needs attention (n)** which lists exactly what is wrong. Long addresses are shortened with "…"; hover to see the full address.
+8. In the side panel: **Replies detected** switch (off = replies still reach your Inbox but do not stop that person's follow-ups), **Protection level** (Low / Medium / High: how healthy an account must be to keep sending), and **Force continue** (keeps a below-threshold account sending for 72 hours; confirm first, it expires by itself).
 
 **Leads** (menu: Leads)
 1. **Lists** are folders for your contacts (a niche, market or location). Create one with **New list**, or choose **＋ New list…** while importing. Rename, **Export** (CSV) and **Delete** are at the top of each list.
 2. **Import leads** takes a **CSV or Excel (.xlsx) file** (drag it in or click; needs a column called "email", optional first name / last name / company, any other columns are kept for your email text) or **pasted emails** in any mix of commas, spaces and lines. Using Excel? Save as CSV first. Duplicates, badly written addresses and people on the do-not-email list are skipped, and a report shows every skipped row and why.
 3. **Check emails** verifies on demand (nothing runs in the background): choose only the unchecked ones, the whole list, or your selection. It confirms the address is written correctly and the domain has a mail server; it cannot prove the mailbox exists. A progress window shows the run and you can stop it any time.
 4. The **stats bar** shows total, valid rate, valid, invalid, risky and not checked. Click a figure to filter the table. The **Details** column explains each result in plain words; "Role" marks shared mailboxes like info@.
-5. Select rows to **Delete** them or put them on the do-not-email list. Leads that are waiting in a running or paused campaign cannot be deleted.
-6. **Do-not-email list** (second tab): unsubscribes, bounces and "stop" replies land here automatically; add your own by pasting addresses; **Remove** asks first because emailing someone who opted out can get your accounts reported.
+5. Filter by **Valid / Bounced / Risky / Not checked** with the chips above the table, then select rows (or **Select all N in this view**) to **Remove** them or put them on the do-not-email list. Leads that are waiting in a running or paused campaign cannot be deleted.
+6. **Do-not-email list** (second tab, also shown as **Unsubscriptions** in the menu): unsubscribes, bounces, complaints and "stop" replies land here automatically; add your own by pasting addresses (tab **Added by you**). Click a column title to sort; tick rows or the top checkbox (then **Select all N**) and choose **Remove from list / Unblock** (they can be emailed again, nothing else is lost) or **Delete** (permanent: the entry and the lead are erased). Both ask first because emailing someone who opted out can get your accounts reported.
 
 **New campaign** (Home or a project page: **New campaign**)
 1. **Emails** (content first): name the campaign, write the subject and message of the first email. Nothing else is on screen until you press **Add follow-up** under it (up to 5). For each follow-up type any whole number of days to wait (1 to 60) or tap a shortcut (2d, 3d, 5d, 7d, 14d, 30d). A blank follow-up subject is sent as "Re: <previous subject>" so it stays in the same conversation.
 2. The toolbar gives font, size, bold, italic, underline, bullet and numbered lists, links (Ctrl+K), clear formatting and an **Insert field** menu ({{first_name|there}}, spintax). The preview on the right shows the email you are editing for an example person.
 3. **Audience**: choose a lead folder and which address types to include. You see how many people will be emailed and how many are missing information that your emails use (for example an empty first name with no fallback).
-4. **Sending**: choose sender accounts, the daily sending window, time zone, weekdays only and stop-on-reply. **Smart Split** cuts big lists into batches (for example 26 per batch) with the sizes shown live; **Shuffle** mixes people so colleagues from one company are not in the same batch.
+4. **Sending**: choose sender accounts, **Start** (now or on a chosen date, like Hunter.io), **Priority** (follow-ups first, balanced, or new people first), the daily sending window (AM/PM), time zone, weekdays only and stop-on-reply. A reply stops follow-ups only for the person who replied. **Smart Split** cuts big lists into batches (for example 26 per batch) with the sizes shown live; **Shuffle** mixes people so colleagues from one company are not in the same batch.
 5. **Send test** (on each email and on Review): sends that email to you with an example person filled in, so you can check formatting in a real inbox. The subject starts with [TEST]; nothing is added to any campaign.
 6. **Review**: fix anything flagged, pick a project, then **Create campaign** (nothing is sent) or **Create and start**.
 7. **Drafts are automatic**: everything is saved a moment after you stop typing (and on **Save draft**). Close the tab, reload or come back tomorrow: Home lists your drafts under **Drafts** and **Continue** resumes exactly where you stopped. If the same draft is open in two tabs, the second tab stops saving instead of overwriting the first.
@@ -94,6 +96,7 @@ Set `SENDERBOLT_PUBLIC_ORIGIN=https://your-domain` to get one-click unsubscribe 
 1. **Change password** (12+ characters). Other devices are signed out when you do.
 2. **Where you are signed in** lists your browsers and devices; **Sign out other devices** ends all but this one.
 3. **Default email signature**: added to emails from any account that has no signature of its own (an account's own signature, set on the Senders page, always wins).
-4. **Recent activity** shows the last actions on your account.
+4. **Sending hours** are chosen in 12-hour AM/PM.
+5. **Recent activity** shows the last actions on your account.
 
 **Safety notes:** your session ends after 2 hours of inactivity; passwords are never stored in the browser; everything the page shows from the server is displayed as plain text.

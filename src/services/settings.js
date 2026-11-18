@@ -38,9 +38,28 @@ function readPrefs(raw) {
   try { return cleanPrefs(o && typeof o === 'object' ? o : {}); } catch (e) { return Object.assign({}, PREF_DEFAULTS); }
 }
 
+var SEEN_KEY = /^[ps]:[0-9]{1,12}:[a-z_]{1,20}$/;
+function readSeen(raw) {
+  var a = null;
+  try { a = raw ? JSON.parse(raw) : null; } catch (e) { a = null; }
+  return Array.isArray(a) ? a.filter(function (k) { return typeof k === 'string' && SEEN_KEY.test(k); }).slice(0, 200) : [];
+}
+
+// Home 'Campaign health': remember which alerts were reviewed. The client sends the keys it is showing; anything that is not
+// shown any more is dropped, so a problem that comes back counts as new again.
+S.setHealthSeen = function (userId, keys) {
+  var self = this, t = this.now();
+  if (!Array.isArray(keys) || keys.length > 200 || !keys.every(function (k) { return typeof k === 'string' && SEEN_KEY.test(k); })) return Promise.reject(new AppError('validation', 'Invalid alert list', 400, { keys: 'Invalid' }));
+  var uniq = keys.filter(function (k, i) { return keys.indexOf(k) === i; });
+  return this.db.get('SELECT 1 AS x FROM user_settings WHERE user_id = ?', [userId]).then(function (ex) {
+    if (!ex) return self.db.run('INSERT INTO user_settings (user_id, updated_at) VALUES (?,?)', [userId, t]);
+  }).then(function () { return self.db.run('UPDATE user_settings SET health_seen = ? WHERE user_id = ?', [JSON.stringify(uniq), userId]); })
+    .then(function () { return { health_seen: uniq }; });
+};
+
 S.get = function (userId) {
-  return this.db.get('SELECT default_signature_html, prefs, updated_at FROM user_settings WHERE user_id = ?', [userId]).then(function (r) {
-    return { settings: { default_signature_html: r ? r.default_signature_html : null, prefs: readPrefs(r && r.prefs), updated_at: r ? r.updated_at : null } };
+  return this.db.get('SELECT default_signature_html, prefs, health_seen, updated_at FROM user_settings WHERE user_id = ?', [userId]).then(function (r) {
+    return { settings: { default_signature_html: r ? r.default_signature_html : null, prefs: readPrefs(r && r.prefs), health_seen: readSeen(r && r.health_seen), updated_at: r ? r.updated_at : null } };
   });
 };
 

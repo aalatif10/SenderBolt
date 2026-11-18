@@ -56,8 +56,19 @@ function validateStep(s, i) {
   return { step_no: i, delay_days: delay, subject: subject, body_html: body };
 }
 
-function validateSettings(input, base) {
-  var o = Object.assign({ window_start_hour: 9, window_end_hour: 17, utc_offset_min: 0, weekdays_only: 1, stop_on_reply: 1, track_opens: 0 }, base || {});
+var PRIORITY_MODES = ['followups_first', 'balanced', 'new_first'];
+var MAX_START_DAYS = 90;
+// Local calendar date (YYYY-MM-DD) of a UTC timestamp in a campaign's own time zone.
+function localDate(ms, offsetMin) { return new Date(ms + offsetMin * 60000).toISOString().slice(0, 10); }
+// The moment the campaign may begin: the first sending hour of the chosen local date, expressed in UTC.
+function startAtFor(dateStr, hour, offsetMin) {
+  var p = dateStr.split('-');
+  return Date.UTC(Number(p[0]), Number(p[1]) - 1, Number(p[2]), hour) - offsetMin * 60000;
+}
+
+function validateSettings(input, base, nowMs) {
+  var o = Object.assign({ window_start_hour: 9, window_end_hour: 17, utc_offset_min: 0, weekdays_only: 1, stop_on_reply: 1, track_opens: 0, start_at: null, priority_mode: 'followups_first' }, base || {});
+  var prevHour = o.window_start_hour, prevOff = o.utc_offset_min;
   var has = function (k) { return input && Object.prototype.hasOwnProperty.call(input, k) && input[k] !== undefined; };
   if (has('window_start_hour')) { o.window_start_hour = v.intIn(input.window_start_hour, 0, 23); if (o.window_start_hour === null) throw bad('window_start_hour', 'Start hour must be 0-23'); }
   if (has('window_end_hour')) { o.window_end_hour = v.intIn(input.window_end_hour, 1, 24); if (o.window_end_hour === null) throw bad('window_end_hour', 'End hour must be 1-24'); }
@@ -68,6 +79,26 @@ function validateSettings(input, base) {
     var m = v.intIn(input.active_days, 1, 127); if (m === null) throw bad('active_days', 'Choose at least one day to send on');
     o.active_days = m; o.weekdays_only = (m & 65) === 0 ? 1 : 0;      // keep the old flag truthful for older readers
   } else if (has('weekdays_only')) o.active_days = null;
+  if (has('priority_mode')) {
+    if (PRIORITY_MODES.indexOf(input.priority_mode) === -1) throw bad('priority_mode', 'Priority must be one of: ' + PRIORITY_MODES.join(', '));
+    o.priority_mode = input.priority_mode;
+  }
+  // Scheduled start: "start_date" is a local calendar day (YYYY-MM-DD) in the campaign's time zone; null / '' means start right away.
+  if (has('start_date')) {
+    if (input.start_date === null || input.start_date === '') o.start_at = null;
+    else {
+      var d = String(input.start_date);
+      var ok = /^\d{4}-\d{2}-\d{2}$/.test(d) && !isNaN(Date.parse(d + 'T00:00:00Z')) && new Date(d + 'T00:00:00Z').toISOString().slice(0, 10) === d;
+      if (!ok) throw bad('start_date', 'Choose a valid start date');
+      var now = nowMs === undefined ? Date.now() : nowMs;
+      if (d < localDate(now, o.utc_offset_min)) throw bad('start_date', 'The start date cannot be in the past');
+      if (d > localDate(now + MAX_START_DAYS * 86400000, o.utc_offset_min)) throw bad('start_date', 'The start date can be at most ' + MAX_START_DAYS + ' days ahead');
+      o.start_at = startAtFor(d, o.window_start_hour, o.utc_offset_min);
+    }
+  } else if (o.start_at && (o.window_start_hour !== prevHour || o.utc_offset_min !== prevOff)) {
+    // Hours or time zone changed but the date was not touched: keep the same local day.
+    o.start_at = startAtFor(localDate(o.start_at, prevOff), o.window_start_hour, o.utc_offset_min);
+  }
   return o;
 }
 
@@ -202,10 +233,10 @@ function insertLeads(tx, campaignId, leads) {
     return tx.run('INSERT INTO campaign_leads (campaign_id, lead_id, position) VALUES ' + rows.map(function () { return '(?,?,?)'; }).join(','), params);
   });
 }
-var CAMPAIGN_COLS = 'user_id, parent_id, project_id, name, status, split_seed, batch_size, window_start_hour, window_end_hour, utc_offset_min, weekdays_only, stop_on_reply, track_opens, created_at, updated_at';
+var CAMPAIGN_COLS = 'user_id, parent_id, project_id, name, status, split_seed, batch_size, window_start_hour, window_end_hour, utc_offset_min, weekdays_only, stop_on_reply, track_opens, start_at, priority_mode, created_at, updated_at';
 function insertCampaign(tx, userId, parentId, projectId, name, status, seed, batchSize, s, t) {
-  return tx.run('INSERT INTO campaigns (' + CAMPAIGN_COLS + ') VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-    [userId, parentId, parentId ? null : projectId, name, status, seed, batchSize, s.window_start_hour, s.window_end_hour, s.utc_offset_min, s.weekdays_only, s.stop_on_reply, s.track_opens, t, t]).then(function (r) { return r.lastID; });
+  return tx.run('INSERT INTO campaigns (' + CAMPAIGN_COLS + ') VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+    [userId, parentId, parentId ? null : projectId, name, status, seed, batchSize, s.window_start_hour, s.window_end_hour, s.utc_offset_min, s.weekdays_only, s.stop_on_reply, s.track_opens, s.start_at || null, s.priority_mode || 'followups_first', t, t]).then(function (r) { return r.lastID; });
 }
 
 C._checkSenders = function (userId, ids) {
@@ -219,7 +250,7 @@ C.create = function (userId, input, ip) {
   var self = this;
   return Promise.resolve().then(function () {
     input = input || {};
-    var name = validateName(input.name), steps = validateSteps(input.steps), settings = validateSettings(input, null);
+    var name = validateName(input.name), steps = validateSteps(input.steps), settings = validateSettings(input, null, self.now());
     var senderIds = v.idArray(input.sender_ids, 1, MAX_SENDERS);
     if (!senderIds) throw bad('sender_ids', 'Choose 1 to ' + MAX_SENDERS + ' sending accounts');
     var projectId = null;
@@ -385,7 +416,8 @@ C.get = function (userId, id) {
         id: camp.id, parent_id: camp.parent_id, project_id: camp.project_id === undefined ? null : camp.project_id, name: camp.name, status: deriveStatus(camp.status, parts),
         created_at: camp.created_at, updated_at: camp.updated_at, split_seed: camp.split_seed, batch_size: camp.batch_size,
         settings: { window_start_hour: camp.window_start_hour, window_end_hour: camp.window_end_hour, utc_offset_min: camp.utc_offset_min,
-          weekdays_only: camp.weekdays_only, active_days: camp.active_days || (camp.weekdays_only ? 62 : 127), stop_on_reply: camp.stop_on_reply, track_opens: camp.track_opens },
+          weekdays_only: camp.weekdays_only, active_days: camp.active_days || (camp.weekdays_only ? 62 : 127), stop_on_reply: camp.stop_on_reply, track_opens: camp.track_opens,
+          start_at: camp.start_at || null, start_date: camp.start_at ? localDate(camp.start_at, camp.utc_offset_min) : null, priority_mode: camp.priority_mode || 'followups_first' },
         steps: stepProgress.describe(res[1], stepProgress.sum((parts.length ? parts : [camp]).map(function (c) { return prog[c.id]; }))).map(function (d, k) {
           return Object.assign({}, res[1][k], { sent: d.sent, capacity: d.capacity, pct: d.pct, locked: !!locked[res[1][k].step_no] });
         }),
@@ -397,6 +429,10 @@ C.get = function (userId, id) {
   });
 };
 
+// People tab. Sorting is whitelisted (never user text in SQL). Hidden ("removed") rows are excluded here but still count in the
+// campaign's analytics, so history is preserved. `risk=risky` narrows to addresses the verifier flagged risky / catch-all.
+var PEOPLE_SORTS = { email: 'l.email', name: "COALESCE(l.last_name, '') || ' ' || COALESCE(l.first_name, '')", company: "COALESCE(l.company, '')", status: 'cl.status',
+  step: 'cl.current_step', next_send: 'cl.next_send_at', last_sent: 'cl.last_sent_at', sender: 's.email', opens: 'opens', replied: 'replied_at' };
 C.listLeads = function (userId, id, q) {
   var self = this;
   q = q || {};
@@ -404,20 +440,36 @@ C.listLeads = function (userId, id, q) {
     return self.db.all('SELECT id FROM campaigns WHERE parent_id = ? AND user_id = ?', [id, userId]);
   }).then(function (kids) {
     var ids = kids.length ? kids.map(function (k) { return k.id; }) : [id];
-    var where = 'cl.campaign_id IN (' + v.placeholders(ids.length) + ')', params = ids.slice();
+    var base = 'cl.campaign_id IN (' + v.placeholders(ids.length) + ') AND cl.removed_at IS NULL', baseParams = ids.slice();
+    var where = base, params = baseParams.slice();
     if (q.status && q.status !== 'all') {
       if (CL_STATUSES.indexOf(q.status) === -1) throw bad('status', 'Invalid status');
       where += ' AND cl.status = ?'; params.push(q.status);
     }
+    if (q.risk === 'risky') where += " AND l.verify_status IN ('risky','catch_all')";
+    else if (q.risk && q.risk !== 'all') throw bad('risk', 'Invalid filter');
     var page = Math.max(1, parseInt(q.page, 10) || 1), size = Math.min(200, Math.max(1, parseInt(q.pageSize, 10) || 50));
-    return self.db.get('SELECT COUNT(*) AS c FROM campaign_leads cl WHERE ' + where, params).then(function (tot) {
-      return self.db.all('SELECT cl.id, cl.campaign_id, cl.status, cl.current_step, cl.next_send_at, cl.last_sent_at, cl.status_note, (SELECT COALESCE(SUM(m.open_count), 0) FROM messages m WHERE m.campaign_lead_id = cl.id AND m.direction = \'out\') AS opens, (SELECT MAX(m.last_opened_at) FROM messages m WHERE m.campaign_lead_id = cl.id AND m.direction = \'out\') AS last_opened_at, l.email, l.first_name, l.last_name, l.company, s.email AS sender_email, sp.reason AS suppression_reason, ' +
+    var order = 'cl.campaign_id, cl.position';
+    if (q.sort) {
+      if (!PEOPLE_SORTS[q.sort]) throw bad('sort', 'Invalid sort column');
+      var dir = q.dir === 'desc' ? 'DESC' : 'ASC', col = PEOPLE_SORTS[q.sort];
+      order = '(' + col + ' IS NULL) ' + (dir === 'ASC' ? 'ASC' : 'ASC') + ', ' + col + ' ' + dir + ', cl.id ' + dir;     // empty values always last
+    }
+    var join = 'FROM campaign_leads cl JOIN leads l ON l.id = cl.lead_id LEFT JOIN senders s ON s.id = cl.sender_id ';
+    return Promise.all([
+      self.db.get('SELECT COUNT(*) AS c FROM campaign_leads cl JOIN leads l ON l.id = cl.lead_id WHERE ' + where, params),
+      self.db.all('SELECT cl.status AS st, COUNT(*) AS n FROM campaign_leads cl WHERE ' + base + ' GROUP BY cl.status', baseParams),
+      self.db.get("SELECT COUNT(*) AS n FROM campaign_leads cl JOIN leads l ON l.id = cl.lead_id WHERE " + base + " AND l.verify_status IN ('risky','catch_all')", baseParams)
+    ]).then(function (r) {
+      var tot = r[0], counts = { all: 0, risky: Number(r[2].n) || 0 };
+      r[1].forEach(function (x) { counts[x.st] = Number(x.n); counts.all += Number(x.n); });
+      return self.db.all('SELECT cl.id, cl.campaign_id, cl.status, cl.current_step, cl.next_send_at, cl.last_sent_at, cl.status_note, (SELECT COALESCE(SUM(m.open_count), 0) FROM messages m WHERE m.campaign_lead_id = cl.id AND m.direction = \'out\') AS opens, (SELECT MAX(m.last_opened_at) FROM messages m WHERE m.campaign_lead_id = cl.id AND m.direction = \'out\') AS last_opened_at, l.email, l.first_name, l.last_name, l.company, l.verify_status, s.email AS sender_email, sp.reason AS suppression_reason, ' +
         '(SELECT MAX(r.received_at) FROM messages r WHERE r.campaign_lead_id = cl.id AND r.direction = \'in\' AND r.kind = \'email\') AS replied_at ' +
-        'FROM campaign_leads cl JOIN leads l ON l.id = cl.lead_id LEFT JOIN senders s ON s.id = cl.sender_id LEFT JOIN suppression sp ON sp.user_id = ? AND sp.email = l.email WHERE ' + where +
-        ' ORDER BY cl.campaign_id, cl.position LIMIT ? OFFSET ?', [userId].concat(params, [size, (page - 1) * size]))
+        join + 'LEFT JOIN suppression sp ON sp.user_id = ? AND sp.email = l.email WHERE ' + where +
+        ' ORDER BY ' + order + ' LIMIT ? OFFSET ?', [userId].concat(params, [size, (page - 1) * size]))
         .then(function (items) {
           items.forEach(function (it) { it.opt_out = optOutKind(it); });
-          return { items: items, total: tot.c, page: page, pageSize: size };
+          return { items: items, total: tot.c, page: page, pageSize: size, counts: counts };
         });
     });
   });
@@ -472,7 +524,7 @@ C.start = function (userId, id, ip) {
         return tx.run("UPDATE campaign_leads SET status = 'unsubscribed' WHERE campaign_id = ? AND status = 'pending' AND lead_id IN " +
           '(SELECT l.id FROM leads l JOIN suppression s ON s.user_id = l.user_id AND s.email = l.email WHERE l.user_id = ?)', [leaf.id, userId]).then(function () {
           return tx.run("UPDATE campaign_leads SET sender_id = CASE (position % " + n + ') ' + cases + " END, status = 'active', next_send_at = ? WHERE campaign_id = ? AND status = 'pending'",
-            sids.concat([t, leaf.id]));
+            sids.concat([Math.max(t, leaf.start_at || 0), leaf.id]));      // a scheduled campaign waits for its start date
         }).then(function () { return tx.run("UPDATE campaigns SET status = 'active', updated_at = ? WHERE id = ?", [t, leaf.id]); });
       }).then(function () { return camp.parent_id === null && leaves[0].id !== camp.id ? tx.run("UPDATE campaigns SET status = 'active', updated_at = ? WHERE id = ?", [t, camp.id]) : null; })
         .then(function () { return camp.parent_id ? syncMain(tx, camp.parent_id, t) : null; })
@@ -496,6 +548,9 @@ function startWarnings(self, userId, leaves) {
   var warnings = [], ids = leaves.map(function (l) { return l.id; });
   return self.db.all('SELECT DISTINCT s.id, s.email FROM campaign_senders cs JOIN senders s ON s.id = cs.sender_id WHERE cs.campaign_id IN (' + v.placeholders(ids.length) + ') AND s.user_id = ? AND s.imap_host IS NULL', ids.concat([userId])).then(function (rows) {
     if (rows.length) warnings.push({ code: 'no_reply_tracking', message: rows.length + ' sender(s) have no IMAP settings, so replies and bounces to them cannot be detected (' + rows.map(function (r) { return r.email; }).join(', ') + '). Leads may keep getting follow-ups after they reply.' });
+    return self.db.all('SELECT DISTINCT s.id, s.email FROM campaign_senders cs JOIN senders s ON s.id = cs.sender_id WHERE cs.campaign_id IN (' + v.placeholders(ids.length) + ') AND s.user_id = ? AND s.reply_detection = 0 AND s.imap_host IS NOT NULL', ids.concat([userId])).then(function (off) {
+      if (off.length) warnings.push({ code: 'reply_detection_off', message: 'Reply detection is switched off for ' + off.map(function (r) { return r.email; }).join(', ') + '. Replies still reach your Inbox, but follow-ups keep going to people who answer.' });
+    }).then(function () {
     return seq(leaves, function (leaf) {
       return Promise.all([
         self.db.all('SELECT subject, body_html FROM campaign_steps WHERE campaign_id = ?', [leaf.id]),
@@ -509,6 +564,7 @@ function startWarnings(self, userId, leaves) {
         });
         leaf.__missing = bad;
       });
+    });
     });
   }).then(function () {
     var n = leaves.reduce(function (a, l) { return a + (l.__missing || 0); }, 0);
@@ -612,13 +668,14 @@ C.update = function (userId, id, input, ip) {
       senderIds = v.idArray(input.sender_ids, 1, MAX_SENDERS);
       if (!senderIds) throw bad('sender_ids', 'Choose 1 to ' + MAX_SENDERS + ' sending accounts');
     }
-    var hasSettings = ['window_start_hour', 'window_end_hour', 'utc_offset_min', 'weekdays_only', 'active_days', 'stop_on_reply', 'track_opens'].some(function (k) { return input[k] !== undefined; });
-    if (hasSettings) settings = validateSettings(input, c);
+    var hasSettings = ['window_start_hour', 'window_end_hour', 'utc_offset_min', 'weekdays_only', 'active_days', 'stop_on_reply', 'track_opens', 'priority_mode', 'start_date'].some(function (k) { return input[k] !== undefined; });
+    if (hasSettings) settings = validateSettings(input, c, self.now());
     return self.db.all('SELECT * FROM campaigns WHERE parent_id = ? AND user_id = ? ORDER BY id', [id, userId]);
   }).then(function (kids) {
     parts = kids;
     var leaves = kids.length ? kids : [camp];
     live = leaves.some(function (l) { return l.status !== 'draft'; });
+    if (live && input.start_date !== undefined) throw new AppError('conflict', 'The start date can only be changed before the campaign has started', 409);
     if (steps && live) throw new AppError('conflict', 'Use the sequence editor to change emails of a running campaign', 409);
     // Senders and schedule may change while the campaign runs (paused or active); not once it is finished.
     if ((senderIds || settings) && leaves.some(function (l) { return l.status === 'completed' || l.status === 'preparing'; })) {
@@ -641,8 +698,8 @@ C.update = function (userId, id, input, ip) {
       if (settings) {
         p = p.then(function () {
           return seq(all, function (c) {
-            return tx.run('UPDATE campaigns SET window_start_hour = ?, window_end_hour = ?, utc_offset_min = ?, weekdays_only = ?, active_days = ?, stop_on_reply = ?, track_opens = ?, updated_at = ? WHERE id = ?',
-              [settings.window_start_hour, settings.window_end_hour, settings.utc_offset_min, settings.weekdays_only, settings.active_days || null, settings.stop_on_reply, settings.track_opens, t, c.id]);
+            return tx.run('UPDATE campaigns SET window_start_hour = ?, window_end_hour = ?, utc_offset_min = ?, weekdays_only = ?, active_days = ?, stop_on_reply = ?, track_opens = ?, start_at = ?, priority_mode = ?, updated_at = ? WHERE id = ?',
+              [settings.window_start_hour, settings.window_end_hour, settings.utc_offset_min, settings.weekdays_only, settings.active_days || null, settings.stop_on_reply, settings.track_opens, settings.start_at || null, settings.priority_mode || 'followups_first', t, c.id]);
           });
         });
       }

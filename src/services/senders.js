@@ -20,7 +20,7 @@ var GMAIL = { smtp_host: 'smtp.gmail.com', smtp_port: 465, smtp_secure: 1, imap_
 
 var COLUMNS = ['label', 'email', 'provider', 'username', 'smtp_host', 'smtp_port', 'smtp_secure', 'imap_host', 'imap_port',
   'from_name', 'daily_limit', 'delay_mode', 'delay_fixed_sec', 'delay_min_sec', 'delay_max_sec', 'warmup_enabled', 'warmup_pace',
-  'signature_html', 'tracking_domain'];
+  'signature_html', 'tracking_domain', 'reply_detection', 'protection_level', 'force_until'];
 
 function hasControl(s) {
   for (var i = 0; i < s.length; i++) { var c = s.charCodeAt(i); if (c < 32 || c === 127 || c === 0x2028 || c === 0x2029) return true; }
@@ -86,6 +86,11 @@ function validate(input, isCreate) {
   if (has('warmup_enabled')) v.warmup_enabled = input.warmup_enabled ? 1 : 0;
   if (has('warmup_pace')) {
     if (throttle.PACE_NAMES.indexOf(input.warmup_pace) === -1) errors.warmup_pace = 'Warm-up pace must be ' + throttle.PACE_NAMES.join(' or '); else v.warmup_pace = input.warmup_pace;
+  }
+  if (has('reply_detection')) v.reply_detection = input.reply_detection ? 1 : 0;
+  if (has('protection_level')) {
+    if (health.LEVEL_NAMES.indexOf(input.protection_level) === -1) errors.protection_level = 'Protection level must be ' + health.LEVEL_NAMES.join(', ');
+    else v.protection_level = input.protection_level;
   }
   if (has('signature_html')) {
     if (input.signature_html !== null && (typeof input.signature_html !== 'string' || input.signature_html.length > 10000)) errors.signature_html = 'Signature too long (max 10000 chars)';
@@ -169,6 +174,9 @@ function withToday(row, nowMs) {
   out.warmup_reaches_day = row.warmup_enabled ? throttle.warmupDaysToLimit(row.daily_limit, row.warmup_pace) : null;
   out.warmup_slowed = !!(row.warmup_enabled && row.warmup_penalty > 0);
   out.hard_cap = throttle.HARD_DAILY_CAP;
+  out.health_floor = health.floorFor(row);                       // the score below which this sender is paused automatically
+  out.force_active = health.isForced(row, nowMs);                // "Force continue" override currently on
+  out.force_until = out.force_active ? row.force_until : null;
   return out;
 }
 
@@ -190,7 +198,9 @@ Senders.prototype.update = function (userId, id, input, ip) {
     var merged = Object.assign({}, input);
     if (!merged.provider) merged.provider = existing.provider;
     parsed = validate(merged, false);
-    var v = parsed.values;
+    var v = parsed.values, tnow = self.now();
+    // "Force continue" is a switch in the API; stored as an expiry time so it can never stay on forever.
+    if (Object.prototype.hasOwnProperty.call(input, 'force_continue')) v.force_until = input.force_continue ? tnow + health.FORCE_MS : null;
     if (!input.provider) { delete v.provider; }
     var cols = COLUMNS.filter(function (c) { return v[c] !== undefined; });
     var minD = v.delay_min_sec !== undefined ? v.delay_min_sec : existing.delay_min_sec;
@@ -201,6 +211,8 @@ Senders.prototype.update = function (userId, id, input, ip) {
     if (parsed.password) { sets.push('password_enc = ?'); params.push(vault.encrypt(parsed.password, self.key, 'sender:' + id)); }
     if (!sets.length) return null;
     sets.push('updated_at = ?'); params.push(self.now());
+    // Forcing a sender that was paused (for example automatically because of its health) also resumes it.
+    if (v.force_until && existing.status === 'paused') { sets.push("status = 'active'"); sets.push('last_error = NULL'); sets.push('next_send_at = NULL'); }
     params.push(id, userId);
     return self.db.run('UPDATE senders SET ' + sets.join(', ') + ' WHERE id = ? AND user_id = ?', params).then(function () {
       var meta = Object.assign({}, v); if (parsed.password) meta.password = true;
@@ -242,7 +254,7 @@ Senders.prototype.getCredentials = function (userId, id) {
 // Pure: how many more emails this sender may send today.
 // dateStr is the UTC day (YYYY-MM-DD) as decided by the caller. nowMs is kept for callers' convenience.
 function capacityToday(sender, dateStr, nowMs) {
-  if (sender.status !== 'active' || sender.health_score < health.AUTO_PAUSE_BELOW) return 0;
+  if (sender.status !== 'active' || health.isBelowFloor(sender, nowMs === undefined ? Date.now() : nowMs)) return 0;
   var sent = sender.sent_today_date === dateStr ? sender.sent_today : 0;
   return Math.max(0, throttle.limitToday(sender, dateStr) - sent);
 }

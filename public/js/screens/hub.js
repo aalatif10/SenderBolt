@@ -44,7 +44,7 @@
           h('thead', null, h('tr', null, h('th', { text: 'Recipient' }), h('th', { text: 'Campaign' }), h('th', null, 'Opens ', ui.info('How many times this person opened your emails in this campaign. Counts are estimates.')), h('th', { text: 'Last activity' }), h('th'))),
           h('tbody', null, shown.slice(0, 500).map(function (r) {
             return h('tr', { class: 'row-link', on: { click: function () { location.hash = '#/campaign/' + r.campaign_id + '/opens'; } } },
-              h('td', null, h('div', { class: 'who' }, avatar(r.email), h('div', null, h('b', { class: 'break', text: r.name || r.email }), r.name ? h('div', { class: 'small faint', text: r.email }) : null))),
+              h('td', null, h('div', { class: 'who' }, avatar(r.email), h('div', null, r.name ? h('b', { class: 'break', text: r.name }) : ui.email(r.email, 'strong', 'b'), r.name ? ui.email(r.email, 'small faint', 'div') : null))),
               h('td', { text: r.campaign }), h('td', null, h('span', { class: 'eye', tip: 'Opened ' + r.opens + ' time' + (r.opens === 1 ? '' : 's') }, SB.icon('eye'), String(r.opens))),
               h('td', { class: 'nowrap', tip: fmt.full(r.last) }, 'Opened · ' + fmt.ago(r.last)), h('td', null, h('span', { class: 'faint' }, SB.icon('chevron'))));
           })))));
@@ -109,48 +109,26 @@
   };
 
   // ---------------- Unsubscriptions ----------------
-  var KIND = { unsubscribed: ['Unsubscribed', 'They asked not to be emailed (link or "stop campaign").'], replied_stop: ['Unsubscribed', 'They replied "stop campaign".'], bounced: ['Bounced', 'The address does not exist or rejected the email.'], complaint: ['Complaint', 'They marked an email as spam.'], manual: ['Added by you', 'You added this address to the do-not-email list.'] };
   function csvCell(x) { var t = String(x == null ? '' : x); if (/^[=+\-@\t\r]/.test(t)) t = "'" + t; return '"' + t.replace(/"/g, '""') + '"'; }
   SB.screens.unsubscriptions = function () {
-    var root = h('div'), dead = false, all = [], st = { q: '', kind: 'all' }, bar = h('div'), box = h('div');
-    var dl = h('button', { class: 'btn', type: 'button', tip: 'Download the addresses shown here as a CSV file.' }, SB.icon('download'), 'Download CSV');
-    root.appendChild(head('Unsubscriptions', 'People who will never be emailed again, whatever campaign they are in.', dl)); root.appendChild(bar); root.appendChild(box);
-    SB.mount(box, h('div', { class: 'skeleton' }));
-    function group(r) { return r.reason === 'bounced' ? 'bounced' : (r.reason === 'unsubscribed' || r.reason === 'replied_stop') ? 'unsubscribed' : 'other'; }
-    function shown() { return all.filter(function (r) { return (st.kind === 'all' || group(r) === st.kind) && (!st.q || r.email.toLowerCase().indexOf(st.q.toLowerCase()) !== -1); }); }
-    function paint() {
-      var n = { all: all.length, unsubscribed: 0, bounced: 0 }; all.forEach(function (r) { var g = group(r); if (n[g] !== undefined) n[g]++; });
-      var q = h('input', { class: 'input', type: 'search', placeholder: 'Search…', 'aria-label': 'Search addresses', maxlength: 100, value: st.q });
-      q.addEventListener('input', function () { st.q = q.value; paintTable(); SB.mount(cnt, document.createTextNode(fmt.num(shown().length) + ' recipients')); });
-      var cnt = h('span', { class: 'hub-count', text: fmt.num(shown().length) + ' recipients' });
-      var tabs = h('div', { class: 'segs tabs hub-tabs', role: 'tablist' }, [['all', 'All'], ['unsubscribed', 'Unsubscribed'], ['bounced', 'Bounced']].map(function (t) {
-        return h('button', { type: 'button', class: 'seg' + (st.kind === t[0] ? ' active' : ''), role: 'tab', 'aria-selected': st.kind === t[0] ? 'true' : 'false', on: { click: function () { st.kind = t[0]; paint(); } } }, t[1] + ' (' + fmt.num(n[t[0]]) + ')');
-      }));
-      SB.mount(bar, h('div', { class: 'hub-bar' }, cnt, h('div', { class: 'hub-filters' }, q, tabs)));
-      paintTable();
-    }
-    function paintTable() {
-      var l = shown();
-      if (!all.length) { SB.mount(box, h('div', { class: 'card empty' }, h('h2', { text: 'Nobody has unsubscribed or bounced' }), h('p', { text: 'Addresses that opt out or bounce are blocked automatically and listed here.' }))); return; }
-      if (!l.length) { SB.mount(box, h('div', { class: 'card empty' }, h('h2', { text: 'Nothing matches' }), h('p', { text: 'Try a different search or tab.' }))); return; }
-      SB.mount(box, h('div', { class: 'table-wrap card' }, h('table', { class: 'table' }, h('thead', null, h('tr', null, h('th', { text: 'Email address' }), h('th', { text: 'Type' }), h('th', { text: 'Added' }))),
-        h('tbody', null, l.slice(0, 1000).map(function (r) {
-          var k = KIND[r.reason] || [r.reason, ''];
-          return h('tr', null, h('td', { class: 'break', text: r.email }), h('td', null, h('span', { class: 'pill pill-' + (r.reason === 'bounced' ? 'error' : 'paused'), tip: k[1], text: k[0] })), h('td', { class: 'nowrap', tip: fmt.full(r.created_at), text: fmt.ago(r.created_at) }));
-        })))));
-    }
+    var root = h('div');
+    var dl = h('button', { class: 'btn', type: 'button', tip: 'Download the addresses in the current tab as a CSV file.' }, SB.icon('download'), 'Download CSV');
+    var panel = SB.suppress.panel({ tabs: [['manual', 'Added by you'], ['all', 'All'], ['unsubscribed', 'Unsubscribed'], ['bounced', 'Bounced'], ['complaint', 'Complaints']],
+      empty: { title: 'Nobody has unsubscribed or bounced', text: 'Addresses that opt out or bounce are blocked automatically and listed here. Addresses you add yourself appear under "Added by you".' } });
+    root.appendChild(head('Unsubscriptions', 'People who will never be emailed again, whatever campaign they are in.', dl));
+    root.appendChild(panel.el);
     dl.addEventListener('click', function () {
-      var lines = ['email,type,added'].concat(shown().map(function (r) { return [csvCell(r.email), csvCell((KIND[r.reason] || [r.reason])[0]), csvCell(new Date(r.created_at).toISOString())].join(','); }));
-      var url = URL.createObjectURL(new Blob([lines.join('\r\n')], { type: 'text/csv' })), a = document.createElement('a');
-      a.href = url; a.download = 'unsubscriptions.csv'; document.body.appendChild(a); a.click(); document.body.removeChild(a); setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+      var s = panel.getState(), rows = [], page = 1;
+      (function next() {
+        return SB.api.get('/api/suppression?page=' + page + '&pageSize=200&sort=email&dir=asc' + (s.group !== 'all' ? '&group=' + encodeURIComponent(s.group) : '') + (s.q ? '&q=' + encodeURIComponent(s.q) : '')).then(function (r) {
+          rows = rows.concat(r.items); if (page * 200 < r.total && page < 50) { page++; return next(); }
+        });
+      })().then(function () {
+        var lines = ['email,type,added'].concat(rows.map(function (r) { return [csvCell(r.email), csvCell(SB.suppress.kind(r.reason)[0]), csvCell(new Date(r.created_at).toISOString())].join(','); }));
+        var url = URL.createObjectURL(new Blob([lines.join('\r\n')], { type: 'text/csv' })), a = document.createElement('a');
+        a.href = url; a.download = 'unsubscriptions.csv'; document.body.appendChild(a); a.click(); document.body.removeChild(a); setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+      }, function (e) { ui.toast(SB.api.friendly(e)); });
     });
-    (function loadAll(page) {
-      SB.api.get('/api/suppression?page=' + page + '&pageSize=200').then(function (r) {
-        if (dead) return; all = all.concat(r.items);
-        if (all.length < r.total && page < 25) return loadAll(page + 1);
-        paint();
-      }, function (e) { if (!dead) fail(box, e); });
-    })(1);
-    return { el: root, destroy: function () { dead = true; } };
+    return { el: root, destroy: function () { panel.destroy(); } };
   };
 })();

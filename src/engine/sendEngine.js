@@ -33,7 +33,7 @@ var state = require('../services/campaignState');
 var DAY = 86400000;
 var MAX_ATTEMPTS = 5;
 var BACKOFF_MIN = [5, 15, 60, 240, 720];
-var STREAK_LIMIT = 5;
+var STREAK_LIMIT = 5;               // default (medium protection); each sender's level can change it, see lib/health.js
 var STREAK_PAUSE_MS = 30 * 60000;
 var SEND_TIMEOUT_MS = 45000;
 var CANDIDATES_PER_TICK = 25;
@@ -68,7 +68,7 @@ function mapLimit(items, limit, fn) {
 }
 
 function trackingOk(s, t, required) {
-  if (!required || !s.imap_host) return true;
+  if (!required || !s.imap_host || s.reply_detection === 0) return true;     // reply detection switched off by the owner: nothing to wait for
   return s.imap_last_uid !== null && s.imap_last_uid !== undefined && !s.sync_error && s.last_sync_at !== null && s.last_sync_at !== undefined && t - s.last_sync_at <= SYNC_FRESH_MS;
 }
 
@@ -132,12 +132,13 @@ E.tick = function () {
   this._steps = {};
   function finish(v) { self.running = false; self.lastTickAt = t; return v; }
   return this._reconcile(t).then(function () {
-    return self.db.all("SELECT id, window_start_hour, window_end_hour, utc_offset_min, weekdays_only, active_days FROM campaigns WHERE status = 'active'");
+    return self.db.all("SELECT id, window_start_hour, window_end_hour, utc_offset_min, weekdays_only, active_days, start_at FROM campaigns WHERE status = 'active'");
   }).then(function (camps) {
-    var open = camps.filter(function (c) { return inWindow(c, t); }).map(function (c) { return c.id; }).slice(0, 800);
+    var open = camps.filter(function (c) { return (!c.start_at || c.start_at <= t) && inWindow(c, t); }).map(function (c) { return c.id; }).slice(0, 800);
     if (!open.length) return stats;
-    return self.db.all("SELECT * FROM senders WHERE status = 'active' AND health_score >= ? AND (next_send_at IS NULL OR next_send_at <= ?)", [health.AUTO_PAUSE_BELOW, t]).then(function (senders) {
-      senders = senders.filter(function (s) { return trackingOk(s, t, self.requireReplyTracking); });
+    return self.db.all("SELECT * FROM senders WHERE status = 'active' AND (next_send_at IS NULL OR next_send_at <= ?)", [t]).then(function (senders) {
+      // Protection level decides the health floor; a "force continue" override lifts it for a while.
+      senders = senders.filter(function (s) { return !health.isBelowFloor(s, t) && trackingOk(s, t, self.requireReplyTracking); });
       stats.senders = senders.length;
       return mapLimit(senders, self.concurrency, function (s) {
         return self._processSender(s, t, open, stats).catch(function (e) { self.lastError = e.message; self.log('sender ' + s.id + ': ' + e.message); });
@@ -164,7 +165,8 @@ E._nextCandidate = function (senderId, t, openIds) {
     'SELECT cl.id AS cl_id, cl.campaign_id, cl.lead_id, cl.current_step, c.user_id, c.track_opens, l.email, l.domain, l.first_name, l.last_name, l.company, l.custom ' +
     "FROM campaign_leads cl JOIN leads l ON l.id = cl.lead_id JOIN campaigns c ON c.id = cl.campaign_id " +
     "WHERE cl.sender_id = ? AND cl.status = 'active' AND cl.next_send_at <= ? AND c.status = 'active' AND c.id IN (" + openIds.map(function () { return '?'; }).join(',') + ') ' +
-    'ORDER BY cl.next_send_at, cl.position, cl.id LIMIT 1', [senderId, t].concat(openIds));
+    // Priority: follow-ups before new first emails (default), the opposite, or simply the oldest due first.
+    "ORDER BY CASE c.priority_mode WHEN 'followups_first' THEN (cl.current_step = 0) WHEN 'new_first' THEN (cl.current_step > 0) ELSE 0 END, cl.next_send_at, cl.position, cl.id LIMIT 1", [senderId, t].concat(openIds));
 };
 
 E._stepsFor = function (campaignId) {
@@ -345,7 +347,7 @@ E._onFailure = function (sender, c, steps, claim, err) {
     }
     // transient: retry this lead later with backoff; slow the sender down if failures keep happening
     var streak = (sender.error_streak || 0) + 1;
-    var pauseSender = streak >= STREAK_LIMIT;
+    var pauseSender = streak >= health.streakLimitFor(sender) && !health.isForced(sender, t2);     // "force continue" skips this automatic pause
     return p.then(function () {
       if (claim.attempts >= MAX_ATTEMPTS) {
         return tx.run("UPDATE campaign_leads SET status = 'error', next_send_at = NULL, status_note = ? WHERE id = ? AND status = 'active'", ['Gave up after ' + MAX_ATTEMPTS + ' failed attempts', c.cl_id])
@@ -372,7 +374,7 @@ E._reconcile = function (t) {
   return this.db.all("SELECT id, parent_id, status FROM campaigns WHERE status IN ('active','error') AND EXISTS (SELECT 1 FROM campaign_leads cl WHERE cl.campaign_id = campaigns.id)").then(function (camps) {
     return camps.reduce(function (p, c) {
       return p.then(function () {
-        return self.db.get("SELECT COUNT(*) AS n, COALESCE(SUM(CASE WHEN s.status = 'active' AND s.health_score >= ? THEN 1 ELSE 0 END), 0) AS usable FROM campaign_leads cl LEFT JOIN senders s ON s.id = cl.sender_id WHERE cl.campaign_id = ? AND cl.status = 'active'", [health.AUTO_PAUSE_BELOW, c.id]).then(function (r) {
+        return self.db.get("SELECT COUNT(*) AS n, COALESCE(SUM(CASE WHEN s.status = 'active' AND (s.health_score >= CASE s.protection_level WHEN 'low' THEN ? WHEN 'high' THEN ? ELSE ? END OR (s.force_until IS NOT NULL AND s.force_until > ?)) THEN 1 ELSE 0 END), 0) AS usable FROM campaign_leads cl LEFT JOIN senders s ON s.id = cl.sender_id WHERE cl.campaign_id = ? AND cl.status = 'active'", [health.LEVELS.low.pauseBelow, health.LEVELS.high.pauseBelow, health.LEVELS.medium.pauseBelow, t, c.id]).then(function (r) {
           if (r.n > 0 && Number(r.usable) === 0 && c.status === 'active') {
             return self.db.get("SELECT s.last_error AS e, s.status AS st FROM campaign_leads cl JOIN senders s ON s.id = cl.sender_id WHERE cl.campaign_id = ? AND cl.status = 'active' LIMIT 1", [c.id]).then(function (why) {
               var reason = (why && why.e) || 'All sending accounts for this campaign are paused or disabled';

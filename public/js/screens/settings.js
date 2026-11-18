@@ -106,11 +106,11 @@
     SB.api.get('/api/senders').then(function (r) {
       if (dead) return;
       SB.mount(accBox, r.items.length ? h('div', { class: 'st-list' }, r.items.map(function (x) {
-        return h('div', { class: 'st-row' }, h('div', null, h('b', { text: x.label || x.email }), x.status !== 'active' ? h('span', { class: 'tag tag-sys', text: x.status === 'paused' ? 'Paused' : 'Disabled' }) : null,
-          h('div', { class: 'small faint', text: x.email + ' \u00b7 up to ' + fmt.num(x.daily_limit) + ' emails a day' + (x.health_score !== undefined && x.health_score !== null ? ' \u00b7 health ' + x.health_score + '/100' : '') })));
+        return h('div', { class: 'st-row' }, h('div', null, h('b', null, ui.email(x.label || x.email)), x.status !== 'active' ? h('span', { class: 'tag tag-sys', text: x.status === 'paused' ? 'Paused' : 'Disabled' }) : null,
+          h('div', { class: 'small faint' }, ui.email(x.email), ' \u00b7 up to ' + fmt.num(x.daily_limit) + ' emails a day' + (x.health_score !== undefined && x.health_score !== null ? ' \u00b7 health ' + x.health_score + '/100' : ''))));
       })) : h('p', { class: 'muted', text: 'No sending accounts yet.' }));
     }, function (e) { if (!dead) SB.mount(accBox, h('div', { class: 'form-error', text: SB.api.friendly(e) })); });
-    gridAcc.appendChild(h('div', { class: 'card st-wide' }, h('div', { class: 'page-head' }, h('div', null, h('h2', { text: 'Sending accounts' }), h('p', { class: 'muted small', text: 'App passwords are stored encrypted and never shown again. Daily limits (max 500), delays, warm-up and tracking domain are set per account.' })),
+    gridAcc.appendChild(h('div', { class: 'card st-wide' }, h('div', { class: 'page-head' }, h('div', null, h('h2', { text: 'Sending accounts' }), h('p', { class: 'muted small', text: 'App passwords are stored encrypted and never shown again. Daily limits (max 400), delays, warm-up and tracking domain are set per account.' })),
       h('a', { class: 'btn btn-primary', href: '#/senders' }, SB.icon('send'), 'Manage accounts')), accBox));
 
     // ---- system preferences: defaults new campaigns start from ----
@@ -120,7 +120,13 @@
       var v = r.settings.prefs;
       function num(id, val, min, max) { return h('input', { class: 'input', id: id, type: 'number', min: min, max: max, value: val }); }
       function chk(id, on) { var c = h('input', { type: 'checkbox', id: id }); c.checked = !!on; return c; }
-      var from = num('pf-from', v.window_start_hour, 0, 23), to = num('pf-to', v.window_end_hour, 1, 24), off = h('select', { class: 'input', id: 'pf-tz' }), delay = num('pf-delay', v.default_delay_days, 1, 60);
+      // Sending hours are stored as 0-24 but shown and picked as clock times: "9:00 AM", "5:00 PM".
+      function hourSel(id, val, lo, hi) {
+        var sel = h('select', { class: 'input', id: id });
+        for (var x = lo; x <= hi; x++) sel.appendChild(h('option', { value: x }, fmt.hour12(x) + (x === 24 ? ' (midnight)' : '')));
+        sel.value = String(val); return sel;
+      }
+      var from = hourSel('pf-from', v.window_start_hour, 0, 23), to = hourSel('pf-to', v.window_end_hour, 1, 24), off = h('select', { class: 'input', id: 'pf-tz' }), delay = num('pf-delay', v.default_delay_days, 1, 60);
       for (var m = -720; m <= 840; m += 30) { off.appendChild(h('option', { value: m }, 'UTC' + (m < 0 ? '-' : '+') + Math.floor(Math.abs(m) / 60) + (Math.abs(m) % 60 ? ':30' : ''))); }
       off.value = String(v.utc_offset_min);
       var wk = chk('pf-wk', v.weekdays_only), sr = chk('pf-sr', v.stop_on_reply), to2 = chk('pf-op', v.track_opens), err = h('div', { class: 'form-error hidden', role: 'alert' });
@@ -131,7 +137,8 @@
           .then(function () { ui.toast('Preferences saved'); }, function (e) { err.textContent = SB.api.friendly(e); err.classList.remove('hidden'); }).then(function () { save.disabled = false; });
       });
       SB.mount(prefBox, h('div', null, err, h('p', { class: 'muted small', text: P.intro }),
-        h('div', { class: 'two' }, h('div', { class: 'field' }, h('label', { for: 'pf-from' }, 'Send from (hour)'), from), h('div', { class: 'field' }, h('label', { for: 'pf-to' }, 'Send until (hour)'), to)),
+        h('div', { class: 'two' }, h('div', { class: 'field' }, h('label', { for: 'pf-from' }, 'Send from'), from), h('div', { class: 'field' }, h('label', { for: 'pf-to' }, 'Send until'), to)),
+        h('p', { class: 'hint', text: 'Emails go out only between these times in your time zone, for example 9:00 AM to 5:00 PM.' }),
         h('div', { class: 'field' }, h('label', { for: 'pf-tz' }, 'Time zone ', ui.info(P.tzTip)), off),
         h('div', { class: 'field' }, h('label', { for: 'pf-delay' }, 'Days to wait before a follow-up'), delay),
         h('div', { class: 'field check' }, wk, h('label', { for: 'pf-wk' }, 'Skip weekends'), h('div', { class: 'hint', text: SB.S.wizard.weekdaysHint })),
