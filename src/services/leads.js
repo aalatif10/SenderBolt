@@ -10,6 +10,7 @@ var dns = require('dns');
 var csv = require('../lib/csv');
 var xlsx = require('../lib/xlsx');
 var email = require('../lib/email');
+var campaignState = require('./campaignState');
 var text = require('../lib/text');
 var AppError = require('../lib/errors').AppError;
 var audit = require('./audit');
@@ -417,14 +418,18 @@ Leads.prototype.addSuppression = function (userId, emails, reason) {
   var why = reason || 'manual';
   if (['unsubscribed', 'bounced', 'complaint', 'manual', 'replied_stop'].indexOf(why) === -1) return Promise.reject(new AppError('validation', 'Invalid reason', 400, { reason: 'Invalid reason' }));
   return this.db.transaction(function (tx) {
-    var added = 0, invalid = 0, t = self.now();
+    var added = 0, invalid = 0, stopped = 0, t = self.now();
     return emails.reduce(function (p, raw) {
       return p.then(function () {
         var addr = email.normalize(raw);
         if (typeof raw !== 'string' || !email.checkSyntax(addr).ok) { invalid++; return; }
-        return tx.run('INSERT OR IGNORE INTO suppression (user_id, email, reason, created_at) VALUES (?,?,?,?)', [userId, addr, why, t]).then(function (r) { added += r.changes; });
+        // A new block takes effect at once: people already waiting in campaigns are stopped now, not at their next send.
+        return tx.run('INSERT OR IGNORE INTO suppression (user_id, email, reason, created_at) VALUES (?,?,?,?)', [userId, addr, why, t]).then(function (r) {
+          added += r.changes;
+          return campaignState.stopQueued(tx, userId, addr, why, why === 'bounced' ? 'Marked as bounced' : 'Added to the do-not-email list', t).then(function (n) { stopped += n; });
+        });
       });
-    }, Promise.resolve()).then(function () { return { added: added, invalid: invalid }; });
+    }, Promise.resolve()).then(function () { return { added: added, invalid: invalid, stopped_in_campaigns: stopped }; });
   });
 };
 

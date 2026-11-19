@@ -35,4 +35,18 @@ function completeIfDone(db, campaignId, t) {
   });
 }
 
-module.exports = { deriveStatus: deriveStatus, syncMain: syncMain, completeIfDone: completeIfDone };
+// One address must never stay queued anywhere once it is blocked. Stops every waiting (pending / active / paused) entry of this
+// address in ALL of the user's campaigns at once: status 'bounced' for a bounce, 'unsubscribed' for everything else. History,
+// messages and stats are untouched. Returns how many people were stopped. Call inside the transaction that wrote the block.
+function stopQueued(tx, userId, addr, reason, note, t) {
+  var status = reason === 'bounced' ? 'bounced' : 'unsubscribed';
+  var same = 'lead_id IN (SELECT id FROM leads WHERE user_id = ? AND email = ?)';
+  return tx.all("SELECT DISTINCT campaign_id FROM campaign_leads WHERE status IN ('pending','active','paused') AND " + same, [userId, addr]).then(function (camps) {
+    if (!camps.length) return 0;
+    return tx.run("UPDATE campaign_leads SET status = ?, next_send_at = NULL, status_note = ? WHERE status IN ('pending','active','paused') AND " + same, [status, note, userId, addr]).then(function (r) {
+      return camps.reduce(function (p, c) { return p.then(function () { return completeIfDone(tx, c.campaign_id, t); }); }, Promise.resolve()).then(function () { return r.changes || 0; });
+    });
+  });
+}
+
+module.exports = { deriveStatus: deriveStatus, syncMain: syncMain, completeIfDone: completeIfDone, stopQueued: stopQueued };

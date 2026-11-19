@@ -29,6 +29,7 @@ var capacityToday = require('../services/senders').capacityToday;
 var senderHealth = require('../services/senderHealth');
 var images = require('../services/images');
 var state = require('../services/campaignState');
+var stateLib = state;
 
 var DAY = 86400000;
 var MAX_ATTEMPTS = 5;
@@ -264,6 +265,14 @@ E._claim = function (sender, c, mail, steps, t) {
   return this.db.transaction(function (tx) {
     return tx.get('SELECT cl.status AS st, cl.current_step AS step, c.status AS cst FROM campaign_leads cl JOIN campaigns c ON c.id = cl.campaign_id WHERE cl.id = ?', [c.cl_id]).then(function (row) {
       if (!row || row.st !== 'active' || row.cst !== 'active' || row.step !== c.current_step) return { ok: false };
+      // Last line of defence: the block list is read again in the same transaction that claims the send, so an address blocked
+      // while this email was being prepared (images, templates) is never sent to.
+      return tx.get('SELECT 1 AS x FROM suppression WHERE user_id = ? AND email = ?', [c.user_id, c.email]).then(function (sup) {
+        if (!sup) return null;
+        return tx.run("UPDATE campaign_leads SET status = 'unsubscribed', next_send_at = NULL, status_note = 'On the suppression list' WHERE id = ? AND status = 'active'", [c.cl_id])
+          .then(function () { return state.completeIfDone(tx, c.campaign_id, t); }).then(function () { return { ok: false }; });
+      }).then(function (blocked) {
+      if (blocked) return blocked;
       return tx.get('SELECT id, status, attempts FROM messages WHERE idempotency_key = ?', [key]).then(function (ex) {
         var vals = [mail.messageId, mail.inReplyTo, mail.subject, mail.html, mail.text, mail.from.address, mail.to];
         if (!ex) {
@@ -279,6 +288,7 @@ E._claim = function (sender, c, mail, steps, t) {
         }
         return tx.run("UPDATE campaign_leads SET status = 'error', next_send_at = NULL, status_note = 'Duplicate-send guard: this step was already attempted' WHERE id = ? AND status = 'active'", [c.cl_id])
           .then(function () { return state.completeIfDone(tx, c.campaign_id, t); }).then(function () { return { ok: false }; });
+      });
       });
     });
   });
@@ -337,6 +347,7 @@ E._onFailure = function (sender, c, steps, claim, err) {
       return p.then(senderOk).then(function () {
         return tx.run("UPDATE campaign_leads SET status = 'bounced', next_send_at = NULL, status_note = 'Address rejected by the receiving server' WHERE id = ? AND status = 'active'", [c.cl_id]);
       }).then(function () { return tx.run("INSERT OR IGNORE INTO suppression (user_id, email, reason, created_at) VALUES (?,?,'bounced',?)", [c.user_id, c.email, t2]); })
+        .then(function () { return stateLib.stopQueued(tx, c.user_id, c.email, 'bounced', 'Address bounced in another campaign', t2); })
         .then(function () { return tx.run("UPDATE leads SET verify_status = 'invalid', verify_error = 'rejected_when_sending', verified_at = ? WHERE id = ?", [t2, c.lead_id]); })
         .then(function () { return state.completeIfDone(tx, c.campaign_id, t2); });
     }

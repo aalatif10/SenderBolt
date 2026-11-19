@@ -359,3 +359,21 @@ Security notes: every new endpoint is session + CSRF protected, user-scoped and 
 Tests: `test/v180.js` (20 tests: protection levels, force + expiry, auto-pause, reply detection, per-person replies, priority order, scheduled start, suppression sort/filter/unblock/delete/scoping, lead multi-status filter, People sort/risky/removal history, health_seen). Migration lists in `test/integration.js` and `test/projects.js` include 011. `npm test` runs it after `test/live.js`.
 
 Not verified in this build: browser rendering of the new screens (checked by syntax and the source-safety scan only), real SMTP/IMAP, and Node 12 on Windows 7 (tested on a newer Node; code stays ES5-style).
+
+
+## v1.8.1 - reliability, block-list guardrails, UI states
+
+No migration. Focus: nobody who is blocked can stay queued or be emailed, whichever path blocked them.
+
+| Area | Where | What |
+|---|---|---|
+| Block takes effect at once | `src/services/campaignState.js` `stopQueued(tx, userId, email, reason, note, t)` | Stops every waiting (pending / active / paused) entry of an address in ALL of the user's campaigns inside the transaction that wrote the block (`bounced` -> status `bounced`, anything else -> `unsubscribed`), then completes campaigns that have nobody left. History, messages and stats are untouched. |
+| Manual do-not-email adds | `src/services/leads.js` `addSuppression` | Calls `stopQueued` per address; the response gains `stopped_in_campaigns`. Before, queued people kept showing as scheduled until their send time. |
+| Bounces | `sendEngine._onFailure` (recipient rejected), `inboxSync._applyBounce` (hard bounce) | The same address is stopped in other campaigns too (unsubscribe link and "stop campaign" already did this). |
+| Atomic send guard | `sendEngine._claim` | The block list is re-read inside the claim transaction (after templates/images are prepared), so an address blocked in that window gets no message row and nothing is sent. The earlier read in `_attempt` stays as the cheap first check. |
+| Start safety | `campaigns.js` `start()` | People found blocked at start get a status note ("On the do-not-email list"); a part left with nobody to email completes immediately instead of sitting "active". |
+| UI states | `public/js/suppress.js` | Loading skeleton, "Could not load the list" with Try again, selection cleared after each action; the Add dialog toast reports how many people were stopped in running campaigns. |
+
+Tests: `test/v181.js` (6 tests: cross-campaign stop, bounced reason + user scoping + completion, claim re-check, bounce cascade, start with everyone blocked, end-to-end "never sent to a blocked address"). `npm test` runs it after `test/v180.js`.
+
+Browser check done for this release: the app shell and sign-in screen load in headless Chrome with no console errors. The signed-in screens (Home, Leads, Unsubscriptions, wizard, Studio) are still not browser-verified. Live SMTP/IMAP and Node 12 on Windows 7 remain untested here.

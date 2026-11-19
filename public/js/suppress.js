@@ -89,7 +89,11 @@
         if (my !== st.req || st.dead) return;
         if (!r.items.length && r.total > 0 && st.page > 1) { st.page = Math.ceil(r.total / st.size); return load(); }
         st.items = r.items; st.total = r.total; st.counts = r.counts || {}; paint();
-      }, function (e) { if (!st.dead && e.code !== 'offline') SB.mount(listBox, h('div', { class: 'form-error', text: SB.api.friendly(e) })); });
+      }, function (e) {
+        if (st.dead || my !== st.req || e.code === 'offline') return;
+        SB.mount(listBox, h('div', { class: 'card empty' }, h('h2', { text: 'Could not load the list' }), h('p', { text: SB.api.friendly(e) }),
+          h('button', { class: 'btn', type: 'button', on: { click: function () { SB.mount(listBox, h('div', { class: 'skeleton' })); load(); } } }, 'Try again')));
+      });
     }
     function afterAction() { st.sel = {}; return load(); }
 
@@ -143,6 +147,7 @@
         h('thead', null, h('tr', null, h('th', { class: 'check-col' }, master), SB.lists.sortHeader('Email address', 'email', cur, onSort), SB.lists.sortHeader('Type', 'reason', cur, onSort), SB.lists.sortHeader('Added', 'created_at', cur, onSort, { defaultDir: 'desc' }))),
         h('tbody', null, rows))), h('div', { class: 'table-foot' }, SB.suppress.pager(st.page, st.size, st.total, function (p) { st.page = p; load(); }))));
     }
+    SB.mount(listBox, h('div', { class: 'skeleton' }));
     load();
     return { el: root, reload: load, getState: function () { return st; }, destroy: function () { st.dead = true; clearTimeout(qTimer); } };
   };

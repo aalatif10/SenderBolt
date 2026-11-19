@@ -519,7 +519,7 @@
           if (found.length > 5000) { err.textContent = 'Please add at most 5,000 addresses at a time.'; err.classList.remove('hidden'); return Promise.reject(new Error('v')); }
           return SB.api.post('/api/suppression', { emails: found, reason: why.value }).then(function (r) {
             close(); var skipped = found.length - r.added;
-            ui.toast(fmt.num(r.added) + ' added' + (skipped ? ' · ' + fmt.num(skipped) + ' were already on the list or not valid' : '')); if (shared.reloadSuppression) shared.reloadSuppression();
+            ui.toast(fmt.num(r.added) + ' added' + (r.stopped_in_campaigns ? ' · ' + fmt.num(r.stopped_in_campaigns) + ' stopped in running campaigns' : '') + (skipped ? ' · ' + fmt.num(skipped) + ' were already on the list or not valid' : '')); if (shared.reloadSuppression) shared.reloadSuppression();
           }, function (e) { showErr(err, e); throw e; });
         } }
       ] });

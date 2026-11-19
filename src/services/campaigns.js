@@ -521,11 +521,13 @@ C.start = function (userId, id, ip) {
       return seq(leaves, function (leaf, i) {
         var sids = checks[i][2].map(function (s) { return s.id; });
         var n = sids.length, cases = sids.map(function (s, k) { return 'WHEN ' + k + ' THEN ?'; }).join(' ');
-        return tx.run("UPDATE campaign_leads SET status = 'unsubscribed' WHERE campaign_id = ? AND status = 'pending' AND lead_id IN " +
+        return tx.run("UPDATE campaign_leads SET status = 'unsubscribed', status_note = 'On the do-not-email list' WHERE campaign_id = ? AND status = 'pending' AND lead_id IN " +
           '(SELECT l.id FROM leads l JOIN suppression s ON s.user_id = l.user_id AND s.email = l.email WHERE l.user_id = ?)', [leaf.id, userId]).then(function () {
           return tx.run("UPDATE campaign_leads SET sender_id = CASE (position % " + n + ') ' + cases + " END, status = 'active', next_send_at = ? WHERE campaign_id = ? AND status = 'pending'",
             sids.concat([Math.max(t, leaf.start_at || 0), leaf.id]));      // a scheduled campaign waits for its start date
-        }).then(function () { return tx.run("UPDATE campaigns SET status = 'active', updated_at = ? WHERE id = ?", [t, leaf.id]); });
+        }).then(function () { return tx.run("UPDATE campaigns SET status = 'active', updated_at = ? WHERE id = ?", [t, leaf.id]); })
+          // Everybody on the list may have been blocked: such a part completes now instead of sitting "active" with nobody to email.
+          .then(function () { return state.completeIfDone(tx, leaf.id, t); });
       }).then(function () { return camp.parent_id === null && leaves[0].id !== camp.id ? tx.run("UPDATE campaigns SET status = 'active', updated_at = ? WHERE id = ?", [t, camp.id]) : null; })
         .then(function () { return camp.parent_id ? syncMain(tx, camp.parent_id, t) : null; })
         .then(function () { return audit.log(tx, { userId: userId, action: 'campaign.start', entity: 'campaign', entityId: id, ip: ip, meta: { parts: leaves.length } }, self.now); })

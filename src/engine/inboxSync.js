@@ -157,6 +157,7 @@ S._applyBounce = function (tx, cl, bounce, t) {
   if (bounce.kind === 'hard') {
     return tx.run("UPDATE campaign_leads SET status = 'bounced', next_send_at = NULL, status_note = 'Address bounced' WHERE id = ? AND status IN ('active','pending','paused','completed')", [cl.id])
       .then(function () { return tx.run("INSERT OR IGNORE INTO suppression (user_id, email, reason, created_at) VALUES (?,?,'bounced',?)", [cl.user_id, cl.lead_email, t]); })
+      .then(function () { return state.stopQueued(tx, cl.user_id, cl.lead_email, 'bounced', 'Address bounced in another campaign', t); })
       .then(function () { return tx.run("UPDATE leads SET verify_status = 'invalid', verify_error = 'hard_bounce', verified_at = ? WHERE id = ?", [t, cl.lead_id]); })
       .then(function () { return state.completeIfDone(tx, cl.campaign_id, t); });
   }
