@@ -39,6 +39,7 @@ function normalise(d) {
     window_start_hour: numOrNull(st.window_start_hour, 0, 23), window_end_hour: numOrNull(st.window_end_hour, 1, 24),
     utc_offset_min: typeof st.utc_offset_min === 'number' && st.utc_offset_min % 1 === 0 && st.utc_offset_min >= -720 && st.utc_offset_min <= 840 ? st.utc_offset_min : null,
     weekdays_only: st.weekdays_only === undefined ? true : !!st.weekdays_only,
+    active_days: numOrNull(st.active_days, 1, 127),
     stop_on_reply: st.stop_on_reply === undefined ? true : !!st.stop_on_reply,
     track_opens: !!st.track_opens,
     start_date: typeof st.start_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(st.start_date) ? st.start_date : null,

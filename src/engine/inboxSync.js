@@ -21,11 +21,27 @@ var DAY = 86400000;
 var OOO_DELAY_MS = 3 * DAY;
 var STOPPABLE = ['active', 'pending', 'paused', 'completed'];
 
+var NET = { ETIMEDOUT: 1, ECONNRESET: 1, ECONNREFUSED: 1, ENOTFOUND: 1, EAI_AGAIN: 1, EPIPE: 1, EHOSTUNREACH: 1, ENETUNREACH: 1, ESOCKET: 1, ECONNECTION: 1 };
+var RETRY_MAX_MS = 5 * 60000;       // transient failures: 1, 2, 4, then every 5 minutes (stays inside the 15 minute "fresh" window)
+var RETRY_LOGIN_MS = 15 * 60000;    // a rejected login will not fix itself quickly: ask Gmail at most every 15 minutes
+
+// A time-out or network blip says nothing about the account itself: it is retried quietly and never blocks sending.
+function isTransient(e) {
+  var code = e && e.code ? String(e.code) : '', src = e && e.source ? String(e.source) : '', msg = String((e && e.message) || '');
+  return !!NET[code] || /^timeout/.test(src) || /timed? ?out|socket hang up|ECONN|getaddrinfo/i.test(msg);
+}
+
 function friendlyError(e) {
   var msg = String((e && e.message) || ''), code = e && e.code ? String(e.code) : '';
   if (/need the .*packages/i.test(msg)) return msg.slice(0, 200);
+  // Time-outs first: "Timed out while authenticating with server" contains the word "authenticating" but is NOT a rejected login.
+  if (isTransient(e)) return 'The mail server did not answer in time. SenderBolt will retry automatically.';
   if (/auth|login|credential|invalid|password/i.test(msg + ' ' + (e && e.textCode || ''))) return 'IMAP login failed. Check the App Password and that IMAP is enabled for this account.';
   return 'Could not read the mailbox' + (code ? ' (' + code + ')' : '') + '. Will retry.';
+}
+
+function retryDelay(failures, transient) {
+  return transient ? Math.min(RETRY_MAX_MS, 60000 * Math.pow(2, Math.max(0, failures - 1))) : RETRY_LOGIN_MS;
 }
 
 function InboxSync(db, deps) {
@@ -50,14 +66,14 @@ S.syncSender = function (s) {
     var creds = self._creds(s);
     if (s.imap_last_uid === null || s.imap_last_uid === undefined) {
       return self.mailbox.baseline(creds).then(function (b) {
-        return self.db.run('UPDATE senders SET imap_uidvalidity = ?, imap_last_uid = ?, last_sync_at = ?, sync_error = NULL WHERE id = ?', [b.uidValidity, b.lastUid, self.now(), s.id])
+        return self.db.run('UPDATE senders SET imap_uidvalidity = ?, imap_last_uid = ?, last_sync_at = ?, sync_error = NULL, sync_transient = 0, sync_failures = 0, sync_retry_at = NULL WHERE id = ?', [b.uidValidity, b.lastUid, self.now(), s.id])
           .then(function () { return { armed: true }; });
       });
     }
     return self.mailbox.fetchSince(creds, { uidValidity: s.imap_uidvalidity, lastUid: s.imap_last_uid }).then(function (res) {
       if (res.reset) {            // mailbox was rebuilt on the server: start again from its current end
         self.log('mailbox of sender ' + s.id + ' was reset (UIDVALIDITY changed)');
-        return self.db.run('UPDATE senders SET imap_uidvalidity = ?, imap_last_uid = ?, last_sync_at = ?, sync_error = NULL WHERE id = ?', [res.uidValidity, res.lastUid, self.now(), s.id])
+        return self.db.run('UPDATE senders SET imap_uidvalidity = ?, imap_last_uid = ?, last_sync_at = ?, sync_error = NULL, sync_transient = 0, sync_failures = 0, sync_retry_at = NULL WHERE id = ?', [res.uidValidity, res.lastUid, self.now(), s.id])
           .then(function () { return { reset: true }; });
       }
       var counts = { reply: 0, bounce: 0, auto_reply: 0, ignored: 0, duplicate: 0 };
@@ -66,12 +82,15 @@ S.syncSender = function (s) {
           return self.processMessage(s, m).then(function (outcome) { counts[outcome] = (counts[outcome] || 0) + 1; });
         }).then(function () { return self.db.run('UPDATE senders SET imap_last_uid = ? WHERE id = ? AND imap_last_uid < ?', [m.uid, s.id, m.uid]); });
       }, Promise.resolve()).then(function () {
-        return self.db.run('UPDATE senders SET imap_last_uid = CASE WHEN imap_last_uid < ? THEN ? ELSE imap_last_uid END, last_sync_at = ?, sync_error = NULL WHERE id = ?', [res.lastUid, res.lastUid, self.now(), s.id]);
+        return self.db.run('UPDATE senders SET imap_last_uid = CASE WHEN imap_last_uid < ? THEN ? ELSE imap_last_uid END, last_sync_at = ?, sync_error = NULL, sync_transient = 0, sync_failures = 0, sync_retry_at = NULL WHERE id = ?', [res.lastUid, res.lastUid, self.now(), s.id]);
       }).then(function () { return counts; });
     });
   }).catch(function (e) {
-    self.log('sync sender ' + s.id + ': ' + e.message);
-    return self.db.run('UPDATE senders SET sync_error = ? WHERE id = ?', [friendlyError(e), s.id]).then(function () { return { error: true }; });
+    var transient = isTransient(e), failures = (s.sync_failures || 0) + 1, t = self.now();
+    // Log the first failure and then only every 10th: a mailbox that is down must not flood the terminal every minute.
+    if (failures === 1 || failures % 10 === 0) self.log('sync sender ' + s.id + ': ' + friendlyError(e) + (failures > 1 ? ' (' + failures + ' failures in a row)' : ''));
+    return self.db.run('UPDATE senders SET sync_error = ?, sync_transient = ?, sync_failures = ?, sync_retry_at = ? WHERE id = ?',
+      [friendlyError(e), transient ? 1 : 0, failures, t + retryDelay(failures, transient), s.id]).then(function () { return { error: true, transient: transient }; });
   });
 };
 
@@ -84,6 +103,9 @@ S.syncAll = function (userId) {
   if (userId) { sql += ' AND user_id = ?'; params.push(userId); }
   var summary = { senders: 0, reply: 0, bounce: 0, auto_reply: 0, ignored: 0, duplicate: 0, errors: 0 };
   return this.db.all(sql, params).then(function (senders) {
+    // Back-off: a sender whose last read failed is not asked again before its retry time (a manual "check now" for one user skips this).
+    var t = self.now();
+    if (!userId) senders = senders.filter(function (s) { return !s.sync_retry_at || s.sync_retry_at <= t; });
     return senders.reduce(function (p, s) {
       return p.then(function () {
         return self.syncSender(s).then(function (r) {
@@ -192,4 +214,4 @@ S._applyReply = function (tx, cl, stop, t, detect) {
     });
 };
 
-module.exports = { InboxSync: InboxSync, friendlyError: friendlyError, OOO_DELAY_MS: OOO_DELAY_MS };
+module.exports = { InboxSync: InboxSync, friendlyError: friendlyError, isTransient: isTransient, retryDelay: retryDelay, OOO_DELAY_MS: OOO_DELAY_MS };

@@ -68,12 +68,12 @@ function createApp(config) {
       deps.projects = new ProjectsService(db, { campaigns: deps.campaigns, now: config.now });
       deps.engineStatus = function (userId) {
         var t = (config.now || Date.now)();
-        return db.all('SELECT id, email, status, health_score, next_send_at, last_error, imap_host, imap_last_uid, last_sync_at, sync_error, reply_detection FROM senders WHERE user_id = ? ORDER BY id', [userId]).then(function (rows) {
+        return db.all('SELECT id, email, status, health_score, next_send_at, last_error, imap_host, imap_last_uid, last_sync_at, sync_error, sync_transient, reply_detection, connection_error FROM senders WHERE user_id = ? ORDER BY id', [userId]).then(function (rows) {
           return {
             mode: mode, public_origin_set: !!config.publicOrigin, last_tick_at: engine.lastTickAt, last_error: engine.lastError, last_sync_at: inboxSync.lastRunAt,
             senders: rows.map(function (r) {
               return { id: r.id, email: r.email, status: r.status, health_score: r.health_score, next_send_at: r.next_send_at, last_error: r.last_error,
-                reply_tracking: r.reply_detection === 0 ? 'off' : r.imap_host ? (trackingOk(r, t, true) ? 'ok' : (r.sync_error ? 'error' : 'pending')) : 'not_configured', sync_error: r.sync_error, last_sync_at: r.last_sync_at };
+                reply_tracking: r.reply_detection === 0 ? 'off' : r.imap_host ? (trackingOk(r, t, true) ? 'ok' : (r.sync_error ? 'error' : 'pending')) : 'not_configured', sync_error: r.sync_error, last_sync_at: r.last_sync_at, connection_error: r.connection_error };
             })
           };
         });

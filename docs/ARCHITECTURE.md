@@ -1,4 +1,4 @@
-# SenderBolt - Architecture Report (updated through v1.8.0)
+# SenderBolt - Architecture Report (updated through v1.9.0)
 
 Target runtime: **Node.js 12.22.x on Windows 7 (64-bit)**. Code is written in ES2018-style JavaScript
 (no `?.`, `??`, or other post-Node-12 syntax) with promise chains.
@@ -377,3 +377,20 @@ No migration. Focus: nobody who is blocked can stay queued or be emailed, whiche
 Tests: `test/v181.js` (6 tests: cross-campaign stop, bounced reason + user scoping + completion, claim re-check, bounce cascade, start with everyone blocked, end-to-end "never sent to a blocked address"). `npm test` runs it after `test/v180.js`.
 
 Browser check done for this release: the app shell and sign-in screen load in headless Chrome with no console errors. The signed-in screens (Home, Leads, Unsubscriptions, wizard, Studio) are still not browser-verified. Live SMTP/IMAP and Node 12 on Windows 7 remain untested here.
+
+
+## v1.9.0 - campaigns table, inbox filters, wizard flow, sender healing and timing
+
+| Area | File | Role |
+|---|---|---|
+| Migration | `src/db/migrations/012_v190.sql` | senders: `health_heal`, `health_heal_day`, `health_severe_n`, `health_base`, `connection_error(_at)`, `sync_transient`, `sync_failures`, `sync_retry_at`; campaigns: `archived`. |
+| Health | `src/lib/health.js`, `src/services/senderHealth.js` | Stored score = min(100, base + heal). `HEAL` rules, `healPoints`, `clampHeal`; `healDaily` credits completed UTC days (hourly from the scheduler); a new severe event resets heal. |
+| Connection errors | `src/lib/sendErrors.js`, `src/engine/sendEngine.js`, `src/services/senderTest.js` | Auth/network errors keep the sender active, set `connection_error`, back off 15/5 min, do not consume the lead's attempts or touch health. Cleared by the next success or a passing test. |
+| IMAP time-outs | `src/engine/mailbox.js`, `src/engine/inboxSync.js` | 30 s connect/auth timeouts, 120 s whole-operation guard; transient failures back off 1/2/4/5 min (login failures 15 min), logged on the first and every 10th failure, do not block sending. |
+| Next-send timing | `src/lib/nextSend.js` (pure) | Applies the campaign window (hours, time zone, day mask Sun=1..Sat=64, start date). Used by `Senders.list/get` (`next_email_at`) and campaign stats (earliest sender). |
+| Sender view | `src/services/senders.js` | Adds `heal_rules`, `heal_next_at`, `heal_full_in_days`, `risk {level, factors}`, `connection_error`, `next_email_at`. |
+| Campaigns table | `src/services/projects.js` (`campaignTable`), `src/routes/projects.js` (`GET /api/campaign-table`) | Filters: `q`, `status` (csv, incl. `planned`/`archived`), `sender_ids` (csv). |
+| Archive / duplicate | `src/services/campaigns.js`, `src/routes/campaigns.js` | `POST /api/campaigns/:id/archive` (`{archived:false}` restores; refused while active), `POST /api/campaigns/:id/duplicate` (draft copy). All user-scoped. |
+| Inbox | `src/services/inbox.js` | `campaign_ids`, `sender_ids`, `status`, `read` filters. |
+| UI | `public/js/controls.js`, `public/js/screens/campaigntable.js`, `home.js`, `inbox.js`, `wizard.js`, `senders.js` | Multi-select and row-menu controls (CSSOM positioning, CSP-safe), the table, Campaigns/Projects switch, inbox filter bar, vertical Sending step with day chips and the Start toggle, Senders cards and the sectioned Settings panel. |
+| Tests | `test/v190.js` | Healing, time-out back-off, window maths, next-email timing, archive/duplicate/table filters, risk outlook. |

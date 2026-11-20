@@ -13,6 +13,7 @@ var net = require('../lib/net');
 var AppError = require('../lib/errors').AppError;
 var audit = require('./audit');
 var health = require('../lib/health');
+var nextSend = require('../lib/nextSend');
 
 var SMTP_PORTS = [25, 465, 587, 2525];
 var IMAP_PORTS = [143, 993];
@@ -177,19 +178,66 @@ function withToday(row, nowMs) {
   out.health_floor = health.floorFor(row);                       // the score below which this sender is paused automatically
   out.force_active = health.isForced(row, nowMs);                // "Force continue" override currently on
   out.force_until = out.force_active ? row.force_until : null;
+  // Health healing: the score is the 30-day result (base) plus earned points; both are shown so the owner can see why it moves.
+  out.health_base = row.health_base === null || row.health_base === undefined ? row.health_score : row.health_base;
+  out.health_heal = health.clampHeal(row.health_heal, out.health_base);
+  out.heal_rules = { calm: health.HEAL.calm, clean_per: health.HEAL.cleanPer, clean_max: health.HEAL.cleanMax, reply: health.HEAL.reply, day_max: health.HEAL.dayMax };
+  out.connection_error = row.connection_error || null;
+  out.next_email_at = null;
+  // Healing outlook: the soonest day the score can be full again if every day stays clean (best case, 4 points a day), and when the next day is credited.
+  out.heal_next_at = Date.UTC(new Date(nowMs).getUTCFullYear(), new Date(nowMs).getUTCMonth(), new Date(nowMs).getUTCDate() + 1);
+  out.heal_full_in_days = row.health_score >= 100 ? 0 : Math.ceil((100 - row.health_score) / health.HEAL.dayMax);
+  out.risk = riskOf(row, out, nowMs);
   return out;
+}
+
+// One plain verdict + the reasons behind it, so the owner never has to decode numbers. level: low | moderate | high | critical.
+function riskOf(row, v, nowMs) {
+  var floor = health.floorFor(row), forced = health.isForced(row, nowMs), factors = [], level = 0;
+  function add(lvl, text) { factors.push(text); if (lvl > level) level = lvl; }
+  if (row.health_score < floor && !forced) add(3, 'Health ' + row.health_score + ' is below this account\u2019s protection threshold (' + floor + ').');
+  else if (row.health_score < 70) add(2, 'Health is ' + row.health_score + ': recent bounces are hurting this account.');
+  else if (row.health_score < 90) add(1, 'Health is ' + row.health_score + ': a few recent bounces.');
+  if (v.warmup_slowed) add(1, 'Warm-up growth is slowed because of recent bounces.');
+  if (forced) add(2, 'Force continue is on: automatic health pauses are skipped until it expires.');
+  if (row.connection_error) add(1, 'Connection problem: ' + row.connection_error);
+  if (!row.warmup_enabled && row.daily_limit > 300) add(1, 'High daily limit (' + row.daily_limit + ') without warm-up.');
+  if (row.status === 'paused') add(1, 'Paused: nothing is being sent.');
+  return { level: ['low', 'moderate', 'high', 'critical'][level], factors: factors };
+}
+
+// When will each sender's next email REALLY go out? Due time + sender pause + sending hours/days/start date of the campaign,
+// and not before tomorrow (UTC) when the sender used up today's allowance. null = nothing waiting or the sender is not sending.
+function addNextEmail(db, userId, rows, nowMs) {
+  var ids = rows.filter(function (r) { return r.status === 'active'; }).map(function (r) { return r.id; });
+  if (!ids.length) return Promise.resolve(rows);
+  return db.all('SELECT cl.sender_id AS sid, c.window_start_hour, c.window_end_hour, c.utc_offset_min, c.weekdays_only, c.active_days, c.start_at, ' +
+    'MIN(MAX(cl.next_send_at, COALESCE(s.next_send_at, 0))) AS due FROM campaign_leads cl JOIN campaigns c ON c.id = cl.campaign_id JOIN senders s ON s.id = cl.sender_id ' +
+    "WHERE s.user_id = ? AND cl.status = 'active' AND c.status = 'active' AND cl.removed_at IS NULL GROUP BY cl.sender_id, c.id", [userId]).then(function (groups) {
+    var best = {}, midnight = Date.UTC(new Date(nowMs).getUTCFullYear(), new Date(nowMs).getUTCMonth(), new Date(nowMs).getUTCDate() + 1);
+    var byId = {}; rows.forEach(function (r) { byId[r.id] = r; });
+    groups.forEach(function (g) {
+      var r = byId[g.sid]; if (!r || g.due === null) return;
+      var due = Number(g.due);
+      if (r.remaining_today <= 0) due = Math.max(due, midnight);
+      var t = nextSend.effective(g, due, nowMs);
+      if (t !== null && (best[g.sid] === undefined || t < best[g.sid])) best[g.sid] = t;
+    });
+    rows.forEach(function (r) { r.next_email_at = best[r.id] === undefined ? null : best[r.id]; });
+    return rows;
+  });
 }
 
 Senders.prototype.list = function (userId) {
   var self = this;
   return this.db.all('SELECT * FROM senders WHERE user_id = ? ORDER BY created_at DESC, id DESC', [userId]).then(function (rows) {
-    var t = self.now(); return rows.map(function (r) { return withToday(r, t); });
+    var t = self.now(); return addNextEmail(self.db, userId, rows.map(function (r) { return withToday(r, t); }), t);
   });
 };
 
 Senders.prototype.get = function (userId, id) {
   var self = this;
-  return this._find(userId, id).then(function (r) { return withToday(r, self.now()); });
+  return this._find(userId, id).then(function (r) { var t = self.now(); return addNextEmail(self.db, userId, [withToday(r, t)], t).then(function (a) { return a[0]; }); });
 };
 
 Senders.prototype.update = function (userId, id, input, ip) {

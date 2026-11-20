@@ -19,6 +19,19 @@
     high: { label: 'High', below: 70, tip: 'Strictest: pauses early, below health 70 or after 3 failed sends in a row. Best for your most valuable accounts.' }
   };
   function isForced(s) { return !!s.force_active; }
+  // An account counts as active when it is switched on and either healthy enough OR running under Force continue.
+  function isActiveNow(s) { return s.status === 'active' && (isForced(s) || s.health_score >= (s.health_floor || 50)); }
+  // Real time of the next email from this account (computed on the server from schedule, sending hours, days and timezone).
+  function nextLine(s) {
+    if (s.status === 'active') {
+      if (s.connection_error) return 'Connection problem. Retrying automatically.';
+      if (s.next_email_at) return 'Next email ' + fmt.until(s.next_email_at);
+      if (s.last_error) return 'Last problem: ' + s.last_error;
+      return 'No emails scheduled';
+    }
+    return s.last_error ? 'Last problem: ' + s.last_error : ' ';
+  }
+  var RISK = { low: ['good', 'Low risk'], moderate: ['warn', 'Moderate risk'], high: ['bad', 'High risk'], critical: ['bad', 'Critical risk'] };
 
   function state(s) {
     if (s.status === 'disabled') return { key: 'draft', label: 'Disabled', tip: 'This account is switched off and will never be used.' };
@@ -33,7 +46,8 @@
     var out = [];
     if (s.status === 'paused') out.push({ code: 'paused', text: s.last_error ? 'Paused: ' + s.last_error : 'Paused: nothing is sent from this account until you resume it.' });
     if (s.status === 'active' && s.health_score < (s.health_floor || 50) && !isForced(s)) out.push({ code: 'health', text: 'Health score ' + s.health_score + ' is below the protection threshold (' + (s.health_floor || 50) + ').' });
-    if (s.status === 'active' && s.last_error) out.push({ code: 'error', text: 'Last problem: ' + s.last_error });
+    if (s.status === 'active' && s.connection_error) out.push({ code: 'connection', text: 'Connection problem: ' + s.connection_error + ' The account keeps its place and SenderBolt retries automatically. Check the App Password in Settings, or run Test connection.' });
+    else if (s.status === 'active' && s.last_error) out.push({ code: 'error', text: 'Last problem: ' + s.last_error });
     if (s.status === 'active' && rt === 'error') out.push({ code: 'imap', text: 'The inbox cannot be read, so replies and bounces are not being detected.' });
     return out;
   }
@@ -255,24 +269,53 @@
         onConfirm: function () { return SB.api.del('/api/senders/' + s.id).then(function () { p.close(); ui.toast('Sender removed'); onDone(); }); } });
     });
 
+    var testBtn = h('button', { class: 'btn btn-sm', type: 'button', tip: 'Logs in to this account right now to check that sending and reply detection work.' }, 'Test connection');
+    testBtn.addEventListener('click', function () { runTest(s, testBtn, onDone); });
+    var conn = s.connection_error ? h('div', { class: 'callout warn' }, SB.icon('alert'), ' ', 'Connection problem: ' + s.connection_error + ' The account stays active and SenderBolt retries automatically; nothing is paused for this.') : null;
+    var where = [s.provider === 'gmail' ? 'Gmail' : 'Custom SMTP', s.smtp_host ? 'SMTP ' + s.smtp_host + (s.smtp_port ? ':' + s.smtp_port : '') : null, s.imap_host ? 'IMAP ' + s.imap_host : null].filter(Boolean).join(' · ');
+
+    function section(title, desc, kids) {
+      return h('section', { class: 'set-sec' }, h('h3', { class: 'sub-h', text: title }), desc ? h('p', { class: 'small muted sec-desc', text: desc }) : null, kids);
+    }
+    // Risk: one plain verdict and the reasons behind it.
+    var rk = s.risk || { level: 'low', factors: [] }, rm = RISK[rk.level] || RISK.low;
+    var riskBox = h('div', { class: 'risk-box risk-' + rk.level },
+      h('div', { class: 'risk-head' }, h('span', { class: 'chip chip-' + rm[0], tip: 'A plain summary of how likely this account is to run into trouble, based on its health, warm-up, protection and connection state.' }, rm[1]),
+        h('span', { class: 'small muted', text: 'Health ' + s.health_score + ' · pauses below ' + (s.health_floor || 50) })),
+      rk.factors.length ? h('ul', { class: 'risk-list' }, rk.factors.map(function (f) { return h('li', { text: f }); })) : h('div', { class: 'small muted', text: 'No warning signs. Keep lists clean and this account stays in good shape.' }));
+    // Health Healing: how the score recovers, step by step.
+    var r = s.heal_rules || {}, base = s.health_base, heal = s.health_heal || 0;
+    var healBar = ui.progress(s.health_score);
+    var healBox = h('div', { class: 'heal-box' },
+      h('div', { class: 'usage-top' }, h('span', { text: 'Health score', tip: HEALTH_TIP }), h('b', { text: s.health_score + ' / 100' })), healBar,
+      h('div', { class: 'heal-split small muted' }, h('span', { tip: 'The score from the last 30 days of sending (bounces and failures).', text: 'From sending history: ' + base }), h('span', { tip: 'Points earned back by calm days, clean sending and replies. A new serious problem resets them.', text: 'Healed: +' + heal })),
+      h('div', { class: 'small muted', text: s.health_score >= 100 ? 'Fully healed.' : 'If every day stays clean it can be back at 100 in about ' + s.heal_full_in_days + ' day' + (s.heal_full_in_days === 1 ? '' : 's') + '. Next healing day is credited ' + fmt.until(s.heal_next_at) + '.' }),
+      h('ul', { class: 'risk-list' },
+        h('li', { text: '+' + r.calm + ' for each calm day with no serious problem' }),
+        h('li', { text: '+' + r.clean_per + ' for every 25 clean emails sent (up to +' + r.clean_max + ' a day)' }),
+        h('li', { text: '+' + r.reply + ' when a real reply arrives' }),
+        h('li', { text: 'At most +' + r.day_max + ' a day, never above 100. A serious problem pauses healing that day.' })));
+
     p.body.appendChild(h('div', { class: 'panel-pad' }, err, usage,
       h('div', { class: 'actions pad-b' }, toggle),
-      h('h3', { class: 'sub-h', text: 'Sending' }),
-      field('Name shown to recipients', name, null, 'st-name'),
-      field('Emails per day', limit, 'Maximum ' + CAP + '. Gmail allows about 500 per day, so ' + CAP + ' keeps a safe 100-email buffer and protects your account.', 'st-limit'),
-      warm.node,
-      field('Pause between emails', mode, 'Random pauses look like a human. Very short pauses can trigger spam filters.', 'st-mode'), randBox, fixBox,
-      h('h3', { class: 'sub-h', text: 'Replies' }),
-      h('div', { class: 'set-row' }, h('div', { class: 'set-txt' }, h('label', { for: 'st-reply', text: 'Replies detected' }, ' ', ui.info('SenderBolt reads this account\u2019s inbox to notice replies. Each reply stops follow-ups for THAT person only; everyone else in the campaign keeps going.')),
-        h('div', { class: 'hint', text: 'When someone replies, stop follow-ups for that person only. Turn off to keep following up regardless (replies still reach your Inbox). "stop campaign" requests and bounces are always respected.' })), replyOn),
-      h('h3', { class: 'sub-h', text: 'Protection' }),
-      field('Protection level', levelBox, 'How early SenderBolt pauses this account to protect its reputation. Based on the account\u2019s health score and failed sends.', 'st-level'),
-      forceBox,
-      h('h3', { class: 'sub-h', text: 'Signature' }),
-      field('Added to the end of every email', sig, 'Plain text. Line breaks are kept.', 'st-sig'),
-      h('h3', { class: 'sub-h', text: 'Advanced' }),
-      field('Tracking domain', track, 'Only needed if you use a custom domain for unsubscribe links.', 'st-track'),
-      field('Replace App Password', newPass, 'Use this if Google revoked the old one.', 'st-pass'),
+      conn,
+      section('Connection & credentials', where, h('div', null,
+        h('div', { class: 'set-row' }, h('div', { class: 'set-txt' }, h('label', { for: 'st-reply', text: 'Replies detected' }, ' ', ui.info('SenderBolt reads this account’s inbox to notice replies. Each reply stops follow-ups for THAT person only; everyone else in the campaign keeps going.')),
+          h('div', { class: 'hint', text: 'Stop follow-ups for a person who replies. Turn off to keep following up regardless (replies still reach your Inbox). "Stop campaign" requests and bounces are always respected.' })), replyOn),
+        field('Replace App Password', newPass, 'Use this if Google revoked the old one. The current one is never shown.', 'st-pass'),
+        h('div', { class: 'actions' }, testBtn))),
+      section('Daily limit & warm-up', 'How many emails this account may send per day.', h('div', null,
+        field('Emails per day', limit, 'Maximum ' + CAP + '. Gmail allows about 500 per day, so ' + CAP + ' keeps a safe 100-email buffer and protects your account.', 'st-limit'), warm.node)),
+      section('Sending pace', 'The pause between two emails from this account.', h('div', null,
+        field('Pause between emails', mode, 'Random pauses look like a human. Very short pauses can trigger spam filters.', 'st-mode'), randBox, fixBox)),
+      section('Protection & risk', 'When SenderBolt stops this account on its own, and what it is watching.', h('div', null, riskBox,
+        field('Protection level', levelBox, 'How early SenderBolt pauses this account to protect its reputation. Based on the account’s health score and failed sends.', 'st-level'),
+        forceBox)),
+      section('Health healing', 'A damaged score recovers gradually: calm days, clean sending and replies earn points back.', healBox),
+      section('Identity & signature', null, h('div', null,
+        field('Name shown to recipients', name, null, 'st-name'),
+        field('Added to the end of every email', sig, 'Plain text. Line breaks are kept.', 'st-sig'))),
+      section('Advanced', null, field('Tracking domain', track, 'Only needed if you use a custom domain for unsubscribe links.', 'st-track')),
       h('div', { class: 'panel-foot' }, save, del)));
   }
 
@@ -331,7 +374,7 @@
         h('span', { class: 'chip chip-' + hi.cls, tip: HEALTH_TIP }, 'Health: ' + hi.label + ' (' + s.health_score + ')'),
         h('span', { class: 'chip', tip: (LEVELS[s.protection_level] || LEVELS.medium).tip }, 'Protection: ' + (LEVELS[s.protection_level] || LEVELS.medium).label),
         trackingChip(rt)),
-      h('div', { class: 'small muted' }, s.status === 'active' && s.next_send_at ? 'Next email ' + fmt.until(s.next_send_at) : (s.last_error ? ui.email('Last problem: ' + s.last_error) : ' ')),
+      h('div', { class: 'small muted card-next', title: nextLine(s) }, nextLine(s)),
       quick.length ? h('div', { class: 'sender-quick' }, h('div', { class: 'actions' }, quick)) : null,
       h('div', { class: 'actions' }, testBtn, setBtn));
   }
@@ -353,7 +396,7 @@
         return;
       }
       var active = 0, capToday = 0, sent = 0;
-      senders.forEach(function (s) { sent += s.sent_today; if (s.status === 'active' && s.health_score >= 50) { active++; capToday += s.limit_today; } });
+      senders.forEach(function (s) { sent += s.sent_today; if (isActiveNow(s)) { active++; capToday += s.limit_today; } });
       var avail = Math.max(0, capToday - sent), pct = capToday ? Math.min(100, Math.round(sent / capToday * 100)) : 0, fill = h('div', { class: 'usage-fill' });
       fill.style.width = pct + '%';
       var tiles = h('div', { class: 'card usage-card' }, h('div', { class: 'glance-h' }, h('span', { text: 'Sending limits' }), ui.info('How much your active accounts can still send today, including warm-up limits. It resets every day at midnight UTC.')),
@@ -362,7 +405,7 @@
           h('div', { tip: 'Emails already sent today from all accounts.' }, h('span', { class: 'dot dot-sent' }), 'Sent', h('b', { text: fmt.num(sent) })),
           h('div', { tip: 'The most your active accounts can send today.' }, h('span', { class: 'dot dot-cap' }), 'Capacity', h('b', { text: fmt.num(capToday) })),
           h('div', { tip: 'Emails still allowed today before the limits are reached.' }, h('span', { class: 'dot dot-avail' }), 'Available', h('b', { text: fmt.num(avail) })),
-          h('div', { tip: 'Accounts switched on and healthy enough to send.' }, h('span', { class: 'dot dot-acc' }), 'Active accounts', h('b', { text: fmt.num(active) + ' / ' + fmt.num(senders.length) }))));
+          h('div', { tip: 'Accounts switched on and allowed to send: healthy ones, plus any running under Force continue.' }, h('span', { class: 'dot dot-acc' }), 'Active accounts', h('b', { text: fmt.num(active) + ' / ' + fmt.num(senders.length) }))));
       var cards = h('div', { class: 'sender-grid' }, senders.map(function (s) { var t = tracking[s.id]; return card(s, t ? t.reply_tracking : 'pending', load); }));
       var hint = h('div', { class: 'callout' }, h('b', { text: 'How limits work. ' }),
         'Every account has its own daily limit, never above ' + CAP + '. Campaigns share the work evenly between their accounts, so more accounts means more emails per day and less risk for each one.');

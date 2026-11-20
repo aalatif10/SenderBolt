@@ -2,23 +2,31 @@
   'use strict';
   function num(x) { return Number(x || 0).toLocaleString('en-US'); }
   function pct(x) { return (Math.round(Number(x || 0) * 10) / 10) + '%'; }
-  // "in 4m", "in 2h 10m", "in 3d"; null -> dash
-  function until(ts) {
-    if (ts === null || ts === undefined) return '—';
-    var s = Math.round((ts - Date.now()) / 1000);
-    if (s <= 30) return 'any moment';
-    var m = Math.round(s / 60);
-    if (m < 60) return 'in ' + m + 'm';
-    var hr = Math.floor(m / 60);
-    if (hr < 24) return 'in ' + hr + 'h' + (m % 60 ? ' ' + (m % 60) + 'm' : '');
-    return 'in ' + Math.round(hr / 24) + 'd';
+  // Countdown in days, hours and minutes only (never seconds): "in 2d 4h 15m", "in 3h", "in 12m". Anything under a minute reads "in 1m".
+  // "Due" means due now: it is shown as "in 1m" too, because the engine picks work up within its next 5-second cycle and then spaces emails by the sender's delay.
+  function span(ms) {
+    var m = Math.max(1, Math.ceil(ms / 60000)), d = Math.floor(m / 1440), hr = Math.floor((m % 1440) / 60), mi = m % 60, out = [];
+    if (d) out.push(d + 'd'); if (hr) out.push(hr + 'h'); if (mi || !out.length) out.push(mi + 'm');
+    return out.join(' ');
   }
+  function until(ts) { return ts === null || ts === undefined ? '\u2014' : 'in ' + span(ts - Date.now()); }
   function ago(ts) {
     if (!ts) return '—';
     var m = Math.round((Date.now() - ts) / 60000);
     if (m < 1) return 'just now'; if (m < 60) return m + 'm ago';
     var h = Math.round(m / 60); if (h < 24) return h + 'h ago';
     return Math.round(h / 24) + 'd ago';
+  }
+  // "11 minutes ago", "1 hour ago", "3 days ago": the full-word age used in tables (hover for the exact date and time).
+  function age(ts) {
+    if (!ts) return '';
+    var m = Math.floor((Date.now() - ts) / 60000);
+    function u(n, w) { return n + ' ' + w + (n === 1 ? '' : 's') + ' ago'; }
+    if (m < 1) return 'just now'; if (m < 60) return u(m, 'minute');
+    var hr = Math.floor(m / 60); if (hr < 24) return u(hr, 'hour');
+    var d = Math.floor(hr / 24); if (d < 30) return u(d, 'day');
+    var mo = Math.floor(d / 30); if (mo < 12) return u(mo, 'month');
+    return u(Math.floor(d / 365), 'year');
   }
   // ---- dates: one professional style everywhere ("Nov 12, 2026" / "Nov 12, 2026, 3:45 PM"), always in the viewer's own zone ----
   var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -44,5 +52,5 @@
   // "2026-11-12" -> "Nov 12, 2026" without any time-zone shift.
   function isoDate(s) { var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s || ''); return m ? MONTHS[Number(m[2]) - 1] + ' ' + Number(m[3]) + ', ' + m[1] : ''; }
   function todayUtc() { return new Date().toISOString().slice(0, 10); }
-  SB.fmt = { num: num, pct: pct, until: until, ago: ago, full: full, todayUtc: todayUtc, date: date, dateTime: dateTime, day: day, created: created, tip: tip, hour12: hour12, hourRange: hourRange, todayAt: todayAt, isoDate: isoDate };
+  SB.fmt = { num: num, pct: pct, until: until, span: span, age: age, ago: ago, full: full, todayUtc: todayUtc, date: date, dateTime: dateTime, day: day, created: created, tip: tip, hour12: hour12, hourRange: hourRange, todayAt: todayAt, isoDate: isoDate };
 })();

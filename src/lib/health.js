@@ -34,5 +34,19 @@ function isForced(sender, now) { return !!(sender && sender.force_until && sende
 // True when the automatic health rule should keep this sender from sending right now.
 function isBelowFloor(sender, now) { return !isForced(sender, now) && Number(sender.health_score) < floorFor(sender); }
 
-module.exports = { computeHealth: computeHealth, AUTO_PAUSE_BELOW: AUTO_PAUSE_BELOW, MIN_SAMPLE: MIN_SAMPLE, LEVELS: LEVELS, LEVEL_NAMES: LEVEL_NAMES, FORCE_MS: FORCE_MS,
+// ---- Health healing ----------------------------------------------------------------------------------------------
+// A completed UTC day earns points when nothing severe happened: +1 for a calm day, +1 per 25 clean sends (max +2),
+// +1 when at least one real reply came in. At most 4 per day, so a badly hurt account needs days, never minutes.
+// Any severe event that day (hard/policy bounce, refused recipient) earns nothing.
+var HEAL = { calm: 1, cleanPer: 25, cleanMax: 2, reply: 1, dayMax: 4, cap: 100 };
+function healPoints(day) {
+  if (!day || Number(day.severe) > 0) return 0;
+  var pts = HEAL.calm + Math.min(HEAL.cleanMax, Math.floor((Number(day.sent) || 0) / HEAL.cleanPer)) + (Number(day.replies) > 0 ? HEAL.reply : 0);
+  return Math.min(HEAL.dayMax, pts);
+}
+// Heal never exceeds what is needed to reach the cap, so it cannot hide a later drop of the base score.
+function clampHeal(heal, base) { return Math.max(0, Math.min(Number(heal) || 0, HEAL.cap - (Number(base) || 0))); }
+function effective(base, heal) { return Math.max(0, Math.min(HEAL.cap, (Number(base) || 0) + clampHeal(heal, base))); }
+
+module.exports = { HEAL: HEAL, healPoints: healPoints, clampHeal: clampHeal, effective: effective, computeHealth: computeHealth, AUTO_PAUSE_BELOW: AUTO_PAUSE_BELOW, MIN_SAMPLE: MIN_SAMPLE, LEVELS: LEVELS, LEVEL_NAMES: LEVEL_NAMES, FORCE_MS: FORCE_MS,
   floorFor: floorFor, streakLimitFor: streakLimitFor, isForced: isForced, isBelowFloor: isBelowFloor };

@@ -16,6 +16,7 @@ var tpl = require('../lib/template');
 var v = require('../lib/validate');
 var AppError = require('../lib/errors').AppError;
 var audit = require('./audit');
+var nextSend = require('../lib/nextSend');
 var state = require('./campaignState');
 var stepProgress = require('./stepProgress');
 
@@ -325,12 +326,15 @@ C._statsByCampaign = function (userId, onlyIds) {
   var filter = onlyIds ? ' AND cl.campaign_id IN (' + v.placeholders(onlyIds.length) + ')' : '';
   var params = onlyIds ? [userId].concat(onlyIds) : [userId];
   var sums = CL_STATUSES.map(function (k) { return "COALESCE(SUM(CASE WHEN cl.status = '" + k + "' THEN 1 ELSE 0 END), 0) AS " + k; }).join(', ');
-  return this.db.all('SELECT cl.campaign_id AS cid, COUNT(*) AS total, ' + sums + ', MIN(CASE WHEN cl.status = \'active\' AND c.status = \'active\' THEN cl.next_send_at END) AS next_send_at ' +
-    'FROM campaign_leads cl JOIN campaigns c ON c.id = cl.campaign_id WHERE c.user_id = ?' + filter + ' GROUP BY cl.campaign_id', params).then(function (rows) {
+  return this.db.all('SELECT cl.campaign_id AS cid, COUNT(*) AS total, ' + sums + ', MIN(CASE WHEN cl.status = \'active\' AND c.status = \'active\' AND COALESCE(sd.status, \'active\') = \'active\' THEN MAX(cl.next_send_at, COALESCE(sd.next_send_at, 0)) END) AS next_send_at, ' +
+    'c.window_start_hour AS window_start_hour, c.window_end_hour AS window_end_hour, c.utc_offset_min AS utc_offset_min, c.weekdays_only AS weekdays_only, c.active_days AS active_days, c.start_at AS start_at ' +
+    'FROM campaign_leads cl JOIN campaigns c ON c.id = cl.campaign_id LEFT JOIN senders sd ON sd.id = cl.sender_id WHERE c.user_id = ?' + filter + ' GROUP BY cl.campaign_id', params).then(function (rows) {
+    var now = self.now();
     rows.forEach(function (r) {
       var s = emptyStats();
       CL_STATUSES.forEach(function (k) { s[k] = Number(r[k]); });
-      s.total = Number(r.total); s.next_send_at = r.next_send_at === null ? null : Number(r.next_send_at);
+      // The time an email is DUE is not when it goes out: apply the campaign's sending hours, days and start date, so the countdown is real.
+      s.total = Number(r.total); s.next_send_at = r.next_send_at === null ? null : nextSend.effective(r, Number(r.next_send_at), now);
       out[r.cid] = s;
     });
     return self.db.all("SELECT cl.campaign_id AS cid, COUNT(*) AS n FROM messages m JOIN campaign_leads cl ON cl.id = m.campaign_lead_id WHERE m.user_id = ? AND m.direction = 'out' AND m.status = 'sent'" + filter + ' GROUP BY cl.campaign_id', params);
@@ -787,6 +791,49 @@ C.batch = function (userId, input, ip) {
       });
     });
   });
+};
+
+// Archive / restore a main campaign (hides it from the Campaigns table; results and history are kept). Not while it is sending.
+C.setArchived = function (userId, id, archived, ip) {
+  var self = this;
+  return this._own(userId, id).then(function (c) {
+    if (c.parent_id) throw bad('id', 'Archive the main campaign, not a single part');
+    var guard = archived ? self.db.get("SELECT COUNT(*) AS n FROM campaigns WHERE (id = ? OR parent_id = ?) AND user_id = ? AND status IN ('active','preparing')", [id, id, userId]).then(function (r) {
+      if (r.n) throw new AppError('conflict', 'Pause this campaign before archiving it', 409);
+    }) : Promise.resolve();
+    return guard.then(function () { return self.db.run('UPDATE campaigns SET archived = ?, updated_at = ? WHERE id = ? AND user_id = ?', [archived ? 1 : 0, self.now(), id, userId]); })
+      .then(function () { return audit.log(self.db, { userId: userId, action: archived ? 'campaign.archive' : 'campaign.restore', entity: 'campaign', entityId: id, ip: ip }, self.now); });
+  }).then(function () { return self.get(userId, id); });
+};
+
+// Duplicate a campaign as a new DRAFT in the same project: same emails, sending days/hours, accounts and people, nothing sent yet.
+// A split campaign is copied as one unsplit draft (split again in the wizard if needed). Blocked addresses are not copied.
+C.duplicate = function (userId, id, ip) {
+  var self = this, t = this.now(), newId;
+  return this._own(userId, id).then(function (c) {
+    if (c.parent_id) throw bad('id', 'Duplicate the main campaign, not a single part');
+    return Promise.all([
+      self.db.all('SELECT step_no, delay_days, subject, body_html FROM campaign_steps WHERE campaign_id = ? ORDER BY step_no', [id]),
+      self.db.all('SELECT sender_id FROM campaign_senders WHERE campaign_id = ?', [id]),
+      self.db.all('SELECT id FROM campaigns WHERE parent_id = ? AND user_id = ?', [id, userId])
+    ]).then(function (r) {
+      var leafIds = r[2].length ? r[2].map(function (x) { return x.id; }) : [id];
+      return self.db.all('SELECT DISTINCT cl.lead_id AS lead_id FROM campaign_leads cl JOIN leads l ON l.id = cl.lead_id WHERE cl.campaign_id IN (' + v.placeholders(leafIds.length) + ') ' +
+        'AND NOT EXISTS (SELECT 1 FROM suppression sp WHERE sp.user_id = l.user_id AND sp.email = l.email) ORDER BY cl.lead_id', leafIds).then(function (leads) {
+        var name = (c.name.replace(/ - Part \d+\/\d+$/, '') + ' (copy)').slice(0, 100);
+        return self.db.transaction(function (tx) {
+          return tx.run('INSERT INTO campaigns (user_id, parent_id, project_id, name, status, window_start_hour, window_end_hour, utc_offset_min, weekdays_only, active_days, stop_on_reply, track_opens, priority_mode, created_at, updated_at) ' +
+            "SELECT user_id, NULL, project_id, ?, 'draft', window_start_hour, window_end_hour, utc_offset_min, weekdays_only, active_days, stop_on_reply, track_opens, priority_mode, ?, ? FROM campaigns WHERE id = ? AND user_id = ?",
+            [name, t, t, id, userId]).then(function (ins) {
+            newId = ins.lastID;
+            return insertSteps(tx, newId, r[0]);
+          }).then(function () { return linkSenders(tx, newId, r[1].map(function (x) { return x.sender_id; })); })
+            .then(function () { return insertLeads(tx, newId, leads.map(function (x) { return { id: x.lead_id }; })); })
+            .then(function () { return audit.log(tx, { userId: userId, action: 'campaign.duplicate', entity: 'campaign', entityId: newId, ip: ip, meta: { from: id, leads: leads.length } }, self.now); });
+        });
+      });
+    });
+  }).then(function () { return self.get(userId, newId); });
 };
 
 // Wizard check: how many of the chosen leads lack a value for each {{variable}} that has no fallback.

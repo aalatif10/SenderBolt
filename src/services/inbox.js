@@ -71,10 +71,31 @@ I._list = function (userId, q) {
     if (sid === null) throw new AppError('validation', 'Bad sender filter', 400);
     extra += ' AND cl.sender_id = ?'; p.push(sid);
   }
+  // Multi-select filters (comma separated ids): several campaigns and/or several sending accounts at once.
+  function ids(x, what) {
+    if (x === undefined || x === '' || x === null) return [];
+    var out = String(x).split(',').map(function (a) { return v.intIn(a.trim(), 1, 9007199254740991); });
+    if (out.some(function (n) { return n === null; }) || out.length > 100) throw new AppError('validation', 'Bad ' + what + ' filter', 400);
+    return out;
+  }
+  var cids = ids(q.campaign_ids, 'campaign'), sids = ids(q.sender_ids, 'sender');
+  if (cids.length) { extra += ' AND (c.id IN (' + v.placeholders(cids.length) + ') OR c.parent_id IN (' + v.placeholders(cids.length) + '))'; p = p.concat(cids, cids); }
+  if (sids.length) { extra += ' AND cl.sender_id IN (' + v.placeholders(sids.length) + ')'; p = p.concat(sids); }
+  if (q.read === '1' || q.read === 1 || q.read === true) extra += ' AND x.unread = 0';
+  // Status = where the conversation stands: successful (tagged Interested), not successful (Not interested), still in sequence, paused, stopped (opted out / bounced).
+  if (q.status !== undefined && q.status !== '') {
+    var conds = String(q.status).split(',').map(function (k) {
+      var c1 = { successful: "m.sentiment = 'interested'", not_successful: "m.sentiment = 'not_interested'", paused: "(cl.status = 'paused' OR c.status = 'paused')",
+        active: "(cl.status = 'active' AND c.status = 'active')", stopped: "cl.status IN ('unsubscribed','bounced')" }[k.trim()];
+      if (!c1) throw new AppError('validation', 'Unknown status filter', 400);
+      return c1;
+    });
+    extra += ' AND (' + conds.join(' OR ') + ')';
+  }
   if (q.q) {
     var term = '%' + likeEscape(String(q.q).slice(0, 100).toLowerCase()) + '%';
-    extra += " AND (lower(l.email) LIKE ? ESCAPE '\\' OR lower(COALESCE(l.company,'')) LIKE ? ESCAPE '\\' OR lower(COALESCE(m.subject,'')) LIKE ? ESCAPE '\\')";
-    p.push(term, term, term);
+    extra += " AND (lower(l.email) LIKE ? ESCAPE '\\' OR lower(COALESCE(l.company,'')) LIKE ? ESCAPE '\\' OR lower(COALESCE(m.subject,'')) LIKE ? ESCAPE '\\' OR lower(COALESCE(l.first_name,'') || ' ' || COALESCE(l.last_name,'')) LIKE ? ESCAPE '\\')";
+    p.push(term, term, term, term);
   }
   return Promise.all([
     this.db.all('SELECT m.id, m.campaign_lead_id, m.subject, m.sentiment, m.sentiment_manual, m.received_at, substr(m.body_text, 1, 1200) AS snippet, cl.status_note AS status_note, sp.reason AS suppression_reason, x.unread, x.replies, ' +

@@ -164,16 +164,34 @@ h.test('recipient rejected -> bounced + suppressed + address invalid; sender unh
       });
   });
 });
-h.test('auth failure pauses the SENDER and does not blame the lead (retry budget untouched)', function () {
+h.test('auth failure does NOT pause the sender: it is flagged, retried later, and the lead is untouched', function () {
   return setup().then(function (c) {
     return launch(c, 2).then(function () {
       c.script.push(smtpErr('EAUTH', 535, '535-5.7.8 Username and Password not accepted'));
       return c.engine.tick();
     }).then(function () { return Promise.all([lead(c), c.db.get('SELECT * FROM senders WHERE id = ?', [c.sid]), msgs(c)]); }).then(function (r) {
-      assert.strictEqual(r[0].status, 'active'); assert.strictEqual(r[1].status, 'paused'); assert.ok(/App Password/.test(r[1].last_error));
+      assert.strictEqual(r[0].status, 'active'); assert.strictEqual(r[1].status, 'active', 'never paused because of a login problem');
+      assert.ok(/App Password/.test(r[1].connection_error)); assert.ok(/App Password/.test(r[1].last_error));
+      assert.strictEqual(r[1].health_score, 100, 'health untouched');
+      assert.ok(r[1].next_send_at >= c.clock.t + 14 * 60000, 'retry back-off of ~15 minutes');
       assert.strictEqual(r[2][0].attempts, 0); assert.strictEqual(r[2][0].error_class, 'auth');
-      return adv(c, HOUR);
-    }).then(function (t) { assert.strictEqual(t.sent, 0, 'paused sender stays silent'); });
+      return adv(c, 5 * 60000);
+    }).then(function (t) { assert.strictEqual(t.sent, 0, 'still backing off'); return adv(c, 20 * 60000); })
+      .then(function (t) { assert.strictEqual(t.sent, 1, 'retried automatically after the back-off'); return c.db.get('SELECT status, connection_error FROM senders WHERE id = ?', [c.sid]); })
+      .then(function (s) { assert.strictEqual(s.status, 'active'); assert.strictEqual(s.connection_error, null, 'a successful send clears the warning'); });
+  });
+});
+h.test('network errors never pause the sender or burn the lead\'s retries, however often they repeat', function () {
+  return setup().then(function (c) {
+    return launch(c, 1).then(function () {
+      var chain = Promise.resolve(), i;
+      for (i = 0; i < 8; i++) chain = chain.then(function () { c.script.push(smtpErr('ETIMEDOUT', 0, 'timeout')); return c.engine.tick(); })
+        .then(function () { return c.db.run('UPDATE senders SET next_send_at = NULL'); });
+      return chain;
+    }).then(function () { return Promise.all([lead(c), c.db.get('SELECT * FROM senders WHERE id = ?', [c.sid]), msgs(c)]); }).then(function (r) {
+      assert.strictEqual(r[0].status, 'active', 'lead is not marked error'); assert.strictEqual(r[1].status, 'active'); assert.strictEqual(r[1].health_score, 100);
+      assert.ok(/reach the email server/.test(r[1].connection_error)); assert.strictEqual(r[2][0].attempts, 0);
+    });
   });
 });
 h.test('provider daily quota exhausts the sender for the day without blaming the lead', function () {
@@ -190,7 +208,7 @@ h.test('transient failure retries the SAME message row with backoff and gives up
   return setup().then(function (c) {
     return launch(c, 1).then(function () {
       var chain = Promise.resolve(), i;
-      function fail() { c.script.push(smtpErr('ETIMEDOUT', 0, 'timeout')); }
+      function fail() { c.script.push(smtpErr('EENVELOPE', 451, '451 4.3.0 Temporary problem, try again later')); }
       fail();
       for (i = 0; i < 5; i++) (function (k) {
         chain = chain.then(function () { if (k > 0) fail(); return c.engine.tick(); }).then(function () { return Promise.all([msgs(c), lead(c)]); }).then(function (r) {

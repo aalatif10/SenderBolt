@@ -117,7 +117,13 @@
     var chipsBox = h('div'), tagsBox = h('div'), barBox = h('div'), gridBox = h('div');
     root.appendChild(head); root.appendChild(topSlot);
     root.appendChild(listSlot);
-    SB.mount(listSlot, h('div', null, h('div', { class: 'section-title' }, h('h2', { text: 'Projects' })), tb.el, chipsBox, tagsBox, gridBox, barBox));
+    var view = 'campaigns', ctable = SB.screens.campaignTable(), projBox = h('div', { class: 'hidden' });
+    projBox.appendChild(tb.el); projBox.appendChild(chipsBox); projBox.appendChild(tagsBox); projBox.appendChild(gridBox); projBox.appendChild(barBox);
+    var tabC = h('button', { type: 'button', class: 'seg active', tip: 'Every campaign in one table, with filters.' }, 'Campaigns'),
+      tabP = h('button', { type: 'button', class: 'seg', tip: 'Your projects: groups of related campaigns. Archive, restore or delete them here.' }, 'Projects');
+    function setView(v) { view = v; tabC.classList.toggle('active', v === 'campaigns'); tabP.classList.toggle('active', v === 'projects'); ctable.el.classList.toggle('hidden', v !== 'campaigns'); projBox.classList.toggle('hidden', v !== 'projects'); }
+    tabC.addEventListener('click', function () { setView('campaigns'); }); tabP.addEventListener('click', function () { setView('projects'); });
+    SB.mount(listSlot, h('div', null, h('div', { class: 'section-title' }, h('div', { class: 'segs seg-inline' }, tabC, tabP)), ctable.el, projBox));
 
     function visible() {
       if (!data) return [];
@@ -240,6 +246,7 @@
       });
     }
     SB.mount(topSlot, h('div', { class: 'skeleton' }));
-    return { el: root, destroy: ui.poll(load, 10000) };
+    var stopHome = ui.poll(load, 10000);
+    return { el: root, destroy: function () { stopHome(); ctable.destroy(); } };
   };
 })();

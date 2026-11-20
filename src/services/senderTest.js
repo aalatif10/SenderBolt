@@ -40,6 +40,12 @@ SenderTest.prototype.run = function (userId, id) {
       return self.inboxSync.syncSender(row).then(function (r) { if (r && r.error) out.imap = { ok: false, message: 'IMAP login works but arming reply tracking failed. Try again.' }; else out.imap.message = 'IMAP login works; reply tracking is on'; });
     }
     return null;
+  }).then(function () {
+    // A connection test is how the owner fixes a login problem: record the result so the account card shows (or drops) the warning.
+    if (!row) return null;
+    var bad = !out.smtp.ok ? out.smtp.message : null;
+    return self.db.run('UPDATE senders SET connection_error = ?, connection_error_at = ?' + (out.smtp.ok ? ', last_error = CASE WHEN connection_error IS NOT NULL THEN NULL ELSE last_error END' : '') + ', next_send_at = CASE WHEN ? AND connection_error IS NOT NULL THEN NULL ELSE next_send_at END WHERE id = ?',
+      [bad, bad ? self.now() : null, out.smtp.ok ? 1 : 0, row.id]);
   }).then(function () { return out; });
 };
 

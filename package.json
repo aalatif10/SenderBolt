@@ -1,6 +1,6 @@
 {
   "name": "senderbolt",
-  "version": "1.8.1",
+  "version": "1.9.0",
   "private": true,
   "description": "SenderBolt - B2B email outreach and campaign management platform",
   "main": "src/server.js",
@@ -11,7 +11,7 @@
     "init": "node scripts/init.js",
     "doctor": "node scripts/doctor.js",
     "start": "node src/server.js",
-    "test": "node test/run.js && node test/sanitize.js && node test/integration.js && node test/leads.js && node test/campaigns.js && node test/drafts.js && node test/testsend.js && node test/mailbox.js && node test/xlsx.js && node test/settings.js && node test/projects.js && node test/engine.js && node test/inbox.js && node test/studio.js && node test/live.js && node test/v180.js && node test/v181.js && node test/e2e.js && node test/e2e_engine.js && node test/ui.js"
+    "test": "node test/run.js && node test/sanitize.js && node test/integration.js && node test/leads.js && node test/campaigns.js && node test/drafts.js && node test/testsend.js && node test/mailbox.js && node test/xlsx.js && node test/settings.js && node test/projects.js && node test/engine.js && node test/inbox.js && node test/studio.js && node test/live.js && node test/v180.js && node test/v181.js && node test/v190.js && node test/e2e.js && node test/e2e_engine.js && node test/ui.js"
   },
   "dependencies": {
     "nodemailer": "6.9.1",

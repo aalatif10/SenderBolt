@@ -9,7 +9,7 @@ var RECENT_MS = 7 * 86400000;      // window for the warm-up slow-down
 
 // db may be a Database or a tx. Returns the new score.
 function recompute(db, senderId, now) {
-  var since = now - WINDOW_MS, recent = now - RECENT_MS, sent = 0, bouncedLater = 0, rejected = 0, replies = 0, sent7 = 0, bounced7 = 0;
+  var score, since = now - WINDOW_MS, recent = now - RECENT_MS, sent = 0, bouncedLater = 0, rejected = 0, replies = 0, sent7 = 0, bounced7 = 0;
   return db.get("SELECT COUNT(*) AS n FROM messages WHERE sender_id = ? AND direction = 'out' AND status = 'sent' AND step_no IS NOT NULL AND sent_at >= ?", [senderId, since]).then(function (r) {
     sent = r.n;     // accepted by our SMTP provider
     // bounce notices that came back to the mailbox later (these refer to emails counted in `sent`)
@@ -30,9 +30,15 @@ function recompute(db, senderId, now) {
       [senderId, recent, senderId, recent, senderId, recent]);
   }).then(function (r7) {
     sent7 = r7.sent + r7.rejected; bounced7 = r7.bounced + r7.rejected;
-    var score = health.computeHealth({ sent: sent + rejected, hardBounces: bouncedLater + rejected, replies: replies, complaints: 0 });
+    var base = health.computeHealth({ sent: sent + rejected, hardBounces: bouncedLater + rejected, replies: replies, complaints: 0 });
+    var severeNow = bouncedLater + rejected;
     var penalty = throttle.warmupPenaltySteps(sent7, bounced7);
-    return db.run('UPDATE senders SET health_score = ?, warmup_penalty = ? WHERE id = ?', [score, penalty, senderId]).then(function () {
+    return db.get('SELECT health_heal, health_severe_n FROM senders WHERE id = ?', [senderId]).then(function (hs) {
+      // A NEW severe event cancels the healing earned so far: the score must show the problem honestly.
+      var heal = hs && severeNow > hs.health_severe_n ? 0 : health.clampHeal(hs ? hs.health_heal : 0, base);
+      score = health.effective(base, heal);
+      return db.run('UPDATE senders SET health_score = ?, health_base = ?, health_heal = ?, health_severe_n = ?, warmup_penalty = ? WHERE id = ?', [score, base, heal, severeNow, penalty, senderId]);
+    }).then(function () {
       return db.get('SELECT protection_level, force_until FROM senders WHERE id = ?', [senderId]);
     }).then(function (lv) {
       // The pause threshold depends on the sender's protection level; a "force continue" override skips the pause.
@@ -44,4 +50,37 @@ function recompute(db, senderId, now) {
   });
 }
 
-module.exports = { recompute: recompute, WINDOW_MS: WINDOW_MS };
+// ---- daily healing ---------------------------------------------------------------------------------------------------
+function utcDay(t) { return new Date(t).toISOString().slice(0, 10); }
+function dayMs(str) { return Date.parse(str + 'T00:00:00Z'); }
+
+// Credits every COMPLETED UTC day since the last credited one (max 30 days of catch-up; the first call only starts the clock,
+// it never grants retroactive points). Then recomputes the score. Safe to call as often as you like.
+function healDaily(db, senderId, now) {
+  var yesterday = utcDay(now - 86400000);
+  return db.get('SELECT health_heal, health_heal_day, health_base, health_score FROM senders WHERE id = ?', [senderId]).then(function (s) {
+    if (!s) return null;
+    if (!s.health_heal_day) return db.run('UPDATE senders SET health_heal_day = ? WHERE id = ?', [yesterday, senderId]).then(function () { return recompute(db, senderId, now); });
+    if (s.health_heal_day >= yesterday) return null;
+    var days = [], d = s.health_heal_day;
+    while (d < yesterday && days.length < 30) { d = utcDay(dayMs(d) + 86400000); days.push(d); }
+    var heal = s.health_heal, base = s.health_base === null || s.health_base === undefined ? s.health_score : s.health_base;
+    return days.reduce(function (p, day) {
+      return p.then(function () {
+        var from = dayMs(day), to = from + 86400000;
+        return db.get("SELECT " +
+          "(SELECT COUNT(*) FROM messages WHERE sender_id = ? AND direction = 'out' AND status = 'sent' AND step_no IS NOT NULL AND sent_at >= ? AND sent_at < ?) AS sent, " +
+          "(SELECT COUNT(*) FROM messages WHERE sender_id = ? AND direction = 'in' AND kind = 'email' AND created_at >= ? AND created_at < ?) AS replies, " +
+          "(SELECT COUNT(*) FROM messages WHERE sender_id = ? AND direction = 'in' AND kind = 'bounce' AND error_class IN ('hard','policy') AND created_at >= ? AND created_at < ?) + " +
+          "(SELECT COUNT(*) FROM messages WHERE sender_id = ? AND direction = 'out' AND status = 'failed' AND error_class IN ('recipient','policy') AND created_at >= ? AND created_at < ?) AS severe",
+          [senderId, from, to, senderId, from, to, senderId, from, to, senderId, from, to]).then(function (r) {
+          heal = r.severe > 0 ? Math.floor(heal / 2) : health.clampHeal(heal + health.healPoints(r), base);
+        });
+      });
+    }, Promise.resolve()).then(function () {
+      return db.run('UPDATE senders SET health_heal = ?, health_heal_day = ? WHERE id = ?', [heal, yesterday, senderId]);
+    }).then(function () { return recompute(db, senderId, now); });
+  });
+}
+
+module.exports = { recompute: recompute, healDaily: healDaily, WINDOW_MS: WINDOW_MS };

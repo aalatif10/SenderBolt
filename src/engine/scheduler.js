@@ -30,7 +30,7 @@ Scheduler.prototype.start = function () {
 Scheduler.prototype.recomputeHealth = function () {
   var db = this.db, now = Date.now();
   return db.all("SELECT id FROM senders WHERE status <> 'disabled'").then(function (rows) {
-    return rows.reduce(function (p, r) { return p.then(function () { return senderHealth.recompute(db, r.id, now); }); }, Promise.resolve());
+    return rows.reduce(function (p, r) { return p.then(function () { return senderHealth.recompute(db, r.id, now); }).then(function () { return senderHealth.healDaily(db, r.id, now); }); }, Promise.resolve());
   });
 };
 

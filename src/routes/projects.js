@@ -5,6 +5,7 @@ var reply = require('../http/router').reply;
 
 module.exports = function register(router, d) {
   var P = d.projects;
+  router.get('/api/campaign-table', function (ctx) { return P.campaignTable(ctx.user.id, ctx.query); });
   router.get('/api/projects', function (ctx) { return P.list(ctx.user.id, ctx.query); });
   router.post('/api/projects', function (ctx) { return P.create(ctx.user.id, ctx.body, ctx.ip).then(function (p) { return reply(201, { project: p }); }); });
   router.get('/api/projects/:id', function (ctx) { return P.get(ctx.user.id, parseId(ctx.params.id)).then(function (p) { return { project: p }; }); });

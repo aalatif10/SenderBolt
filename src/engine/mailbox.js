@@ -11,6 +11,7 @@
 // Uses the "imap" and "mailparser" packages (see `npm run doctor` if they fail to load).
 
 var BATCH = 100;
+var OP_TIMEOUT_MS = 120000;
 
 function createLive(opts) {
   var load = (opts && opts.require) || require;
@@ -35,17 +36,24 @@ function createLive(opts) {
     try { libs(); } catch (e) { return Promise.reject(e); }      // always a rejection, never a synchronous throw
     var imap;
     try { imap = new Imap({ user: creds.user, password: creds.pass, host: creds.host, port: creds.port, tls: true,
-      tlsOptions: { servername: creds.host, minVersion: 'TLSv1.2' }, connTimeout: 15000, authTimeout: 15000 }); } catch (e2) { return Promise.reject(e2); }
+      tlsOptions: { servername: creds.host, minVersion: 'TLSv1.2' }, connTimeout: 30000, authTimeout: 30000 }); } catch (e2) { return Promise.reject(e2); }
     var lateError = null;
     imap.on('error', function (e) { lateError = e; });                   // never let a socket error crash the process
-    return new Promise(function (resolve, reject) {
+    // Whole-operation guard: a server that accepts the connection and then goes silent must not hang the sync forever.
+    var guard = null, guardPromise = new Promise(function (resolve, reject) {
+      guard = setTimeout(function () { var e = new Error('Timed out while talking to the mail server'); e.code = 'ETIMEDOUT'; e.source = 'timeout'; reject(e); }, OP_TIMEOUT_MS);
+      if (guard.unref) guard.unref();
+    });
+    function done() { clearTimeout(guard); }
+    var run = new Promise(function (resolve, reject) {
       imap.once('ready', resolve); imap.once('error', reject); imap.connect();
     }).then(function () {
       return new Promise(function (resolve, reject) {
         imap.openBox('INBOX', true, function (err, box) { if (err) reject(err); else resolve(box); });   // true = read-only
       });
-    }).then(function (box) { return fn(imap, box); }).then(function (r) { try { imap.end(); } catch (e) { /* ignore */ } return r; },
-      function (e) { try { imap.end(); } catch (x) { /* ignore */ } throw e; });
+    }).then(function (box) { return fn(imap, box); });
+    return Promise.race([run, guardPromise]).then(function (r) { done(); try { imap.end(); } catch (e) { /* ignore */ } return r; },
+      function (e) { done(); try { imap.destroy(); } catch (x) { try { imap.end(); } catch (y) { /* ignore */ } } run.catch(function () {}); throw e; });
   }
   function header(p, name) {
     var v = p.headers && p.headers.get ? p.headers.get(name) : null;

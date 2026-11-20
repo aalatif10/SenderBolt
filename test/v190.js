@@ -1,0 +1,203 @@
+'use strict';
+// v1.9.0 backend: health healing, connection errors never pause/hurt a sender, IMAP time-out back-off, real next-send timing.
+var assert = require('assert');
+var crypto = require('crypto');
+var h = require('./helpers');
+var vault = require('../src/lib/vault');
+var health = require('../src/lib/health');
+var nextSend = require('../src/lib/nextSend');
+var Leads = require('../src/services/leads').Leads;
+var Senders = require('../src/services/senders').Senders;
+var CampaignsService = require('../src/services/campaigns').CampaignsService;
+var InboxSync = require('../src/engine/inboxSync').InboxSync;
+var inboxSync = require('../src/engine/inboxSync');
+var sendEngine = require('../src/engine/sendEngine');
+var senderHealth = require('../src/services/senderHealth');
+
+var DAY = 86400000, HOUR = 3600000;
+var TUE_10 = Date.UTC(2026, 10, 10, 10, 0, 0);
+
+function setup() {
+  return h.freshDb().then(function (db) {
+    var clock = { t: TUE_10 }, now = function () { return clock.t; };
+    var key = vault.loadKey(crypto.randomBytes(32).toString('hex'));
+    var c = { db: db, clock: clock, key: key, leads: new Leads(db, { now: now }), senders: new Senders(db, key, { now: now }), camps: new CampaignsService(db, { now: now }) };
+    return h.mkUser(db, 'a@x.com').then(function (a) {
+      c.a = a;
+      return c.senders.create(a, { label: 'S1', email: 's1@gmail.com', provider: 'gmail', password: 'abcdefghijklmnop' });
+    }).then(function (s) { c.sid = s.id; return c; });
+  });
+}
+
+h.group('health healing (pure)');
+h.test('a calm day earns 1, clean sends and replies earn more, a severe day earns nothing, daily cap 4', function () {
+  assert.strictEqual(health.healPoints({ severe: 0, sent: 0, replies: 0 }), 1);
+  assert.strictEqual(health.healPoints({ severe: 0, sent: 50, replies: 0 }), 3);
+  assert.strictEqual(health.healPoints({ severe: 0, sent: 400, replies: 5 }), 4);
+  assert.strictEqual(health.healPoints({ severe: 1, sent: 400, replies: 5 }), 0);
+  assert.strictEqual(health.clampHeal(50, 90), 10, 'never above the cap of 100');
+  assert.strictEqual(health.effective(60, 15), 75); assert.strictEqual(health.effective(99, 15), 100);
+});
+
+h.group('health healing (database)');
+function seedBounces(c, n, at) {
+  var p = Promise.resolve(), i;
+  for (i = 0; i < n; i++) (function (k) { p = p.then(function () { return c.db.run("INSERT INTO messages (user_id, sender_id, direction, status, idempotency_key, kind, error_class, created_at) VALUES (?,?,'in','received',?,'bounce','hard',?)", [c.a, c.sid, 'b' + k + ':' + at, at]); }); })(i);
+  return p;
+}
+function seedSent(c, n, at) {
+  var p = Promise.resolve(), i;
+  for (i = 0; i < n; i++) (function (k) { p = p.then(function () { return c.db.run("INSERT INTO messages (user_id, sender_id, direction, status, idempotency_key, kind, step_no, sent_at, created_at) VALUES (?,?,'out','sent',?,'email',0,?,?)", [c.a, c.sid, 's' + k + ':' + at, at, at]); }); })(i);
+  return p;
+}
+h.test('score recovers gradually day by day, never above 100, and a new bounce cancels the healing', function () {
+  return setup().then(function (c) {
+    var sid = c.sid, t0 = TUE_10;
+    return seedSent(c, 100, t0 - 2 * HOUR).then(function () { return seedBounces(c, 8, t0 - HOUR); }).then(function () { return senderHealth.recompute(c.db, sid, t0); })
+      .then(function (score) {
+        assert.strictEqual(score, 52, '100 sent, 8 hard bounces');
+        return senderHealth.healDaily(c.db, sid, t0);          // first call only starts the clock
+      }).then(function () { return c.db.get('SELECT health_score, health_heal, health_heal_day FROM senders WHERE id = ?', [sid]); })
+      .then(function (s) { assert.strictEqual(s.health_score, 52); assert.strictEqual(s.health_heal, 0); assert.strictEqual(s.health_heal_day, '2026-11-09'); return senderHealth.healDaily(c.db, sid, t0 + 3 * DAY); })
+      .then(function () { return c.db.get('SELECT health_score, health_heal FROM senders WHERE id = ?', [sid]); })
+      .then(function (s) {
+        // 3 completed days (Nov 10, 11, 12). Nov 10 had the 8 bounces + 100 sends -> severe (0 points); Nov 11 and 12 are calm: +1 each.
+        assert.strictEqual(s.health_heal, 2); assert.strictEqual(s.health_score, 54);
+        return seedBounces(c, 1, t0 + 3 * DAY + HOUR);
+      }).then(function () { return senderHealth.recompute(c.db, sid, t0 + 3 * DAY + 2 * HOUR); })
+      .then(function () { return c.db.get('SELECT health_heal FROM senders WHERE id = ?', [sid]); })
+      .then(function (s) { assert.strictEqual(s.health_heal, 0, 'a new severe event resets the earned healing'); });
+  });
+});
+h.test('a long calm stretch heals a damaged sender up to exactly 100 and no further', function () {
+  return setup().then(function (c) {
+    var sid = c.sid;
+    return seedSent(c, 40, TUE_10 - HOUR).then(function () { return seedBounces(c, 4, TUE_10 - HOUR); }).then(function () { return senderHealth.recompute(c.db, sid, TUE_10); })
+      .then(function () { return senderHealth.healDaily(c.db, sid, TUE_10); })
+      .then(function () { return senderHealth.healDaily(c.db, sid, TUE_10 + 29 * DAY); })    // 29 days later: the bounces are still inside the 30-day window
+      .then(function () { return c.db.get('SELECT health_score, health_base, health_heal FROM senders WHERE id = ?', [sid]); })
+      .then(function (s) { assert.ok(s.health_score > s.health_base, 'healed above the raw score'); assert.ok(s.health_score <= 100); return senderHealth.healDaily(c.db, sid, TUE_10 + 80 * DAY); })
+      .then(function () { return senderHealth.recompute(c.db, sid, TUE_10 + 80 * DAY); })
+      .then(function () { return c.db.get('SELECT health_score, health_heal FROM senders WHERE id = ?', [sid]); })
+      .then(function (s) { assert.strictEqual(s.health_score, 100); assert.strictEqual(s.health_heal, 0, 'heal never banks more than needed'); });
+  });
+});
+h.test('the sender view explains healing', function () {
+  return setup().then(function (c) { return c.senders.get(c.a, c.sid); }).then(function (s) {
+    assert.strictEqual(s.health_base, 100); assert.strictEqual(s.health_heal, 0); assert.strictEqual(s.heal_rules.day_max, 4); assert.strictEqual(s.connection_error, null);
+  });
+});
+
+h.group('IMAP time-outs');
+h.test('"Timed out while authenticating" is a transient time-out, not a wrong password', function () {
+  var e = new Error('Timed out while authenticating with server'); e.source = 'timeout-auth';
+  assert.ok(inboxSync.isTransient(e)); assert.ok(!/login failed/i.test(inboxSync.friendlyError(e)));
+  assert.ok(/retry automatically/.test(inboxSync.friendlyError(e)));
+  var bad = new Error('Invalid credentials (Failure)'); bad.textCode = 'AUTHENTICATIONFAILED';
+  assert.ok(!inboxSync.isTransient(bad)); assert.ok(/IMAP login failed/.test(inboxSync.friendlyError(bad)));
+  assert.deepStrictEqual([1, 2, 3, 4, 9].map(function (n) { return inboxSync.retryDelay(n, true) / 60000; }), [1, 2, 4, 5, 5]);
+  assert.strictEqual(inboxSync.retryDelay(1, false), 15 * 60000);
+});
+h.test('a failing mailbox is retried with back-off, logged once, and does not block sending; success resets it', function () {
+  return setup().then(function (c) {
+    var logs = [], calls = 0, fail = true;
+    var mailbox = { baseline: function () { calls++; if (fail) { var e = new Error('Timed out while authenticating with server'); e.source = 'timeout-auth'; return Promise.reject(e); } return Promise.resolve({ uidValidity: 1, lastUid: 0 }); },
+      fetchSince: function () { return Promise.resolve({ uidValidity: 1, lastUid: 0, messages: [] }); } };
+    var sync = new InboxSync(c.db, { key: c.key, mailbox: mailbox, now: function () { return c.clock.t; }, log: function (m) { logs.push(m); } });
+    return c.db.run("UPDATE senders SET imap_host = 'imap.gmail.com', imap_port = 993").then(function () { return sync.syncAll(); }).then(function (sum) {
+      assert.strictEqual(sum.errors, 1); assert.strictEqual(calls, 1);
+      return c.db.get('SELECT sync_error, sync_transient, sync_failures, sync_retry_at FROM senders WHERE id = ?', [c.sid]);
+    }).then(function (s) {
+      assert.strictEqual(s.sync_transient, 1); assert.strictEqual(s.sync_failures, 1); assert.strictEqual(s.sync_retry_at, c.clock.t + 60000);
+      assert.strictEqual(sendEngine.trackingOk({ imap_host: 'x', imap_last_uid: 5, sync_error: s.sync_error, sync_transient: 1, last_sync_at: c.clock.t - 60000 }, c.clock.t, true), true, 'transient failure does not block sending while the last good sync is fresh');
+      assert.strictEqual(sendEngine.trackingOk({ imap_host: 'x', imap_last_uid: 5, sync_error: 'IMAP login failed', sync_transient: 0, last_sync_at: c.clock.t - 60000 }, c.clock.t, true), false, 'a real login failure does');
+      return sync.syncAll();
+    }).then(function () { assert.strictEqual(calls, 1, 'skipped during the back-off'); c.clock.t += 61000; return sync.syncAll(); })
+      .then(function () { assert.strictEqual(calls, 2); assert.strictEqual(logs.length, 1, 'only the first failure is logged'); fail = false; c.clock.t += 3 * 60000; return sync.syncAll(); })
+      .then(function () { return c.db.get('SELECT sync_error, sync_failures, sync_retry_at FROM senders WHERE id = ?', [c.sid]); })
+      .then(function (s) { assert.strictEqual(s.sync_error, null); assert.strictEqual(s.sync_failures, 0); assert.strictEqual(s.sync_retry_at, null); });
+  });
+});
+
+h.group('real next-send timing');
+h.test('window maths: waits for opening hours, selected days and the start date', function () {
+  var c = { window_start_hour: 9, window_end_hour: 17, utc_offset_min: -360, active_days: 62 };      // Mon-Fri 9-5 at UTC-6
+  assert.strictEqual(new Date(nextSend.nextWindowOpen(c, Date.UTC(2026, 10, 20, 23, 0))).toISOString(), '2026-11-23T15:00:00.000Z', 'Friday evening -> Monday 9 AM');
+  assert.strictEqual(nextSend.nextWindowOpen(c, Date.UTC(2026, 10, 20, 16, 0)), Date.UTC(2026, 10, 20, 16, 0), 'inside the window: now');
+  assert.strictEqual(new Date(nextSend.nextWindowOpen(Object.assign({}, c, { start_at: Date.UTC(2026, 11, 1, 0, 0) }), Date.UTC(2026, 10, 10, 16, 0))).toISOString(), '2026-12-01T15:00:00.000Z', 'start date respected');
+  assert.strictEqual(nextSend.nextWindowOpen({ window_start_hour: 9, window_end_hour: 17, utc_offset_min: 0, active_days: 0, weekdays_only: 0 }, 0) !== null, true, 'no mask falls back to every day');
+});
+h.test('sender and campaign next-email times are window-aware', function () {
+  return setup().then(function (c) {
+    return c.leads.createFolder(c.a, 'F').then(function (f) {
+      return c.leads.importLeads(c.a, f.id, 'paste', 'p1@co1.com\np2@co2.com').then(function () {
+        return c.camps.create(c.a, { name: 'C', steps: [{ subject: 'Hi', body_html: '<p>x</p>' }], sender_ids: [c.sid], folder_id: f.id });
+      });
+    }).then(function (camp) { c.camp = camp; return c.camps.start(c.a, camp.id); }).then(function () {
+      // Tue 10:00 UTC; close the window for today: only 20:00-22:00 UTC allowed.
+      return c.db.run('UPDATE campaigns SET window_start_hour = 20, window_end_hour = 22, utc_offset_min = 0, active_days = 127');
+    }).then(function () { return c.senders.get(c.a, c.sid); }).then(function (s) {
+      assert.strictEqual(s.next_email_at, Date.UTC(2026, 10, 10, 20, 0), 'sender: next email when the window opens');
+      return c.camps.list ? c.camps.list(c.a) : null;
+    }).then(function (list) {
+      var items = list && (list.items || list); var main = items && items.filter(function (x) { return x.id === c.camp.id; })[0];
+      if (main && main.stats) assert.strictEqual(main.stats.next_send_at, Date.UTC(2026, 10, 10, 20, 0), 'campaign: same');
+      return c.db.run('UPDATE senders SET sent_today = daily_limit, sent_today_date = ?', ['2026-11-10']);
+    }).then(function () { return c.senders.get(c.a, c.sid); }).then(function (s) {
+      assert.strictEqual(s.next_email_at, Date.UTC(2026, 10, 11, 20, 0), 'allowance used up: tomorrow, then the window');
+    });
+  });
+});
+
+h.group('campaigns table: archive, duplicate, filters');
+h.test('duplicate makes a draft copy, archive hides/restores and is refused while active, table filters work', function () {
+  var ProjectsService = require('../src/services/projects').ProjectsService;
+  return setup().then(function (c) {
+    var proj = new ProjectsService(c.db, { campaigns: c.camps, now: function () { return c.clock.t; } });
+    return c.leads.createFolder(c.a, 'F').then(function (f) {
+      return c.leads.importLeads(c.a, f.id, 'paste', 'p1@co1.com\np2@co2.com').then(function () {
+        return c.camps.create(c.a, { name: 'Alpha', steps: [{ subject: 'Hi', body_html: '<p>x</p>' }], sender_ids: [c.sid], folder_id: f.id });
+      });
+    }).then(function (camp) { c.camp = camp; return c.camps.start(c.a, camp.id); })
+      .then(function () { return h.expectReject(c.camps.setArchived(c.a, c.camp.id, true)); })
+      .then(function () { return c.camps.pause(c.a, c.camp.id); })
+      .then(function () { return c.camps.duplicate(c.a, c.camp.id); }).then(function (copy) {
+        assert.strictEqual(copy.name, 'Alpha (copy)'); assert.strictEqual(copy.status, 'draft'); c.copy = copy;
+        return proj.campaignTable(c.a, {});
+      }).then(function (t) {
+        assert.strictEqual(t.items.length, 2);
+        return proj.campaignTable(c.a, { q: 'copy' });
+      }).then(function (t) {
+        assert.strictEqual(t.items.length, 1); assert.strictEqual(t.items[0].name, 'Alpha (copy)');
+        return proj.campaignTable(c.a, { status: 'paused' });
+      }).then(function (t) {
+        assert.strictEqual(t.items.length, 1); assert.strictEqual(t.items[0].name, 'Alpha');
+        return proj.campaignTable(c.a, { sender_ids: String(c.sid) });
+      }).then(function (t) {
+        assert.strictEqual(t.items.length, 2);
+        return h.expectReject(proj.campaignTable(c.a, { status: 'bogus' }));
+      }).then(function () { return c.camps.setArchived(c.a, c.camp.id, true); })
+      .then(function () { return proj.campaignTable(c.a, {}); }).then(function (t) {
+        assert.strictEqual(t.items.length, 1, 'archived hidden by default');
+        return proj.campaignTable(c.a, { status: 'archived' });
+      }).then(function (t) {
+        assert.strictEqual(t.items.length, 1); assert.strictEqual(t.items[0].name, 'Alpha');
+        return h.mkUser(c.db, 'b@x.com');
+      }).then(function (b) { return h.expectReject(c.camps.duplicate(b, c.camp.id)); });
+  });
+});
+
+h.group('sender risk and healing outlook');
+h.test('sender view exposes risk factors and a healing outlook', function () {
+  return setup().then(function (c) {
+    return c.db.run('UPDATE senders SET health_score = 60, health_base = 55, health_heal = 5').then(function () { return c.senders.get(c.a, c.sid); }).then(function (s) {
+      assert.strictEqual(s.risk.level, 'high'); assert.ok(s.risk.factors.length >= 1);
+      assert.strictEqual(s.heal_full_in_days, 10); assert.ok(s.heal_next_at > c.clock.t);
+      return c.db.run("UPDATE senders SET health_score = 20, health_base = 20, health_heal = 0, connection_error = 'Login failed'");
+    }).then(function () { return c.senders.get(c.a, c.sid); }).then(function (s) {
+      assert.strictEqual(s.risk.level, 'critical'); assert.ok(/Connection problem/.test(s.risk.factors.join(' ')));
+    });
+  });
+});
+
+h.run();

@@ -45,6 +45,8 @@ module.exports = function register(router, d) {
   router.delete('/api/campaigns/:id', function (ctx) { return S.remove(ctx.user.id, parseId(ctx.params.id), ctx.ip); });
   router.get('/api/campaigns/:id/leads', function (ctx) { return S.listLeads(ctx.user.id, parseId(ctx.params.id), ctx.query); });
 
+  router.post('/api/campaigns/:id/archive', function (ctx) { return S.setArchived(ctx.user.id, parseId(ctx.params.id), !(ctx.body && ctx.body.archived === false), ctx.ip).then(function (c) { return { campaign: c }; }); });
+  router.post('/api/campaigns/:id/duplicate', { limit: heavy }, function (ctx) { return S.duplicate(ctx.user.id, parseId(ctx.params.id), ctx.ip).then(function (c) { return reply(201, { campaign: c }); }); });
   router.post('/api/campaigns/:id/start', function (ctx) { return S.start(ctx.user.id, parseId(ctx.params.id), ctx.ip).then(function (c) { return { campaign: c }; }); });
   router.post('/api/campaigns/:id/pause', function (ctx) { return S.pause(ctx.user.id, parseId(ctx.params.id), ctx.ip).then(function (c) { return { campaign: c }; }); });
   router.post('/api/campaigns/:id/resume', function (ctx) { return S.resume(ctx.user.id, parseId(ctx.params.id), ctx.ip).then(function (c) { return { campaign: c }; }); });

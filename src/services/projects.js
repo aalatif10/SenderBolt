@@ -76,7 +76,7 @@ P._load = function (userId) {
   var self = this;
   return Promise.all([
     this.db.all('SELECT * FROM projects WHERE user_id = ? ORDER BY created_at DESC, id DESC', [userId]),
-    this.db.all('SELECT id, parent_id, project_id, name, status, track_opens, created_at, updated_at FROM campaigns WHERE user_id = ? ORDER BY id', [userId]),
+    this.db.all('SELECT id, parent_id, project_id, name, status, track_opens, created_at, updated_at, archived, start_at FROM campaigns WHERE user_id = ? ORDER BY id', [userId]),
     this.campaigns._statsByCampaign(userId, null),
     this._metrics(userId),
     stepProgress.load(this.db, userId, null),
@@ -246,6 +246,63 @@ P.batch = function (userId, input, ip) {
       });
     });
     return p.then(function () { return res; });
+  });
+};
+
+// ---- Campaigns table (Home): every campaign of every project as ONE flat, filterable list -------------------------------
+// q = { q: name search, status: 'active,paused', sender_ids: '1,2' }. Display status adds two states that are not stored:
+//   archived  (campaign hidden by the owner)      planned  (launched, but its start date is still in the future)
+var TABLE_STATUSES = ['active', 'archived', 'preparing', 'planned', 'completed', 'paused', 'error', 'draft'];
+function csv(x) { return x === undefined || x === null || x === '' ? [] : String(x).split(',').map(function (a) { return a.trim(); }).filter(Boolean); }
+
+P.campaignTable = function (userId, q) {
+  try { return this._campaignTable(userId, q); } catch (e) { return Promise.reject(e); }
+};
+
+P._campaignTable = function (userId, q) {
+  var self = this, now = self.now();
+  q = q || {};
+  var statuses = csv(q.status), senderIds = csv(q.sender_ids).map(Number).filter(function (n) { return n > 0 && Math.floor(n) === n; });
+  statuses.forEach(function (x) { if (TABLE_STATUSES.indexOf(x) === -1) throw bad('status', 'Invalid status filter'); });
+  var needle = q.q ? String(q.q).trim().slice(0, 100).toLowerCase() : '';
+  return Promise.all([
+    this._load(userId),
+    this.db.all('SELECT cs.campaign_id AS cid, cs.sender_id AS sid FROM campaign_senders cs JOIN campaigns c ON c.id = cs.campaign_id WHERE c.user_id = ?', [userId]),
+    // emails still to go out per leaf campaign: for every person still waiting, the steps they have not received yet
+    this.db.all("SELECT cl.campaign_id AS cid, SUM((SELECT COUNT(*) FROM campaign_steps st WHERE st.campaign_id = cl.campaign_id) - cl.current_step) AS n FROM campaign_leads cl JOIN campaigns c ON c.id = cl.campaign_id " +
+      "WHERE c.user_id = ? AND cl.status IN ('pending','active') AND cl.removed_at IS NULL GROUP BY cl.campaign_id", [userId]),
+    // is the next due email a first email or a follow-up? (the person due soonest in each leaf)
+    this.db.all("SELECT c.id AS cid, (SELECT cl.current_step FROM campaign_leads cl WHERE cl.campaign_id = c.id AND cl.status = 'active' AND cl.removed_at IS NULL ORDER BY cl.next_send_at LIMIT 1) AS st FROM campaigns c WHERE c.user_id = ?", [userId]),
+    this.db.all('SELECT id, label, email FROM senders WHERE user_id = ? ORDER BY email', [userId])
+  ]).then(function (r) {
+    var L = r[0], links = {}, sched = {}, kind = {};
+    r[1].forEach(function (x) { (links[x.cid] = links[x.cid] || []).push(x.sid); });
+    r[2].forEach(function (x) { sched[x.cid] = Math.max(0, Number(x.n) || 0); });
+    r[3].forEach(function (x) { if (x.st !== null) kind[x.cid] = x.st > 0 ? 'follow_up' : 'first'; });
+    var rows = [];
+    L.projects.forEach(function (p) {
+      if (p.archived) return;
+      (L.mains[p.id] || []).forEach(function (main) {
+        var d = describeCampaign(main, L), leaves = leafIds(main, L.kids);
+        d.project_id = p.id; d.project_name = p.name; d.archived = !!main.archived; d.start_at = main.start_at || null;
+        d.sender_ids = links[main.id] || [];
+        d.scheduled = leaves.reduce(function (n, l) { return n + (sched[l.id] || 0); }, 0);
+        var firstDue = leaves.map(function (l) { var s = L.stats[l.id]; return s && s.next_send_at !== null ? { at: s.next_send_at, k: kind[l.id] } : null; }).filter(Boolean).sort(function (a, b) { return a.at - b.at; })[0];
+        d.next_kind = firstDue ? (firstDue.k || 'first') : null;
+        d.display_status = d.archived ? 'archived' : (d.status === 'active' && d.start_at && d.start_at > now ? 'planned' : d.status);
+        d.next_send_at = (d.display_status === 'active' || d.display_status === 'planned') ? d.next_send_at : null;
+        rows.push(d);
+      });
+    });
+    var base = rows.filter(function (c) {
+      return (!needle || c.name.toLowerCase().indexOf(needle) !== -1) && (!senderIds.length || c.sender_ids.some(function (id) { return senderIds.indexOf(id) !== -1; }));
+    });
+    var counts = { all: base.length };
+    TABLE_STATUSES.forEach(function (k) { counts[k] = base.filter(function (c) { return c.display_status === k; }).length; });
+    // Archived campaigns only show when asked for, so the default view stays clean.
+    var shown = base.filter(function (c) { return statuses.length ? statuses.indexOf(c.display_status) !== -1 : c.display_status !== 'archived'; });
+    shown.sort(function (a, b) { return b.created_at - a.created_at || b.id - a.id; });
+    return { items: shown.slice(0, 500), total: shown.length, counts: counts, senders: r[4], statuses: TABLE_STATUSES };
   });
 };
 

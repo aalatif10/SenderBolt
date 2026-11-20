@@ -10,6 +10,24 @@ SB.S = {
     error: { label: 'Needs attention', tip: 'Something is blocking this campaign, for example a paused or failing sender.' },
     empty: { label: 'No campaigns yet', tip: 'Add a campaign to this project to start.' }
   },
+  // Campaigns table: the status names used by the filter and the pills there (Hunter-style), with plain-language hover text.
+  tableStatus: {
+    active: { label: 'Active', tip: 'Emails are going out on schedule.' },
+    archived: { label: 'Archived', tip: 'Hidden from the default view by you. Results are kept; restore it any time.' },
+    preparing: { label: 'Preparing', tip: 'Being set up. It will start by itself in a moment.' },
+    planned: { label: 'Planned', tip: 'Launched, but waiting for its start date. Nothing is sent before then.' },
+    completed: { label: 'Completed', tip: 'Every person finished the sequence, replied, or was stopped.' },
+    paused: { label: 'Paused', tip: 'Nothing is sent until you resume.' },
+    error: { label: 'Error', tip: 'Something is blocking this campaign, for example a sender that cannot send. Open it to see what.' },
+    draft: { label: 'Draft', tip: 'Ready to launch. Nothing has been sent yet.' }
+  },
+  perf: {
+    scheduled: 'Emails still to go out in this campaign: first emails and follow-ups for people who have not replied or opted out.',
+    sent: 'Emails successfully handed to your email provider (includes follow-ups).',
+    opened: 'People who opened at least one email. Approximate: some mail apps block the tracking image. Shows "Off" when open tracking is off.',
+    replied: 'People who wrote back. Out-of-office and bounce notices do not count.',
+    successful: 'People whose reply shows interest (tagged Interested). The replies worth following up first.'
+  },
   metric: {
     leads: 'Total people in this project\'s campaigns.',
     sent: 'Emails successfully handed to your email provider (includes follow-ups).',

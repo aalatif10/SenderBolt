@@ -70,7 +70,7 @@ function mapLimit(items, limit, fn) {
 
 function trackingOk(s, t, required) {
   if (!required || !s.imap_host || s.reply_detection === 0) return true;     // reply detection switched off by the owner: nothing to wait for
-  return s.imap_last_uid !== null && s.imap_last_uid !== undefined && !s.sync_error && s.last_sync_at !== null && s.last_sync_at !== undefined && t - s.last_sync_at <= SYNC_FRESH_MS;
+  return s.imap_last_uid !== null && s.imap_last_uid !== undefined && (!s.sync_error || s.sync_transient === 1) && s.last_sync_at !== null && s.last_sync_at !== undefined && t - s.last_sync_at <= SYNC_FRESH_MS;
 }
 
 function SendEngine(db, deps) {
@@ -316,7 +316,7 @@ E._onSuccess = function (sender, c, steps, claim, mail, res) {
         // It is always recomputed here, so idle days never advance it. It also counts while warm-up is off,
         // so an account that has been sending at volume is treated as warmed up if warm-up is switched on later.
         var idx = throttle.rampIndex(fresh, today);
-        return tx.run('UPDATE senders SET sent_today = CASE WHEN sent_today_date = ? THEN sent_today + 1 ELSE 1 END, sent_today_date = ?, warmup_days = ?, next_send_at = ?, error_streak = 0, last_error = NULL, warmup_started_at = COALESCE(warmup_started_at, ?) WHERE id = ?',
+        return tx.run('UPDATE senders SET sent_today = CASE WHEN sent_today_date = ? THEN sent_today + 1 ELSE 1 END, sent_today_date = ?, warmup_days = ?, next_send_at = ?, error_streak = 0, last_error = NULL, connection_error = NULL, connection_error_at = NULL, warmup_started_at = COALESCE(warmup_started_at, ?) WHERE id = ?',
           [today, today, idx, t2 + delay, t2, sender.id]);
       });
   });
@@ -326,12 +326,18 @@ E._onFailure = function (sender, c, steps, claim, err) {
   var self = this, t2 = this.now(), cls = classify(err), today = utcDate(t2);
   var detail = String((err && (err.response || err.message)) || '').replace(/\s+/g, ' ').slice(0, 300);
   var delay = throttle.nextDelayMs({ mode: sender.delay_mode, fixedSec: sender.delay_fixed_sec, minSec: sender.delay_min_sec, maxSec: sender.delay_max_sec });
-  var senderSide = cls.kind === 'auth' || cls.kind === 'quota';
+  var connIssue = cls.kind === 'auth' || cls.network === true;
+  var senderSide = connIssue || cls.kind === 'quota';
   var attempts = senderSide ? Math.max(0, claim.attempts - 1) : claim.attempts;     // sender-side failures do not use up the lead's retries
   return this.db.transaction(function (tx) {
     var p = tx.run("UPDATE messages SET status = 'failed', error = ?, error_class = ?, attempts = ? WHERE id = ?", [cls.message + (detail ? ' [' + detail + ']' : ''), cls.kind, attempts, claim.id]);
-    if (cls.kind === 'auth') {
-      return p.then(function () { return tx.run("UPDATE senders SET status = 'paused', last_error = ?, next_send_at = NULL, updated_at = ? WHERE id = ?", [cls.message, t2, sender.id]); });
+    if (connIssue) {
+      // Wrong/revoked App Password or the server cannot be reached: the sender stays ACTIVE (never paused, health untouched),
+      // the problem is shown on the account, and the engine retries after a back-off (15 min for login, 5 min for network).
+      return p.then(function () {
+        return tx.run('UPDATE senders SET connection_error = ?, connection_error_at = ?, last_error = ?, next_send_at = ? WHERE id = ?',
+          [cls.message, t2, cls.message, t2 + (cls.kind === 'auth' ? 15 : 5) * 60000, sender.id]);
+      });
     }
     if (cls.kind === 'quota') {
       var daily = /daily|quota|per day|24/i.test(detail);

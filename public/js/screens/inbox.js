@@ -12,19 +12,23 @@
   function who(it) { var n = [it.first_name, it.last_name].filter(Boolean).join(' '); return n || it.lead_email; }
 
   SB.screens.inbox = function () {
-    var root = h('div'), state = { sentiment: '', unread: false, q: '', campaign: '', sender: '', offset: 0, sel: null };
+    var root = h('div'), state = { sentiment: '', unread: false, read: false, q: '', campaigns: [], senders: [], statuses: [], offset: 0, sel: null };
     var PAGE = 30, listEl = h('div', { class: 'ib-list', role: 'list' }), chipsEl = h('div', { class: 'ib-chips' }), threadEl = h('div', { class: 'ib-thread' });
     var foot = h('div', { class: 'ib-foot' }), dead = false, camps = [], sndrs = [], lastData = null, panel = null, searchTimer = null, listSeq = 0, threadSeq = 0;
 
     // ---------- filters ----------
-    var search = h('input', { class: 'input', type: 'search', placeholder: 'Search name, company, subject…', 'aria-label': 'Search replies', maxlength: 100 });
+    var search = h('input', { class: 'input', type: 'search', placeholder: 'Search by name, company, subject…', 'aria-label': 'Search replies', maxlength: 100 });
     search.addEventListener('input', function () { clearTimeout(searchTimer); searchTimer = setTimeout(function () { state.q = search.value.trim(); state.offset = 0; loadList(); }, 300); });
-    var campSel = h('select', { class: 'input', 'aria-label': 'Campaign' }), sndSel = h('select', { class: 'input', 'aria-label': 'Sender account' });
-    campSel.addEventListener('change', function () { state.campaign = campSel.value; state.offset = 0; loadList(); });
-    sndSel.addEventListener('change', function () { state.sender = sndSel.value; state.offset = 0; loadList(); });
+    function reset() { state.offset = 0; loadList(); }
+    var campMs = SB.controls.multiSelect({ label: 'Campaigns', tip: 'Show replies from these campaigns only.', options: [], selected: [], emptyText: 'No campaigns yet.', onApply: function (v) { state.campaigns = v; reset(); } });
+    var acctMs = SB.controls.multiSelect({ label: 'Email accounts', tip: 'Show replies received on these sending accounts only.', options: [], selected: [], emptyText: 'No sending accounts yet.', onApply: function (v) { state.senders = v; reset(); } });
+    var teamMs = SB.controls.multiSelect({ label: 'Team members', tip: 'SenderBolt currently has one user, so every conversation is yours. Teammates will appear here when sharing is added.', options: [{ value: 'me', label: 'You', sub: 'Owner' }], selected: [], onApply: function () { reset(); } });
+    var statusMs = SB.controls.multiSelect({ label: 'Status', tip: 'Where the conversation stands: Successful = tagged Interested, Not successful = tagged Not interested, plus still in sequence, paused, or stopped (opted out or bounced).',
+      options: [{ value: 'successful', label: 'Successful' }, { value: 'not_successful', label: 'Not successful' }, { value: 'active', label: 'In sequence' }, { value: 'paused', label: 'Paused' }, { value: 'stopped', label: 'Stopped' }],
+      selected: [], onApply: function (v) { state.statuses = v; reset(); } });
     function fillSelects() {
-      SB.clear(campSel); campSel.appendChild(h('option', { value: '' }, 'All campaigns')); camps.forEach(function (c) { campSel.appendChild(h('option', { value: c.id }, c.name)); }); campSel.value = state.campaign;
-      SB.clear(sndSel); sndSel.appendChild(h('option', { value: '' }, 'All accounts')); sndrs.forEach(function (s) { sndSel.appendChild(h('option', { value: s.id }, s.email)); }); sndSel.value = state.sender;
+      campMs.setOptions(camps.map(function (c) { return { value: c.id, label: c.name }; }));
+      acctMs.setOptions(sndrs.map(function (x) { return { value: x.id, label: x.email, sub: x.label && x.label !== x.email ? x.label : null }; }));
     }
     function paintChips(counts, unread) {
       SB.clear(chipsEl);
@@ -32,10 +36,10 @@
         return h('button', { type: 'button', class: 'chip ib-chip' + (on ? ' on' : '') + (cls ? ' ' + cls : ''), tip: tip, 'aria-pressed': on ? 'true' : 'false', on: { click: fn } }, label, count !== null ? h('span', { class: 'ib-count', text: String(count) }) : null);
       }
       var all = ORDER.reduce(function (a, k) { return a + (counts[k] || 0); }, 0);
-      chipsEl.appendChild(chip('All', !state.sentiment && !state.unread, all, 'Every conversation with a reply.', function () { state.sentiment = ''; state.unread = false; state.offset = 0; loadList(); }));
-      chipsEl.appendChild(chip('Unread', state.unread, unread, 'Conversations with a reply you have not opened.', function () { state.unread = !state.unread; state.offset = 0; loadList(); }));
+      chipsEl.appendChild(chip('All', !state.sentiment && !state.unread && !state.read, all, 'Every conversation with a reply.', function () { state.sentiment = ''; state.unread = false; state.read = false; state.offset = 0; loadList(); }));
+      chipsEl.appendChild(chip('Unread', state.unread, unread, 'Conversations with a reply you have not opened.', function () { state.unread = !state.unread; state.read = false; state.offset = 0; loadList(); }));
+      chipsEl.appendChild(chip('Read', state.read, Math.max(0, all - unread), 'Conversations where you have opened every reply.', function () { state.read = !state.read; state.unread = false; state.offset = 0; loadList(); }));
       ORDER.forEach(function (k) {
-        if (k === 'neutral' && !counts.neutral && state.sentiment !== 'neutral') return;
         chipsEl.appendChild(chip(I.sentiment[k].label, state.sentiment === k, counts[k] || 0, I.sentiment[k].tip, function () { state.sentiment = state.sentiment === k ? '' : k; state.offset = 0; loadList(); }, 'chip-' + I.sentiment[k].cls));
       });
     }
@@ -43,8 +47,9 @@
     // ---------- list ----------
     function qs() {
       var p = ['limit=' + PAGE, 'offset=' + state.offset];
-      if (state.sentiment) p.push('sentiment=' + encodeURIComponent(state.sentiment)); if (state.unread) p.push('unread=1');
-      if (state.campaign) p.push('campaign_id=' + encodeURIComponent(state.campaign)); if (state.sender) p.push('sender_id=' + encodeURIComponent(state.sender));
+      if (state.sentiment) p.push('sentiment=' + encodeURIComponent(state.sentiment)); if (state.unread) p.push('unread=1'); if (state.read) p.push('read=1');
+      if (state.campaigns.length) p.push('campaign_ids=' + state.campaigns.join(',')); if (state.senders.length) p.push('sender_ids=' + state.senders.join(','));
+      if (state.statuses.length) p.push('status=' + state.statuses.join(','));
       if (state.q) p.push('q=' + encodeURIComponent(state.q));
       return p.join('&');
     }
@@ -65,7 +70,7 @@
         lastData = d; paintChips(d.counts, d.unread);
         SB.clear(listEl);
         if (!d.items.length) {
-          var filtered = state.sentiment || state.unread || state.q || state.campaign || state.sender;
+          var filtered = state.sentiment || state.unread || state.read || state.q || state.campaigns.length || state.senders.length || state.statuses.length;
           listEl.appendChild(h('div', { class: 'ib-empty' }, SB.icon('inbox', 'icon-lg'), h('p', { class: 'muted', text: filtered ? I.emptyFiltered : I.empty })));
         } else d.items.forEach(function (it) { listEl.appendChild(row(it)); });
         SB.clear(foot);
@@ -174,7 +179,7 @@
     });
     root.appendChild(h('div', { class: 'page-head' }, h('div', null, h('h1', { text: 'Inbox' }), h('p', { class: 'sub', text: 'Every reply from every account and campaign, in one place.' })), syncBtn));
     root.appendChild(h('div', { class: 'card ib' },
-      h('div', { class: 'ib-left' }, h('div', { class: 'ib-filters' }, search, h('div', { class: 'ib-selects' }, campSel, sndSel), chipsEl), listEl, foot),
+      h('div', { class: 'ib-left' }, h('div', { class: 'ib-filters' }, search, h('div', { class: 'ib-selects' }, acctMs.el, teamMs.el, campMs.el, statusMs.el), chipsEl), listEl, foot),
       h('div', { class: 'ib-right' }, threadEl)));
     SB.mount(threadEl, emptyThread()); fillSelects(); SB.mount(listEl, h('div', { class: 'skeleton' }));
 
@@ -182,6 +187,6 @@
       if (dead) return; camps = (r[0].items || []).filter(function (c) { return !c.parent_id; }); sndrs = r[1].items || []; fillSelects();
     }, function () {});
     var stop = ui.poll(function () { if (!document.querySelector('#ib-reply') || !document.querySelector('#ib-reply').value) return loadList(); }, 15000);
-    return { el: root, destroy: function () { dead = true; stop(); clearTimeout(searchTimer); if (panel) panel.close(); } };
+    return { el: root, destroy: function () { SB.controls.close(); dead = true; stop(); clearTimeout(searchTimer); if (panel) panel.close(); } };
   };
 })();

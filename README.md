@@ -54,6 +54,23 @@ Set `SENDERBOLT_PUBLIC_ORIGIN=https://your-domain` to get one-click unsubscribe 
 - Four tiles: emails sent today vs. capacity, replies waiting, projects running, and anything needing attention. The **Campaign health** card counts critical problems and shows a badge for alerts you have not reviewed yet (**Mark all reviewed** clears it; a problem that returns shows as New again). Hover the small **i** next to any label to read what it means.
 - **Projects** are shown as cards with progress, sent, replies, bounces and the next email time. Click one to open it. The page refreshes itself every 10 seconds.
 
+**Campaigns table (v1.9)**
+- The home page has a **Campaigns | Projects** switch. Campaigns shows one row per campaign with: name, status, current state ("Next follow-up in 2h 10m", days/hours/minutes only), created ("11 minutes ago"), progression bar and performance (Scheduled, Sent, Opened, Replied, Successful; hover each for what it means).
+- Filter bar: total count, search by name, **Status** and **Email accounts** multi-selects (Select all / Clear / Apply filters). Archived campaigns are hidden unless you choose Archived.
+- The **⋮** menu on each row: Pause/Resume, Duplicate (makes a draft copy with the same emails, days, accounts and people), Archive/Restore (not while sending), Rename.
+
+**Inbox filters (v1.9)**
+- Search by name, company or subject; multi-selects for Email accounts, Team members, Campaigns and Status (Successful, Not successful, Active, Paused, Stopped). Tabs: All, Unread, Read, Interested, More info, Not interested, Neutral.
+
+**New campaign, Sending step (v1.9)**
+- One vertical flow: Sending days (Mon-Sun), Sending hours with Time zone, **Start on a specific day** (off = starts when you press Start, within your days and hours; on = pick the date), then accounts, Priority, Replies, Tracking and Smart Split.
+
+**Sending accounts (v1.9)**
+- Accounts under Force continue count as active. Cards show the real time of the next email (days/hours/minutes) computed from the campaign's days, hours and time zone; the same time is used on campaigns and projects.
+- Login or network problems never pause an account: it stays active, shows a connection alert and is retried automatically (15 min after a wrong password, 5 min after a network error). Inbox time-outs are retried with back-off (1, 2, 4, then 5 minutes) and do not stop sending.
+- **Health healing**: a damaged score recovers gradually (+1 per calm day, +1 per 25 clean emails up to +2, +1 per reply, at most +4 a day, never above 100; a serious problem pauses healing that day).
+- **Settings** (button on a card) groups everything for one account: Connection & credentials, Daily limit & warm-up, Sending pace, Protection & risk (with a plain risk summary and Force continue), Health healing, Identity & signature, Advanced.
+
 **Projects, campaigns and drill-down**
 - A **project** groups related **campaigns** (for example two versions of an email). The project page adds the numbers of all its campaigns together.
 - Click a campaign row to open the side panel: replies and bounces, how many emails went out at each step, and its batches.
