@@ -1,4 +1,4 @@
-# SenderBolt - Architecture Report (updated through v1.9.0)
+# SenderBolt - Architecture Report (updated through v1.9.1)
 
 Target runtime: **Node.js 12.22.x on Windows 7 (64-bit)**. Code is written in ES2018-style JavaScript
 (no `?.`, `??`, or other post-Node-12 syntax) with promise chains.
@@ -394,3 +394,16 @@ Browser check done for this release: the app shell and sign-in screen load in he
 | Inbox | `src/services/inbox.js` | `campaign_ids`, `sender_ids`, `status`, `read` filters. |
 | UI | `public/js/controls.js`, `public/js/screens/campaigntable.js`, `home.js`, `inbox.js`, `wizard.js`, `senders.js` | Multi-select and row-menu controls (CSSOM positioning, CSP-safe), the table, Campaigns/Projects switch, inbox filter bar, vertical Sending step with day chips and the Start toggle, Senders cards and the sectioned Settings panel. |
 | Tests | `test/v190.js` | Healing, time-out back-off, window maths, next-email timing, archive/duplicate/table filters, risk outlook. |
+
+
+## v1.9.1 - unified Projects and Campaigns, shared campaign grid, inbox Status = reply tags
+
+| File | Role |
+|---|---|
+| `public/js/screens/campaigngrid.js` (new) | `SB.campaignGrid.table(items, opts)`: the one campaign table (columns, current state, performance, three-dots menu). `opts.progress` is `steps` (project step bar) or `bar`. |
+| `public/js/screens/campaigntable.js` | Filter bar (search, Status, Email accounts) around the grid; options `projectId`, `progress`, `selectable`, `onMove`. Used by the Project page. |
+| `public/js/screens/home.js` | One "Projects and Campaigns" view; expanded projects load `GET /api/campaign-table?project_id=` and render the grid with the step bar. |
+| `public/js/screens/project.js` | Campaigns section uses the filterable grid with the step bar and keeps bulk Move / Delete. |
+| `src/services/projects.js` | `campaignTable` accepts `project_id` (works for archived projects too). |
+| `src/services/inbox.js` | `status` filter values: `successful`, `not_successful`, `interested`, `more_info`, `not_interested`, `neutral` (untagged = neutral). Campaign-state values are rejected with 400. |
+| `test/v190.js` | Adds the inbox status-filter test. |

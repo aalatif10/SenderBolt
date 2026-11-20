@@ -200,4 +200,35 @@ h.test('sender view exposes risk factors and a healing outlook', function () {
   });
 });
 
+h.group('inbox status filter = reply tags');
+h.test('Status filter matches the reply tags; successful/not_successful keep their meaning; old state values are rejected', function () {
+  var InboxService = require('../src/services/inbox').InboxService;
+  return setup().then(function (c) {
+    var inbox = new InboxService(c.db, { now: function () { return c.clock.t; } });
+    return c.leads.createFolder(c.a, 'F').then(function (f) {
+      return c.leads.importLeads(c.a, f.id, 'paste', 'a@co1.com\nb@co2.com\nc@co3.com\nd@co4.com\ne@co5.com').then(function () {
+        return c.camps.create(c.a, { name: 'C', steps: [{ subject: 'Hi', body_html: '<p>x</p>' }], sender_ids: [c.sid], folder_id: f.id });
+      });
+    }).then(function () { return c.db.all('SELECT id, lead_id FROM campaign_leads ORDER BY id'); }).then(function (cls) {
+      var tags = ['interested', 'more_info', 'not_interested', 'neutral', null], i = 0;
+      return cls.reduce(function (p, cl) {
+        var tag = tags[i++];
+        return p.then(function () {
+          return c.db.run("INSERT INTO messages (user_id, campaign_lead_id, sender_id, lead_id, direction, status, idempotency_key, subject, body_text, from_addr, to_addr, kind, sentiment, received_at, created_at) VALUES (?,?,?,?, 'in','received',?,?,?,?,?, 'email',?,?,?)",
+            [c.a, cl.id, c.sid, cl.lead_id, 'k' + cl.id, 'Re', 'text', 'x@y.com', 's1@gmail.com', tag, c.clock.t, c.clock.t]);
+        });
+      }, Promise.resolve()).then(function () {
+        // the fifth person also opted out
+        return c.db.run("UPDATE campaign_leads SET status = 'unsubscribed' WHERE id = ?", [cls[4].id]);
+      });
+    }).then(function () {
+      function n(status) { return inbox.list(c.a, { status: status }).then(function (r) { return r.total; }); }
+      return Promise.all([n('interested'), n('more_info'), n('not_interested'), n('neutral'), n('successful'), n('not_successful'), n('interested,more_info'), n('')]).then(function (r) {
+        assert.deepStrictEqual(r, [1, 1, 1, 2, 1, 2, 2, 5]);
+        return Promise.all(['active', 'paused', 'stopped', 'x;drop'].map(function (bad) { return h.expectReject(inbox.list(c.a, { status: bad })); }));
+      });
+    });
+  });
+});
+
 h.run();

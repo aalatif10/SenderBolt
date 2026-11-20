@@ -54,13 +54,13 @@ Set `SENDERBOLT_PUBLIC_ORIGIN=https://your-domain` to get one-click unsubscribe 
 - Four tiles: emails sent today vs. capacity, replies waiting, projects running, and anything needing attention. The **Campaign health** card counts critical problems and shows a badge for alerts you have not reviewed yet (**Mark all reviewed** clears it; a problem that returns shows as New again). Hover the small **i** next to any label to read what it means.
 - **Projects** are shown as cards with progress, sent, replies, bounces and the next email time. Click one to open it. The page refreshes itself every 10 seconds.
 
-**Campaigns table (v1.9)**
-- The home page has a **Campaigns | Projects** switch. Campaigns shows one row per campaign with: name, status, current state ("Next follow-up in 2h 10m", days/hours/minutes only), created ("11 minutes ago"), progression bar and performance (Scheduled, Sent, Opened, Replied, Successful; hover each for what it means).
-- Filter bar: total count, search by name, **Status** and **Email accounts** multi-selects (Select all / Clear / Apply filters). Archived campaigns are hidden unless you choose Archived.
-- The **⋮** menu on each row: Pause/Resume, Duplicate (makes a draft copy with the same emails, days, accounts and people), Archive/Restore (not while sending), Rename.
+**Projects and Campaigns (v1.9.1)**
+- The home page is one view, **Projects and Campaigns**: project rows with their totals. Open a project with the arrow to see its campaigns in the shared campaign table: name, status, current state ("Next follow-up in 2h 10m"), created ("11 minutes ago"), progression, performance (Scheduled, Sent, Opened, Replied, Successful; hover each for what it means) and a **⋮** menu (Pause/Resume, Duplicate, Archive/Restore, Rename).
+- In both places the progression is the segmented step bar: Initial email, Follow-up 1 to 5, with each step's state in the dark tooltip.
+- The **Project page** shows the same table with a filter bar (total count, search by name, Status and Email accounts multi-selects) plus checkboxes to move or delete campaigns in bulk.
 
 **Inbox filters (v1.9)**
-- Search by name, company or subject; multi-selects for Email accounts, Team members, Campaigns and Status (Successful, Not successful, Active, Paused, Stopped). Tabs: All, Unread, Read, Interested, More info, Not interested, Neutral.
+- Search by name, company or subject; multi-selects for Email accounts, Team members, Campaigns and Status (Successful, Not successful, Interested, More info, Not interested, Neutral). Status follows the reply tags: Successful = tagged Interested, Not successful = tagged Not interested or the person opted out / bounced. Tabs: All, Unread, Read, Interested, More info, Not interested, Neutral.
 
 **New campaign, Sending step (v1.9)**
 - One vertical flow: Sending days (Mon-Sun), Sending hours with Time zone, **Start on a specific day** (off = starts when you press Start, within your days and hours; on = pick the date), then accounts, Priority, Replies, Tracking and Smart Split.

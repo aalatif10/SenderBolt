@@ -23,8 +23,9 @@
     var campMs = SB.controls.multiSelect({ label: 'Campaigns', tip: 'Show replies from these campaigns only.', options: [], selected: [], emptyText: 'No campaigns yet.', onApply: function (v) { state.campaigns = v; reset(); } });
     var acctMs = SB.controls.multiSelect({ label: 'Email accounts', tip: 'Show replies received on these sending accounts only.', options: [], selected: [], emptyText: 'No sending accounts yet.', onApply: function (v) { state.senders = v; reset(); } });
     var teamMs = SB.controls.multiSelect({ label: 'Team members', tip: 'SenderBolt currently has one user, so every conversation is yours. Teammates will appear here when sharing is added.', options: [{ value: 'me', label: 'You', sub: 'Owner' }], selected: [], onApply: function () { reset(); } });
-    var statusMs = SB.controls.multiSelect({ label: 'Status', tip: 'Where the conversation stands: Successful = tagged Interested, Not successful = tagged Not interested, plus still in sequence, paused, or stopped (opted out or bounced).',
-      options: [{ value: 'successful', label: 'Successful' }, { value: 'not_successful', label: 'Not successful' }, { value: 'active', label: 'In sequence' }, { value: 'paused', label: 'Paused' }, { value: 'stopped', label: 'Stopped' }],
+    var statusMs = SB.controls.multiSelect({ label: 'Status', tip: 'Filter by how the reply is tagged: Interested, More info, Not interested or Neutral. Successful = tagged Interested. Not successful = tagged Not interested, or the person opted out or the address bounced.',
+      options: [{ value: 'successful', label: 'Successful' }, { value: 'not_successful', label: 'Not successful' }, { value: 'interested', label: I.sentiment.interested.label }, { value: 'more_info', label: I.sentiment.more_info.label },
+        { value: 'not_interested', label: I.sentiment.not_interested.label }, { value: 'neutral', label: I.sentiment.neutral.label }],
       selected: [], onApply: function (v) { state.statuses = v; reset(); } });
     function fillSelects() {
       campMs.setOptions(camps.map(function (c) { return { value: c.id, label: c.name }; }));

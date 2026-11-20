@@ -4,15 +4,6 @@
   var h = SB.h, fmt = SB.fmt, ui = SB.ui, M = SB.S.metric;
   SB.screens = SB.screens || {};
 
-  function lifecycle(c, reload) { return ui.lifecycleButton({ status: c.status, name: c.name, people: c.leads }, reload, c.id); }
-
-  // "34 / 112 \u00b7 18 / 80": the numbers behind the segments, so the bar is exact as well as visual
-  function stepSummary(c) {
-    var sp = c.step_progress || [];
-    if (!sp.length) return '';
-    return sp.map(function (s) { return fmt.num(s.sent) + '/' + fmt.num(s.capacity); }).join(' \u00b7 ');
-  }
-
   function editModal(p, reload) {
     var name = h('input', { class: 'input', id: 'ep-name', maxlength: 100, value: p.name });
     var desc = h('textarea', { class: 'input', id: 'ep-desc', maxlength: 500 }); desc.value = p.description || '';
@@ -25,7 +16,7 @@
 
   SB.screens.project = function (params) {
     var id = params.id, root = h('div'), body = h('div', null, h('div', { class: 'skeleton' })); root.appendChild(body);
-    var loaded = false, built = false, data = null, st = { q: '', status: 'all', sort: 'recent', sel: {} };
+    var loaded = false, built = false, data = null;
     var topSlot = h('div'), listSlot = h('div');
 
     function render(p) {
@@ -52,27 +43,12 @@
       data = p;
       if (!built) { built = true; SB.mount(body, h('div', null, topSlot, listSlot)); }
       SB.mount(topSlot, h('div', null, head, tiles, t.replied ? h('div', { class: 'card' }, h('h3', null, 'Reply sentiment'), h('div', { class: 'section-title' }), ui.sentimentBar(t.sentiment)) : null));
-      paintCampaigns();
     }
 
-    var CHIPS = [
-      { key: 'all', label: 'All', match: null }, { key: 'active', label: 'Running', match: ['active'], tip: 'Campaigns that are sending right now.' },
-      { key: 'paused', label: 'Paused', match: ['paused'] }, { key: 'completed', label: 'Finished', match: ['completed'] },
-      { key: 'draft', label: 'Draft', match: ['draft', 'preparing'], tip: 'Written but not started yet.' }, { key: 'error', label: 'With error', match: ['error'], tip: 'Blocked by a problem, such as a sender that cannot send.' }];
-    var SORTS = [
-      { key: 'recent', label: 'Newest first', cmp: function (a, b) { return b.created_at - a.created_at || b.id - a.id; } },
-      { key: 'name', label: 'Name (A-Z)', cmp: function (a, b) { return a.name.toLowerCase() < b.name.toLowerCase() ? -1 : a.name.toLowerCase() > b.name.toLowerCase() ? 1 : 0; } },
-      { key: 'progress', label: 'Most complete', cmp: function (a, b) { return b.progress_pct - a.progress_pct; } },
-      { key: 'replies', label: 'Most replies', cmp: function (a, b) { return b.metrics.replied - a.metrics.replied; } },
-      { key: 'sent', label: 'Most emails sent', cmp: function (a, b) { return b.sent - a.sent; } },
-      { key: 'next', label: 'Next email soonest', cmp: function (a, b) { var x = a.next_send_at, y = b.next_send_at; if (x === y) return 0; if (x === null) return 1; if (y === null) return -1; return x - y; } }];
-    var tb = SB.lists.toolbar({ placeholder: 'Search campaigns', label: 'Search campaigns', sorts: SORTS, sort: st.sort,
-      onSearch: function (q) { st.q = q; paintCampaigns(); }, onSort: function (k) { st.sort = k; paintCampaigns(); } });
-    var chipsBox = h('div'), tagsBox = h('div'), tableBox = h('div'), barBox = h('div');
-    SB.mount(listSlot, h('div', null, h('div', { class: 'section-title' }, h('div', { class: 'actions' }, h('h2', { text: 'Campaigns' }), ui.info('Click a campaign to open its Studio: edit emails that have not gone out yet, see who opened, replied or opted out, and follow every step.'))),
-      tb.el, chipsBox, tagsBox, tableBox, barBox));
+    var ctable = SB.screens.campaignTable({ projectId: id, progress: 'steps', selectable: true, onMove: moveModal });
+    SB.mount(listSlot, h('div', null, h('div', { class: 'section-title' }, h('div', { class: 'actions' }, h('h2', { text: 'Campaigns' }), ui.info('Click a campaign to open its Studio: edit emails that have not gone out yet, see who opened, replied or opted out, and follow every step.'))), ctable.el));
 
-    function moveModal(ids) {
+    function moveModal(ids, done) {
       Promise.all([SB.api.get('/api/projects')]).then(function (r) {
         var others = r[0].items.filter(function (x) { return x.id !== data.id; });
         var sel = h('select', { class: 'input', id: 'mv-project', 'aria-label': 'Destination project' }, others.map(function (x) { return h('option', { value: x.id }, x.name); }),
@@ -87,61 +63,19 @@
           actions: [{ label: 'Cancel' }, { label: 'Move', kind: 'primary', onClick: function (close) {
             var body = { action: 'move', ids: ids };
             if (sel.value === 'new') body.new_project_name = nm.value; else body.project_id = Number(sel.value);
-            return SB.api.post('/api/campaigns/batch', body).then(function (res) { close(); SB.lists.report(res, 'moved'); st.sel = {}; return load(); },
+            return SB.api.post('/api/campaigns/batch', body).then(function (res) { close(); SB.lists.report(res, 'moved'); return done(); },
               function (e) { err.textContent = SB.api.friendly(e); err.classList.remove('hidden'); throw e; });
           } }] });
       }, function (e) { ui.toast(SB.api.friendly(e), true); });
     }
 
-    function paintCampaigns() {
-      if (!data) return;
-      var all = data.campaigns, chip = CHIPS.filter(function (c) { return c.key === st.status; })[0] || CHIPS[0];
-      var cmp = SORTS.filter(function (x) { return x.key === st.sort; })[0].cmp;
-      var items = all.filter(function (c) { return SB.lists.has(c.name, st.q) && (!chip.match || chip.match.indexOf(c.status) !== -1); }).sort(cmp);
-      Object.keys(st.sel).forEach(function (k) { if (!all.some(function (c) { return c.id === Number(k); })) delete st.sel[k]; });
-      var selIds = Object.keys(st.sel).map(Number);
-      SB.mount(chipsBox, SB.lists.chips(CHIPS.map(function (c) { return { key: c.key, label: c.label, tip: c.tip, n: c.match ? all.filter(function (x) { return c.match.indexOf(x.status) !== -1; }).length : all.length }; })
-        .filter(function (c) { return c.key === 'all' || c.n > 0 || c.key === st.status; }), st.status, function (k) { st.status = k; paintCampaigns(); }));
-      var tags = [];
-      if (st.q) tags.push({ label: 'Search: ' + st.q, onRemove: function () { st.q = ''; tb.search.value = ''; paintCampaigns(); } });
-      if (st.status !== 'all') tags.push({ label: 'Status: ' + chip.label, onRemove: function () { st.status = 'all'; paintCampaigns(); } });
-      SB.mount(tagsBox, h('div', null, SB.lists.tags(tags, function () { st.q = ''; tb.search.value = ''; st.status = 'all'; paintCampaigns(); })));
-      if (!all.length) {
-        SB.mount(tableBox, h('div', { class: 'card empty' }, h('h2', { text: 'No campaigns in this project yet' }), h('p', { text: 'Write your emails, choose who receives them and pick your senders. Your progress is saved as you go.' }),
-          h('a', { class: 'btn btn-primary', href: '#/campaign/new/' + data.id }, SB.icon('plus'), 'New campaign')));
-      } else if (!items.length) {
-        SB.mount(tableBox, h('div', { class: 'card empty' }, h('h2', { text: 'No campaigns match' }), h('p', { text: 'Try a different search or status.' })));
-      } else {
-        var allCb = h('input', { type: 'checkbox', 'aria-label': 'Select all shown campaigns' }); allCb.checked = items.every(function (c) { return !!st.sel[c.id]; });
-        allCb.addEventListener('change', function () { items.forEach(function (c) { if (allCb.checked) st.sel[c.id] = c.name; else delete st.sel[c.id]; }); paintCampaigns(); });
-        SB.mount(tableBox, h('div', { class: 'table-wrap card' }, h('table', { class: 'table' }, h('thead', null, h('tr', null, h('th', { class: 'row-check' }, allCb),
-          h('th', { text: 'Campaign' }), h('th', { text: 'Status' }), h('th', null, 'Sequence progress ', ui.info(SB.S.steps.segTip + ' ' + M.progress)), h('th', { text: 'Sent' }), h('th', { text: 'Replies' }), h('th', { text: 'Bounced' }), h('th', { text: 'Next email' }), h('th'))),
-          h('tbody', null, items.map(function (c) {
-            var cb = h('input', { type: 'checkbox', 'aria-label': 'Select campaign ' + c.name }); cb.checked = !!st.sel[c.id];
-            cb.addEventListener('click', function (e) { e.stopPropagation(); });
-            cb.addEventListener('change', function () { if (cb.checked) st.sel[c.id] = c.name; else delete st.sel[c.id]; paintCampaigns(); });
-            return h('tr', { class: 'row-link' + (cb.checked ? ' selected' : ''), on: { click: function () { location.hash = '#/campaign/' + c.id; } } },
-              h('td', { class: 'row-check' }, cb),
-              h('td', null, h('b', { text: c.name }), h('div', { class: 'small faint', tip: fmt.tip(c.created_at), text: (c.batches ? c.batches + ' batches \u00b7 ' : '') + fmt.created(c.created_at) })), h('td', null, ui.statusPill(c.status)),
-              h('td', { class: 'c-steps' }, ui.stepBar(c.step_progress, { compact: true })),
-              h('td', { text: fmt.num(c.sent) }), h('td', { text: fmt.num(c.metrics.replied) }), h('td', { text: fmt.num(c.stats.bounced) }), h('td', { text: fmt.until(c.next_send_at) }),
-              h('td', null, h('div', { class: 'actions' }, c.status === 'draft' ? h('a', { class: 'btn btn-sm', href: '#/campaign/edit/' + c.id, tip: 'Change the emails, senders or schedule before you start.', on: { click: function (e) { e.stopPropagation(); } } }, 'Edit') : null, lifecycle(c, load), h('span', { class: 'faint' }, SB.icon('chevron')))));
-          })))));
-      }
-      var n = selIds.length;
-      SB.mount(barBox, h('div', null, SB.lists.selectionBar(n, 'campaign', [
-        { label: 'Move to project', tip: 'Move the selected campaigns into another project, or into a new one.', onClick: function () { moveModal(selIds); } },
-        { label: 'Delete', kind: 'danger', icon: 'trash', onClick: function () {
-          ui.confirm({ title: 'Delete ' + n + ' campaign' + (n === 1 ? '' : 's') + '?', message: 'This permanently deletes them with their batches and sending history. Running campaigns are skipped: pause them first.', confirmLabel: 'Delete forever', danger: true,
-            onConfirm: function () { return SB.api.post('/api/campaigns/batch', { action: 'delete', ids: selIds }).then(function (res) { SB.lists.report(res, 'deleted'); st.sel = {}; return load(); }); } });
-        } }], function () { st.sel = {}; paintCampaigns(); }, items.length > n ? function () { items.forEach(function (c) { st.sel[c.id] = c.name; }); paintCampaigns(); } : null)));
-    }
     function load() {
       return SB.api.get('/api/projects/' + id).then(function (r) { loaded = true; render(r.project); }, function (e) {
         if (e.status === 404) { SB.mount(body, h('div', { class: 'card empty' }, h('h2', { text: 'Project not found' }), h('a', { class: 'btn', href: '#/' }, 'Back to Home'))); return; }
         if (!loaded && e.code !== 'offline') SB.mount(body, h('div', { class: 'form-error', text: SB.api.friendly(e) }));
       });
     }
-    return { el: root, destroy: ui.poll(load, 10000) };
+    var stop = ui.poll(load, 10000);
+    return { el: root, destroy: function () { stop(); ctable.destroy(); } };
   };
 })();

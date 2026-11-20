@@ -265,6 +265,8 @@ P._campaignTable = function (userId, q) {
   var statuses = csv(q.status), senderIds = csv(q.sender_ids).map(Number).filter(function (n) { return n > 0 && Math.floor(n) === n; });
   statuses.forEach(function (x) { if (TABLE_STATUSES.indexOf(x) === -1) throw bad('status', 'Invalid status filter'); });
   var needle = q.q ? String(q.q).trim().slice(0, 100).toLowerCase() : '';
+  var projectId = q.project_id === undefined || q.project_id === '' ? null : Number(q.project_id);
+  if (projectId !== null && !(projectId > 0 && Math.floor(projectId) === projectId)) throw bad('project_id', 'Invalid project');
   return Promise.all([
     this._load(userId),
     this.db.all('SELECT cs.campaign_id AS cid, cs.sender_id AS sid FROM campaign_senders cs JOIN campaigns c ON c.id = cs.campaign_id WHERE c.user_id = ?', [userId]),
@@ -281,7 +283,7 @@ P._campaignTable = function (userId, q) {
     r[3].forEach(function (x) { if (x.st !== null) kind[x.cid] = x.st > 0 ? 'follow_up' : 'first'; });
     var rows = [];
     L.projects.forEach(function (p) {
-      if (p.archived) return;
+      if (projectId !== null ? p.id !== projectId : p.archived) return;   // one project (even an archived one) or every live project
       (L.mains[p.id] || []).forEach(function (main) {
         var d = describeCampaign(main, L), leaves = leafIds(main, L.kids);
         d.project_id = p.id; d.project_name = p.name; d.archived = !!main.archived; d.start_at = main.start_at || null;

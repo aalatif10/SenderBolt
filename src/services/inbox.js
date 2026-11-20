@@ -82,11 +82,16 @@ I._list = function (userId, q) {
   if (cids.length) { extra += ' AND (c.id IN (' + v.placeholders(cids.length) + ') OR c.parent_id IN (' + v.placeholders(cids.length) + '))'; p = p.concat(cids, cids); }
   if (sids.length) { extra += ' AND cl.sender_id IN (' + v.placeholders(sids.length) + ')'; p = p.concat(sids); }
   if (q.read === '1' || q.read === 1 || q.read === true) extra += ' AND x.unread = 0';
-  // Status = where the conversation stands: successful (tagged Interested), not successful (Not interested), still in sequence, paused, stopped (opted out / bounced).
+  // Status uses the SAME tags the conversations show (the tag of the latest detected reply, automatic or set by hand):
+  //   interested | more_info | not_interested | neutral (an untagged reply counts as neutral)
+  //   successful     = tagged Interested (the "Successful" column of the campaigns table)
+  //   not_successful = tagged Not interested, or the person opted out / the address bounced
+  // Several values combine with OR. Campaign-state values (in sequence, paused, stopped) are not tags and are rejected.
   if (q.status !== undefined && q.status !== '') {
+    var STATUS_SQL = { interested: "m.sentiment = 'interested'", more_info: "m.sentiment = 'more_info'", not_interested: "m.sentiment = 'not_interested'", neutral: "(m.sentiment = 'neutral' OR m.sentiment IS NULL)",
+      successful: "m.sentiment = 'interested'", not_successful: "(m.sentiment = 'not_interested' OR cl.status IN ('unsubscribed','bounced'))" };
     var conds = String(q.status).split(',').map(function (k) {
-      var c1 = { successful: "m.sentiment = 'interested'", not_successful: "m.sentiment = 'not_interested'", paused: "(cl.status = 'paused' OR c.status = 'paused')",
-        active: "(cl.status = 'active' AND c.status = 'active')", stopped: "cl.status IN ('unsubscribed','bounced')" }[k.trim()];
+      var c1 = Object.prototype.hasOwnProperty.call(STATUS_SQL, k.trim()) ? STATUS_SQL[k.trim()] : null;
       if (!c1) throw new AppError('validation', 'Unknown status filter', 400);
       return c1;
     });

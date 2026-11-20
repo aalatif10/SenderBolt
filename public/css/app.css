@@ -675,3 +675,10 @@ td .email-trunc { max-width: 260px; } .panel-head h2 .email-trunc { max-width: 3
 .ct-table th { font-size: 11px; letter-spacing: .03em; }
 .ct-name { max-width: 200px; } .ct-state { min-width: 110px; } .ct-prog { min-width: 90px; width: 90px; } .ct-act { width: 36px; }
 .ct-table td.num, .ct-table th.num { padding-left: 4px; padding-right: 4px; }
+/* campaign grid with the segmented step bar */
+.ct-steps-table .c-steps { min-width: 150px; width: 150px; } .ct-steps-table .stepbar { min-width: 130px; }
+.hx-body .ct-table { margin: 0; }
+.ct-wrap.table-wrap.card { overflow-x: auto; }
+.ct-steps-table .c-steps { min-width: 112px; width: 112px; } .ct-steps-table .stepbar { min-width: 100px; gap: 3px; }
+.hx-list, .hx-row, .hx-body, .hx-table, .main > * { min-width: 0; max-width: 100%; }
+.hx-table { overflow-x: auto; }
