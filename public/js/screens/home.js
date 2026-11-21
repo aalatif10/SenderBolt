@@ -29,39 +29,50 @@
     return h('div', { class: 'hx-stat', tip: tipText }, h('span', { text: label }), h('b', { text: value }), sub ? h('i', { text: sub }) : null);
   }
 
-  // One Hunter-style project row. The chevron expands it to show its campaigns underneath, loaded on demand.
-  function projectRow(p, st, repaint, toggle) {   // st.refresh reloads the open projects after a row action
-    var t = p.totals, on = !!st.sel[p.id], open = !!st.open[p.id], any = Object.keys(st.sel).length > 0;
-    var cb = h('input', { type: 'checkbox', class: 'pc-check', 'aria-label': 'Select project ' + p.name });
-    cb.checked = on;
-    cb.addEventListener('change', function () { if (cb.checked) st.sel[p.id] = p.name; else delete st.sel[p.id]; repaint(); });
-    var chev = h('button', { class: 'hx-chev' + (open ? ' open' : ''), type: 'button', 'aria-expanded': open ? 'true' : 'false', 'aria-label': (open ? 'Hide' : 'Show') + ' campaigns in ' + p.name,
-      tip: open ? 'Hide the campaigns in this project.' : 'Show the campaigns in this project with their results.', on: { click: function () { toggle(p.id); } } }, SB.icon('chevron'));
-    var head = h('div', { class: 'hx-head' }, chev,
-      h('div', { class: 'hx-title' }, h('a', { class: 'hx-name', href: '#/project/' + p.id, text: p.name }),
-        h('div', { class: 'small faint', tip: fmt.tip(p.created_at) }, (p.campaign_count ? fmt.num(p.campaign_count) + ' campaign' + (p.campaign_count === 1 ? '' : 's') + ' \u00b7 ' + fmt.num(t.leads) + (t.leads === 1 ? ' person' : ' people') : 'No campaigns yet') + (p.created_at ? ' \u00b7 ' + fmt.created(p.created_at) : ''))),
-      ui.statusPill(p.status),
-      p.campaign_count ? h('div', { class: 'hx-stats' },
-        stat('Sent', fmt.num(t.sent), SB.S.metric.sent),
-        stat('Opened', t.opens_tracked ? rate(t.open_rate) : 'Off', t.opens_tracked ? 'Share of delivered emails that were opened at least once. Open counts are estimates.' : 'Open tracking is off for these campaigns.'),
-        stat('Replied', rate(t.reply_rate), SB.S.metric.replied, fmt.num(t.replied) + (t.replied === 1 ? ' person' : ' people')),
-        stat('Bounced', rate(t.bounce_rate), SB.S.metric.bounced, fmt.num(t.bounced) + (t.bounced === 1 ? ' person' : ' people')),
-        stat('Next email', fmt.until(t.next_send_at), SB.S.metric.next)) : h('div', { class: 'hx-stats' }),
-      h('div', { class: 'hx-prog' }, p.campaign_count ? ui.progress(t.progress_pct) : null));
-    var body = null;
-    if (open) {
-      var d = st.detail[p.id];
-      if (!d) body = h('div', { class: 'hx-body' }, h('div', { class: 'skeleton' }));
-      else if (d.error) body = h('div', { class: 'hx-body' }, h('div', { class: 'form-error', text: d.error }));
-      else body = h('div', { class: 'hx-body' }, campaignTable(d.campaigns, p, st.refresh));
-    }
-    return h('div', { class: 'pc-wrap hx-row' + (on ? ' selected' : '') + (any ? ' sel-mode' : '') + (open ? ' is-open' : '') }, cb, head, body);
+  // The aggregated PROJECT row has the same fields as a campaign row (status, current state, progression, performance), but every number is the total
+  // over the project's campaigns. The campaigns listed under an open project keep their own numbers.
+  function projectAgg(p) {
+    var r = p.row || { display_status: 'empty', next_send_at: null, next_kind: null, start_at: null, track_opens: 0, metrics: {}, step_progress: [], scheduled: 0, sent: 0, leads: 0, stats: {}, progress_pct: 0 };
+    return Object.assign({}, r, { id: p.id, name: p.name, created_at: p.created_at, archived: false });
   }
 
-  // Campaigns of an expanded project: the shared campaign grid, with the project's segmented step bar (Initial email, Follow-up 1..5) as the progression.
-  function campaignTable(list, p, onChange) {
-    if (!list.length) return h('div', { class: 'hx-empty' }, h('span', { class: 'muted', text: 'This project has no campaigns yet.' }), h('a', { class: 'btn btn-sm btn-primary', href: '#/campaign/new/' + p.id }, SB.icon('plus'), 'New campaign'));
-    return h('div', { class: 'hx-table' }, SB.campaignGrid.table(list, { progress: 'steps', showProject: false, flush: true, onChange: onChange }));
+  function projectMenu(p, st, ops) {
+    return SB.controls.rowMenu(function () {
+      return [
+        { label: 'Open project', icon: 'eye', tip: 'See the project page with its totals and campaigns.', onClick: function () { location.hash = '#/project/' + p.id; } },
+        { label: 'New campaign', icon: 'plus', tip: 'Add a campaign to this project.', onClick: function () { location.hash = '#/campaign/new/' + p.id; } },
+        { label: st.archived ? 'Restore' : 'Archive', icon: 'archive', tip: st.archived ? 'Show this project in the main list again.' : 'Hide this project from the main list. Results are kept.', onClick: function () { ops.batch(st.archived ? 'restore' : 'archive', [p.id]); } },
+        { label: 'Delete', icon: 'trash', tip: 'Permanently delete the project, its campaigns and history.', onClick: function () {
+          ui.confirm({ title: 'Delete "' + p.name + '"?', message: 'This permanently deletes the project, all its campaigns and sending history. A project with a running campaign is skipped: pause it first.', confirmLabel: 'Delete forever', danger: true, onConfirm: function () { return ops.batch('delete', [p.id]); } });
+        } }
+      ];
+    }, 'Actions for ' + p.name);
+  }
+
+  // One project row (same columns as a campaign row) + its campaigns when open.
+  function projectRows(p, st, repaint, toggle, ops) {
+    var on = !!st.sel[p.id], open = !!st.open[p.id], out = [], agg = projectAgg(p);
+    var cb = h('input', { type: 'checkbox', 'aria-label': 'Select project ' + p.name }); cb.checked = on;
+    cb.addEventListener('click', function (e) { e.stopPropagation(); });
+    cb.addEventListener('change', function () { if (cb.checked) st.sel[p.id] = p.name; else delete st.sel[p.id]; repaint(); });
+    var chev = h('button', { class: 'hx-chev' + (open ? ' open' : ''), type: 'button', 'aria-expanded': open ? 'true' : 'false', 'aria-label': (open ? 'Hide' : 'Show') + ' campaigns in ' + p.name,
+      tip: open ? 'Hide the campaigns in this project.' : 'Show the campaigns in this project with their own results.', on: { click: function (e) { e.stopPropagation(); toggle(p.id); } } }, SB.icon('chevron'));
+    var sub = (p.campaign_count ? fmt.num(p.campaign_count) + ' campaign' + (p.campaign_count === 1 ? '' : 's') + ' · ' + fmt.num(p.totals.leads) + (p.totals.leads === 1 ? ' person' : ' people') : 'No campaigns yet');
+    var tr = h('tr', { class: 'proj-row' + (on ? ' selected' : '') + (open ? ' is-open' : '') },
+      h('td', { class: 'row-check' }, cb),
+      h('td', { class: 'ct-name' }, h('div', { class: 'proj-name' }, chev, h('div', { class: 'proj-title' }, h('a', { class: 'hx-name ct-title', href: '#/project/' + p.id, tip: 'Open the project: ' + p.name, text: p.name }),
+        h('div', { class: 'small faint', tip: 'Totals over every campaign in this project.' }, sub)))));
+    SB.campaignGrid.dataCells(agg, { progress: 'steps' }).forEach(function (td) { tr.appendChild(td); });
+    tr.appendChild(h('td', { class: 'ct-act' }, projectMenu(p, st, ops)));
+    out.push(tr);
+    if (open) {
+      var d = st.detail[p.id], cols = 12;
+      if (!d) out.push(h('tr', { class: 'sub-note' }, h('td', { colspan: cols }, h('div', { class: 'skeleton' }))));
+      else if (d.error) out.push(h('tr', { class: 'sub-note' }, h('td', { colspan: cols }, h('div', { class: 'form-error', text: d.error }))));
+      else if (!d.campaigns.length) out.push(h('tr', { class: 'sub-note' }, h('td', { colspan: cols }, h('div', { class: 'hx-empty' }, h('span', { class: 'muted', text: 'This project has no campaigns yet.' }), h('a', { class: 'btn btn-sm btn-primary', href: '#/campaign/new/' + p.id }, SB.icon('plus'), 'New campaign')))));
+      else d.campaigns.forEach(function (c) { out.push(SB.campaignGrid.row(c, { progress: 'steps', showProject: false, lead: true, rowClass: 'sub-row', onChange: st.refresh })); });
+    }
+    return out;
   }
 
   var STATUS_CHIPS = [
@@ -147,10 +158,15 @@
         SB.mount(gridBox, h('div', { class: 'card empty' }, h('h2', { text: 'No projects match' }), h('p', { text: 'Try a different search or status.' })));
       } else {
         var allOpen = items.every(function (p) { return !!st.open[p.id]; });
+        var allCb = h('input', { type: 'checkbox', 'aria-label': 'Select all shown projects' }); allCb.checked = items.length > 0 && items.every(function (p) { return !!st.sel[p.id]; });
+        allCb.addEventListener('change', function () { items.forEach(function (p) { if (allCb.checked) st.sel[p.id] = p.name; else delete st.sel[p.id]; }); paintList(); });
+        var ops = { batch: batch };
         SB.mount(gridBox, h('div', { class: 'hx-list' },
           h('div', { class: 'hx-toolbar' }, h('span', { class: 'small muted', text: items.length + ' project' + (items.length === 1 ? '' : 's') }),
             h('button', { class: 'btn btn-ghost btn-sm', type: 'button', tip: 'Open or close every project at once.', on: { click: function () { items.forEach(function (p) { if (allOpen) delete st.open[p.id]; else { st.open[p.id] = true; fetchDetail(p.id); } }); paintList(); } } }, allOpen ? 'Collapse all' : 'Expand all')),
-          items.map(function (p) { return projectRow(p, st, paintList, toggle); })));
+          h('div', { class: 'card table-card ct-wrap table-wrap' }, h('table', { class: 'table ct-table ct-steps-table pc-table' },
+            SB.campaignGrid.head({ progress: 'steps', lead: true, firstHead: 'Project / Campaign', firstTip: 'Projects, with their campaigns underneath when open. A project row shows the totals of all its campaigns; each campaign row shows only its own numbers.' }, allCb),
+            h('tbody', null, items.reduce(function (acc, p) { return acc.concat(projectRows(p, st, paintList, toggle, ops)); }, []))))));
       }
       var names = selIds.length;
       var acts = [{ label: st.archived ? 'Restore' : 'Archive', tip: st.archived ? 'Show these projects in the main list again.' : 'Hide these projects from the main list. Results are kept.',

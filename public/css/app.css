@@ -682,3 +682,39 @@ td .email-trunc { max-width: 260px; } .panel-head h2 .email-trunc { max-width: 3
 .ct-steps-table .c-steps { min-width: 112px; width: 112px; } .ct-steps-table .stepbar { min-width: 100px; gap: 3px; }
 .hx-list, .hx-row, .hx-body, .hx-table, .main > * { min-width: 0; max-width: 100%; }
 .hx-table { overflow-x: auto; }
+/* a paused SENDING account is red (a campaign being paused stays amber) */
+.pill-halted { background: var(--bad-soft); color: var(--bad); }
+.st-row .pill.st-pill { margin-left: 8px; height: 22px; }
+
+/* per-sender settings: balanced cards, one rhythm */
+.sd-wrap { display: grid; gap: var(--space-4); align-content: start; }
+.sd-wrap > * { margin: 0; min-width: 0; }
+.sd-sec { padding: var(--space-4) var(--space-5); display: grid; gap: var(--space-3); }
+.sd-sec-h h3 { margin: 0; font-size: var(--fs-md, 1rem); } .sd-sec-h p { margin: 2px 0 0; }
+.sd-sec .field { margin-bottom: var(--space-3); } .sd-sec .field:last-child { margin-bottom: 0; }
+.sd-sec .callout { margin: 0 0 var(--space-3); } .sd-sec .actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.sd-sec .force-box, .sd-sec .risk-box, .sd-sec .heal-box { margin-bottom: 0; }
+.sd-summary { padding: var(--space-4) var(--space-5); display: grid; gap: var(--space-3); }
+.sd-sum-top { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.sd-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-4); }
+.sd-stats > div { display: grid; gap: 4px; align-content: start; min-width: 0; } .sd-stats b { font-size: var(--fs-lg); }
+.sd-stats .chip, .sd-stats .chip-sm { justify-self: start; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sd-foot { display: flex; justify-content: space-between; gap: var(--space-3); padding-top: var(--space-2); }
+@media (max-width: 560px) { .sd-stats { grid-template-columns: 1fr; } }
+/* Projects and Campaigns: one table, project rows (totals) with their campaigns (own numbers) underneath */
+.pc-table .proj-row td { background: var(--surface); font-weight: 500; vertical-align: middle; }
+.pc-table .proj-row.is-open td { border-bottom-color: transparent; }
+.pc-table .proj-name { display: flex; align-items: center; gap: var(--space-2); min-width: 0; } .pc-table .proj-title { min-width: 0; }
+.pc-table .proj-name .hx-name { font-weight: 700; color: var(--text); text-decoration: none; display: block; } .pc-table .proj-name .hx-name:hover { color: var(--accent); }
+.pc-table .proj-row .pc-check, .pc-table .row-check input { position: static; }
+.pc-table tr.sub-row td { background: var(--surface-2); } .pc-table tr.sub-row td.ct-name { padding-left: 44px; }
+.pc-table tr.sub-row td:first-child { border-left: 3px solid var(--accent-soft, var(--border)); }
+.pc-table tr.sub-note td { background: var(--surface-2); padding: var(--space-3) var(--space-4); }
+.pc-table .ct-name { max-width: 240px; }
+.pc-table th, .pc-table td { padding-left: 6px; padding-right: 6px; }
+.pc-table .row-check { width: 28px; padding-right: 0; padding-left: 10px; }
+.pc-table .ct-name { max-width: 200px; min-width: 150px; } .pc-table .proj-name .hx-name { font-size: 14px; }
+.pc-table tr.sub-row td.ct-name { padding-left: 38px; } .pc-table .ct-state { min-width: 96px; max-width: 120px; }
+.pc-table.ct-steps-table .c-steps { min-width: 96px; width: 96px; } .pc-table.ct-steps-table .stepbar { min-width: 88px; }
+.pc-table td.num, .pc-table th.num { padding-left: 3px; padding-right: 3px; }
+.pc-table .ct-act { width: 30px; padding-right: 8px; } .pc-table .status-col .pill { white-space: nowrap; }

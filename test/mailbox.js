@@ -29,4 +29,29 @@ h.test('a mailparser without simpleParser is rejected with a clear message', fun
   var mb = mailbox.createLive({ require: function (n) { return n === 'imap' ? function () {} : {}; } });
   return mb.baseline({}).then(function () { assert.fail('should reject'); }, function (err) { assert.ok(err.code === 'mailbox_libs' && /simpleParser/.test(err.message)); });
 });
+h.group('mailbox adapter: a throwing IMAP parser');
+h.test("a TypeError thrown inside the imap socket handler fails that sync cleanly (no uncaughtException) and destroys the connection", function () {
+  var EventEmitter = require('events').EventEmitter, destroyed = 0, uncaught = [];
+  function onUncaught(e) { uncaught.push(e); }
+  process.on('uncaughtException', onUncaught);
+  // A fake "imap" whose socket data handler throws exactly like the real parser does on a partial server answer.
+  function FakeImap() {
+    EventEmitter.call(this);
+    this.connect = function () {
+      var self = this, sock = new EventEmitter();
+      sock.on('data', function () { var x; return x.charAt(0); });                 // TypeError: Cannot read property 'charAt' of undefined
+      setTimeout(function () { sock.emit('data', Buffer.from('* OK')); }, 10);
+    };
+    this.destroy = function () { destroyed++; }; this.end = function () {};
+  }
+  require('util').inherits(FakeImap, EventEmitter);
+  var mb = mailbox.createLive({ require: function (n) { return n === 'imap' ? FakeImap : { simpleParser: function () {} }; } });
+  var inboxSync = require('../src/engine/inboxSync');
+  return mb.baseline({ host: 'h', port: 993, user: 'u', pass: 'p' }).then(function () { assert.fail('should reject'); }, function (e) {
+    assert.strictEqual(e.code, 'IMAP_PROTOCOL'); assert.ok(inboxSync.isTransient(e), 'retried with back-off, not treated as a wrong password');
+    assert.ok(/unexpected response/.test(inboxSync.friendlyError(e)));
+    return new Promise(function (r) { setTimeout(r, 30); });
+  }).then(function () { process.removeListener('uncaughtException', onUncaught); assert.strictEqual(uncaught.length, 0, 'nothing reached uncaughtException'); assert.strictEqual(destroyed, 1, 'connection destroyed'); },
+    function (e) { process.removeListener('uncaughtException', onUncaught); throw e; });
+});
 h.run();

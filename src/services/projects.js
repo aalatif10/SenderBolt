@@ -145,9 +145,12 @@ P.list = function (userId, q) {
   q = q || {};
   var archived = q.archived === '1' || q.archived === 1 || q.archived === true;
   var search = q.q ? String(q.q).trim().slice(0, 100).toLowerCase() : '';
-  return this._load(userId).then(function (L) {
+  var now = this.now();
+  return this._tableData(userId).then(function (D) {
+    var L = D.L, byProject = {};
+    buildRows(D, now, function () { return true; }).forEach(function (c) { (byProject[c.project_id] = byProject[c.project_id] || []).push(c); });
     var rows = L.projects.filter(function (p) { return !!p.archived === archived && (!search || p.name.toLowerCase().indexOf(search) !== -1); })
-      .map(function (p) { var d = describeProject(p, L); delete d.campaigns; return d; });   // list stays light: campaigns come with the detail call
+      .map(function (p) { var d = describeProject(p, L); delete d.campaigns; d.row = aggregateRows(d, byProject[p.id] || []); return d; });   // list stays light: campaigns come with the detail call
     var counts = { active: 0, paused: 0, completed: 0, draft: 0, error: 0, empty: 0 };
     rows.forEach(function (r) { var k = r.status === 'preparing' ? 'draft' : r.status; if (counts[k] !== undefined) counts[k]++; });
     var overall = { projects: rows.length, emailed: 0, replied: 0, bounced: 0, sent: 0 };
@@ -259,14 +262,8 @@ P.campaignTable = function (userId, q) {
   try { return this._campaignTable(userId, q); } catch (e) { return Promise.reject(e); }
 };
 
-P._campaignTable = function (userId, q) {
-  var self = this, now = self.now();
-  q = q || {};
-  var statuses = csv(q.status), senderIds = csv(q.sender_ids).map(Number).filter(function (n) { return n > 0 && Math.floor(n) === n; });
-  statuses.forEach(function (x) { if (TABLE_STATUSES.indexOf(x) === -1) throw bad('status', 'Invalid status filter'); });
-  var needle = q.q ? String(q.q).trim().slice(0, 100).toLowerCase() : '';
-  var projectId = q.project_id === undefined || q.project_id === '' ? null : Number(q.project_id);
-  if (projectId !== null && !(projectId > 0 && Math.floor(projectId) === projectId)) throw bad('project_id', 'Invalid project');
+// Everything the table rows need, loaded once: projects/campaigns (_load) + sender links, emails still to go out, and whether the next email is a first one or a follow-up.
+P._tableData = function (userId) {
   return Promise.all([
     this._load(userId),
     this.db.all('SELECT cs.campaign_id AS cid, cs.sender_id AS sid FROM campaign_senders cs JOIN campaigns c ON c.id = cs.campaign_id WHERE c.user_id = ?', [userId]),
@@ -277,25 +274,75 @@ P._campaignTable = function (userId, q) {
     this.db.all("SELECT c.id AS cid, (SELECT cl.current_step FROM campaign_leads cl WHERE cl.campaign_id = c.id AND cl.status = 'active' AND cl.removed_at IS NULL ORDER BY cl.next_send_at LIMIT 1) AS st FROM campaigns c WHERE c.user_id = ?", [userId]),
     this.db.all('SELECT id, label, email FROM senders WHERE user_id = ? ORDER BY email', [userId])
   ]).then(function (r) {
-    var L = r[0], links = {}, sched = {}, kind = {};
+    var links = {}, sched = {}, kind = {};
     r[1].forEach(function (x) { (links[x.cid] = links[x.cid] || []).push(x.sid); });
     r[2].forEach(function (x) { sched[x.cid] = Math.max(0, Number(x.n) || 0); });
     r[3].forEach(function (x) { if (x.st !== null) kind[x.cid] = x.st > 0 ? 'follow_up' : 'first'; });
-    var rows = [];
-    L.projects.forEach(function (p) {
-      if (projectId !== null ? p.id !== projectId : p.archived) return;   // one project (even an archived one) or every live project
-      (L.mains[p.id] || []).forEach(function (main) {
-        var d = describeCampaign(main, L), leaves = leafIds(main, L.kids);
-        d.project_id = p.id; d.project_name = p.name; d.archived = !!main.archived; d.start_at = main.start_at || null;
-        d.sender_ids = links[main.id] || [];
-        d.scheduled = leaves.reduce(function (n, l) { return n + (sched[l.id] || 0); }, 0);
-        var firstDue = leaves.map(function (l) { var s = L.stats[l.id]; return s && s.next_send_at !== null ? { at: s.next_send_at, k: kind[l.id] } : null; }).filter(Boolean).sort(function (a, b) { return a.at - b.at; })[0];
-        d.next_kind = firstDue ? (firstDue.k || 'first') : null;
-        d.display_status = d.archived ? 'archived' : (d.status === 'active' && d.start_at && d.start_at > now ? 'planned' : d.status);
-        d.next_send_at = (d.display_status === 'active' || d.display_status === 'planned') ? d.next_send_at : null;
-        rows.push(d);
-      });
+    return { L: r[0], links: links, sched: sched, kind: kind, senders: r[4] };
+  });
+};
+
+// One row per campaign (its OWN numbers). keep(project) chooses which projects to include.
+function buildRows(D, now, keep) {
+  var L = D.L, rows = [];
+  L.projects.forEach(function (p) {
+    if (!keep(p)) return;
+    (L.mains[p.id] || []).forEach(function (main) {
+      var d = describeCampaign(main, L), leaves = leafIds(main, L.kids);
+      d.project_id = p.id; d.project_name = p.name; d.archived = !!main.archived; d.start_at = main.start_at || null;
+      d.sender_ids = D.links[main.id] || [];
+      d.scheduled = leaves.reduce(function (n, l) { return n + (D.sched[l.id] || 0); }, 0);
+      var firstDue = leaves.map(function (l) { var st = L.stats[l.id]; return st && st.next_send_at !== null ? { at: st.next_send_at, k: D.kind[l.id] } : null; }).filter(Boolean).sort(function (a, b) { return a.at - b.at; })[0];
+      d.next_kind = firstDue ? (firstDue.k || 'first') : null;
+      d.display_status = d.archived ? 'archived' : (d.status === 'active' && d.start_at && d.start_at > now ? 'planned' : d.status);
+      d.next_send_at = (d.display_status === 'active' || d.display_status === 'planned') ? d.next_send_at : null;
+      rows.push(d);
     });
+  });
+  return rows;
+}
+
+// The PROJECT row: the same columns as a campaign row, but every number is the total over the project's campaigns (archived campaigns are left out,
+// exactly like in the expanded list). With a single campaign the result equals that campaign's row.
+function aggregateRows(project, rows) {
+  rows = rows.filter(function (c) { return !c.archived; });
+  if (!rows.length) return null;
+  var a = { scheduled: 0, sent: 0, leads: 0, metrics: { emailed: 0, opened: 0, replied: 0, interested: 0 }, stats: { replied: 0, completed: 0, bounced: 0, unsubscribed: 0 }, step_progress: [], next_send_at: null, next_kind: null, start_at: null, track_opens: 0, campaign_count: rows.length };
+  rows.forEach(function (c) {
+    a.scheduled += c.scheduled; a.sent += c.sent; a.leads += c.leads; if (c.track_opens) a.track_opens = 1;
+    ['emailed', 'opened', 'replied', 'interested'].forEach(function (k) { a.metrics[k] += (c.metrics && c.metrics[k]) || 0; });
+    ['replied', 'completed', 'bounced', 'unsubscribed'].forEach(function (k) { a.stats[k] += (c.stats && c.stats[k]) || 0; });
+    (c.step_progress || []).forEach(function (st, k) {
+      var o = a.step_progress[k] || (a.step_progress[k] = { step: k, subject: '', delay_days: st.delay_days, sent: 0, capacity: 0, pct: 0 });
+      o.sent += st.sent; o.capacity += st.capacity;
+    });
+    if (c.next_send_at !== null && c.next_send_at !== undefined && (a.next_send_at === null || c.next_send_at < a.next_send_at)) { a.next_send_at = c.next_send_at; a.next_kind = c.next_kind; }
+    if (c.display_status === 'planned' && c.start_at && (a.start_at === null || c.start_at < a.start_at)) a.start_at = c.start_at;
+  });
+  a.step_progress.forEach(function (o) { o.pct = o.capacity ? Math.round(o.sent / o.capacity * 1000) / 10 : 0; });
+  var done = a.stats.replied + a.stats.completed + a.stats.bounced + a.stats.unsubscribed;
+  a.progress_pct = a.leads ? Math.round(done / a.leads * 1000) / 10 : 0;
+  var anyActive = rows.some(function (c) { return c.display_status === 'active'; });
+  a.display_status = project.status === 'active' && !anyActive && rows.some(function (c) { return c.display_status === 'planned'; }) ? 'planned' : project.status;
+  if (a.display_status !== 'active' && a.display_status !== 'planned') { a.next_send_at = null; a.next_kind = null; }
+  return a;
+}
+
+P.campaignTable = function (userId, q) {
+  try { return this._campaignTable(userId, q); } catch (e) { return Promise.reject(e); }
+};
+
+P._campaignTable = function (userId, q) {
+  var self = this, now = self.now();
+  q = q || {};
+  var statuses = csv(q.status), senderIds = csv(q.sender_ids).map(Number).filter(function (n) { return n > 0 && Math.floor(n) === n; });
+  statuses.forEach(function (x) { if (TABLE_STATUSES.indexOf(x) === -1) throw bad('status', 'Invalid status filter'); });
+  var needle = q.q ? String(q.q).trim().slice(0, 100).toLowerCase() : '';
+  var projectId = q.project_id === undefined || q.project_id === '' ? null : Number(q.project_id);
+  if (projectId !== null && !(projectId > 0 && Math.floor(projectId) === projectId)) throw bad('project_id', 'Invalid project');
+  return this._tableData(userId).then(function (D) {
+    // one project (even an archived one) or every live project
+    var rows = buildRows(D, now, function (p) { return projectId !== null ? p.id === projectId : !p.archived; });
     var base = rows.filter(function (c) {
       return (!needle || c.name.toLowerCase().indexOf(needle) !== -1) && (!senderIds.length || c.sender_ids.some(function (id) { return senderIds.indexOf(id) !== -1; }));
     });
@@ -304,7 +351,7 @@ P._campaignTable = function (userId, q) {
     // Archived campaigns only show when asked for, so the default view stays clean.
     var shown = base.filter(function (c) { return statuses.length ? statuses.indexOf(c.display_status) !== -1 : c.display_status !== 'archived'; });
     shown.sort(function (a, b) { return b.created_at - a.created_at || b.id - a.id; });
-    return { items: shown.slice(0, 500), total: shown.length, counts: counts, senders: r[4], statuses: TABLE_STATUSES };
+    return { items: shown.slice(0, 500), total: shown.length, counts: counts, senders: D.senders, statuses: TABLE_STATUSES };
   });
 };
 

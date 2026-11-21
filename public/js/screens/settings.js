@@ -106,7 +106,7 @@
     SB.api.get('/api/senders').then(function (r) {
       if (dead) return;
       SB.mount(accBox, r.items.length ? h('div', { class: 'st-list' }, r.items.map(function (x) {
-        return h('div', { class: 'st-row' }, h('div', null, h('b', null, ui.email(x.label || x.email)), x.status !== 'active' ? h('span', { class: 'tag tag-sys', text: x.status === 'paused' ? 'Paused' : 'Disabled' }) : null,
+        return h('div', { class: 'st-row' }, h('div', null, h('b', null, ui.email(x.label || x.email)), x.status !== 'active' ? h('span', { class: 'pill st-pill ' + (x.status === 'paused' ? 'pill-halted' : 'pill-draft'), tip: x.status === 'paused' ? 'Nothing is sent from this account until you resume it.' : 'This account is switched off.', text: x.status === 'paused' ? 'Paused' : 'Disabled' }) : null,
           h('div', { class: 'small faint' }, ui.email(x.email), ' \u00b7 up to ' + fmt.num(x.daily_limit) + ' emails a day' + (x.health_score !== undefined && x.health_score !== null ? ' \u00b7 health ' + x.health_score + '/100' : ''))));
       })) : h('p', { class: 'muted', text: 'No sending accounts yet.' }));
     }, function (e) { if (!dead) SB.mount(accBox, h('div', { class: 'form-error', text: SB.api.friendly(e) })); });

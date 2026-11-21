@@ -113,7 +113,7 @@
   SB.screens.unsubscriptions = function () {
     var root = h('div');
     var dl = h('button', { class: 'btn', type: 'button', tip: 'Download the addresses in the current tab as a CSV file.' }, SB.icon('download'), 'Download CSV');
-    var panel = SB.suppress.panel({ tabs: [['manual', 'Added by you'], ['all', 'All'], ['unsubscribed', 'Unsubscribed'], ['bounced', 'Bounced'], ['complaint', 'Complaints']],
+    var panel = SB.suppress.panel({ tabs: [['all', 'All'], ['manual', 'Added by you'], ['unsubscribed', 'Unsubscribed'], ['bounced', 'Bounced'], ['complaint', 'Complaints']],
       empty: { title: 'Nobody has unsubscribed or bounced', text: 'Addresses that opt out or bounce are blocked automatically and listed here. Addresses you add yourself appear under "Added by you".' } });
     root.appendChild(head('Unsubscriptions', 'People who will never be emailed again, whatever campaign they are in.', dl));
     root.appendChild(panel.el);

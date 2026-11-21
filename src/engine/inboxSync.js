@@ -28,13 +28,14 @@ var RETRY_LOGIN_MS = 15 * 60000;    // a rejected login will not fix itself quic
 // A time-out or network blip says nothing about the account itself: it is retried quietly and never blocks sending.
 function isTransient(e) {
   var code = e && e.code ? String(e.code) : '', src = e && e.source ? String(e.source) : '', msg = String((e && e.message) || '');
-  return !!NET[code] || /^timeout/.test(src) || /timed? ?out|socket hang up|ECONN|getaddrinfo/i.test(msg);
+  return !!NET[code] || code === 'IMAP_PROTOCOL' || src === 'protocol' || /^timeout/.test(src) || /timed? ?out|socket hang up|ECONN|getaddrinfo/i.test(msg);
 }
 
 function friendlyError(e) {
   var msg = String((e && e.message) || ''), code = e && e.code ? String(e.code) : '';
   if (/need the .*packages/i.test(msg)) return msg.slice(0, 200);
   // Time-outs first: "Timed out while authenticating with server" contains the word "authenticating" but is NOT a rejected login.
+  if (code === 'IMAP_PROTOCOL' || (e && e.source === 'protocol')) return 'The mail server sent an unexpected response. SenderBolt will retry automatically.';
   if (isTransient(e)) return 'The mail server did not answer in time. SenderBolt will retry automatically.';
   if (/auth|login|credential|invalid|password/i.test(msg + ' ' + (e && e.textCode || ''))) return 'IMAP login failed. Check the App Password and that IMAP is enabled for this account.';
   return 'Could not read the mailbox' + (code ? ' (' + code + ')' : '') + '. Will retry.';

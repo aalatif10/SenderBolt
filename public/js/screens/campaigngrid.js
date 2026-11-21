@@ -29,6 +29,7 @@
     if (ds === 'preparing') return h('span', { class: 'muted', text: 'Setting up…' });
     if (ds === 'error') return h('span', { class: 'bad-text', tip: 'Open the campaign to see what is blocking it.', text: 'Blocked, needs your attention' });
     if (ds === 'archived') return h('span', { class: 'muted', text: 'Archived' });
+    if (ds === 'empty') return h('span', { class: 'muted', text: 'No campaigns yet' });
     return h('span', { class: 'faint', text: '—' });
   }
 
@@ -72,21 +73,12 @@
     return h('td', { class: 'ct-prog', tip: fmt.num(done) + ' of ' + fmt.num(c.leads) + ' people finished. ' + SB.S.metric.progress }, ui.progress(c.progress_pct), h('div', { class: 'small faint', text: fmt.pct(c.progress_pct) }));
   }
 
-  function row(c, o) {
-    var m = c.metrics || {}, tracked = !!c.track_opens, emailed = m.emailed || 0, sel = o.select;
+  // The cells shared by a campaign row and a project row: Status, Current state, Created, Progression, Performance (5), so both read the same way.
+  // c = a campaign row, or a project's aggregated row (same field names).
+  function dataCells(c, o) {
+    var m = c.metrics || {}, tracked = !!c.track_opens, emailed = m.emailed || 0;
     function pctOf(n) { return emailed ? ' · ' + (Math.round(n / emailed * 1000) / 10) + '%' : ''; }
-    var cb = null;
-    if (sel) {
-      cb = h('input', { type: 'checkbox', 'aria-label': 'Select campaign ' + c.name }); cb.checked = !!sel.sel[c.id];
-      cb.addEventListener('click', function (e) { e.stopPropagation(); });
-      cb.addEventListener('change', function () { if (cb.checked) sel.sel[c.id] = c.name; else delete sel.sel[c.id]; sel.onChange(); });
-    }
-    var tr = h('tr', { class: 'row-link' + (c.archived ? ' is-archived' : '') + (cb && cb.checked ? ' selected' : ''), tabindex: 0, on: { click: function () { location.hash = '#/campaign/' + c.id; }, keydown: function (e) { if (e.key === 'Enter' && e.target === tr) location.hash = '#/campaign/' + c.id; } } },
-      cb ? h('td', { class: 'row-check' }, cb) : null,
-      h('td', { class: 'ct-name' }, h('b', { class: 'ct-title', tip: c.name, text: c.name }),
-        h('div', { class: 'small faint' },
-          o.showProject ? h('a', { href: '#/project/' + c.project_id, tip: 'Open the project this campaign belongs to.', on: { click: function (e) { e.stopPropagation(); } }, text: c.project_name }) : null,
-          o.showProject ? ' · ' : '', c.batches ? c.batches + ' batches · ' : '', fmt.num(c.leads) + (c.leads === 1 ? ' person' : ' people'))),
+    return [
       h('td', null, pill(c.display_status)),
       h('td', { class: 'ct-state' }, currentState(c)),
       h('td', { class: 'nowrap', tip: fmt.tip(c.created_at), text: fmt.age(c.created_at) }),
@@ -95,30 +87,52 @@
       h('td', { class: 'num', tip: SB.S.perf.sent, text: fmt.num(c.sent) }),
       h('td', { class: 'num', tip: tracked ? SB.S.perf.opened : 'Open tracking is off for this campaign.' }, tracked ? h('span', null, fmt.num(m.opened || 0), h('span', { class: 'small faint', text: pctOf(m.opened || 0) })) : h('span', { class: 'faint', text: 'Off' })),
       h('td', { class: 'num', tip: SB.S.perf.replied }, fmt.num(m.replied || 0), h('span', { class: 'small faint', text: pctOf(m.replied || 0) })),
-      h('td', { class: 'num', tip: SB.S.perf.successful }, fmt.num(m.interested || 0), h('span', { class: 'small faint', text: pctOf(m.interested || 0) })),
-      h('td', { class: 'ct-act' }, menuFor(c, o.onChange)));
+      h('td', { class: 'num', tip: SB.S.perf.successful }, fmt.num(m.interested || 0), h('span', { class: 'small faint', text: pctOf(m.interested || 0) }))
+    ];
+  }
+
+  function row(c, o) {
+    var sel = o.select, cb = null;
+    if (sel) {
+      cb = h('input', { type: 'checkbox', 'aria-label': 'Select campaign ' + c.name }); cb.checked = !!sel.sel[c.id];
+      cb.addEventListener('click', function (e) { e.stopPropagation(); });
+      cb.addEventListener('change', function () { if (cb.checked) sel.sel[c.id] = c.name; else delete sel.sel[c.id]; sel.onChange(); });
+    }
+    var tr = h('tr', { class: 'row-link' + (c.archived ? ' is-archived' : '') + (cb && cb.checked ? ' selected' : '') + (o.rowClass ? ' ' + o.rowClass : ''), tabindex: 0, on: { click: function () { location.hash = '#/campaign/' + c.id; }, keydown: function (e) { if (e.key === 'Enter' && e.target === tr) location.hash = '#/campaign/' + c.id; } } },
+      cb ? h('td', { class: 'row-check' }, cb) : (o.lead ? h('td', { class: 'row-check' }) : null),
+      h('td', { class: 'ct-name' }, h('b', { class: 'ct-title', tip: c.name, text: c.name }),
+        h('div', { class: 'small faint' },
+          o.showProject ? h('a', { href: '#/project/' + c.project_id, tip: 'Open the project this campaign belongs to.', on: { click: function (e) { e.stopPropagation(); } }, text: c.project_name }) : null,
+          o.showProject ? ' · ' : '', c.batches ? c.batches + ' batches · ' : '', fmt.num(c.leads) + (c.leads === 1 ? ' person' : ' people'))));
+    dataCells(c, o).forEach(function (td) { tr.appendChild(td); });
+    tr.appendChild(h('td', { class: 'ct-act' }, menuFor(c, o.onChange)));
     return tr;
+  }
+
+  // Header: group row (Performance) + column row. lead = 1 when a leading checkbox / chevron column exists.
+  function head(o, allCb) {
+    function th(label, tipText, cls) { return h('th', { class: cls || null, tip: tipText, text: label }); }
+    var lead = 5 + (o.select || o.lead ? 1 : 0);
+    return h('thead', null,
+      h('tr', { class: 'ct-group' }, h('th', { colspan: lead }), h('th', { colspan: 5, class: 'ct-perf-h', tip: 'Results so far. Hover a number for what it counts.' }, 'Performance'), h('th')),
+      h('tr', null, o.select || o.lead ? h('th', { class: 'row-check' }, allCb || null) : null,
+        th(o.firstHead || 'Campaign', o.firstTip || ('The campaign name' + (o.showProject ? ' and the project it belongs to.' : '.'))), th('Status', 'Where it is now.'), th('Current state', 'What happens next, in days, hours and minutes.'),
+        th('Created', 'How long ago it was created. Hover a value for the exact date.'),
+        th('Progression', o.progress === 'steps' ? SB.S.steps.segTip + ' ' + SB.S.metric.progress : SB.S.metric.progress),
+        th('Scheduled', SB.S.perf.scheduled, 'num'), th('Sent', SB.S.perf.sent, 'num'), th('Opened', SB.S.perf.opened, 'num'), th('Replied', SB.S.perf.replied, 'num'), th('Successful', SB.S.perf.successful, 'num'),
+        h('th', { class: 'ct-act', 'aria-label': 'Actions' })));
   }
 
   function table(items, o) {
     o = o || {}; o.progress = o.progress || 'bar';
-    function th(label, tipText, cls) { return h('th', { class: cls || null, tip: tipText, text: label }); }
-    var lead = 5 + (o.select ? 1 : 0), allCb = null;
+    var allCb = null;
     if (o.select) {
       allCb = h('input', { type: 'checkbox', 'aria-label': 'Select all shown campaigns' }); allCb.checked = items.length > 0 && items.every(function (c) { return !!o.select.sel[c.id]; });
       allCb.addEventListener('change', function () { items.forEach(function (c) { if (allCb.checked) o.select.sel[c.id] = c.name; else delete o.select.sel[c.id]; }); o.select.onChange(); });
     }
     return h('div', { class: 'table-wrap' + (o.flush ? '' : ' card table-card ct-wrap') }, h('table', { class: 'table ct-table' + (o.progress === 'steps' ? ' ct-steps-table' : '') },
-      h('thead', null,
-        h('tr', { class: 'ct-group' }, h('th', { colspan: lead }), h('th', { colspan: 5, class: 'ct-perf-h', tip: 'Results of this campaign so far. Hover a number for what it counts.' }, 'Performance'), h('th')),
-        h('tr', null, o.select ? h('th', { class: 'row-check' }, allCb) : null,
-          th('Campaign', 'The campaign name' + (o.showProject ? ' and the project it belongs to.' : '.')), th('Status', 'Where the campaign is now.'), th('Current state', 'What happens next, in days, hours and minutes.'),
-          th('Created', 'How long ago it was created. Hover a value for the exact date.'),
-          th('Progression', o.progress === 'steps' ? SB.S.steps.segTip + ' ' + SB.S.metric.progress : SB.S.metric.progress),
-          th('Scheduled', SB.S.perf.scheduled, 'num'), th('Sent', SB.S.perf.sent, 'num'), th('Opened', SB.S.perf.opened, 'num'), th('Replied', SB.S.perf.replied, 'num'), th('Successful', SB.S.perf.successful, 'num'),
-          h('th', { class: 'ct-act', 'aria-label': 'Actions' }))),
-      h('tbody', null, items.map(function (c) { return row(c, o); }))));
+      head(o, allCb), h('tbody', null, items.map(function (c) { return row(c, o); }))));
   }
 
-  SB.campaignGrid = { table: table, pill: pill, currentState: currentState };
+  SB.campaignGrid = { table: table, row: row, head: head, dataCells: dataCells, pill: pill, currentState: currentState };
 })();

@@ -13,6 +13,7 @@ SB.S = {
   // Campaigns table: the status names used by the filter and the pills there (Hunter-style), with plain-language hover text.
   tableStatus: {
     active: { label: 'Active', tip: 'Emails are going out on schedule.' },
+    empty: { label: 'No campaigns', tip: 'This project has no campaigns yet.' },
     archived: { label: 'Archived', tip: 'Hidden from the default view by you. Results are kept; restore it any time.' },
     preparing: { label: 'Preparing', tip: 'Being set up. It will start by itself in a moment.' },
     planned: { label: 'Planned', tip: 'Launched, but waiting for its start date. Nothing is sent before then.' },

@@ -35,7 +35,7 @@
 
   function state(s) {
     if (s.status === 'disabled') return { key: 'draft', label: 'Disabled', tip: 'This account is switched off and will never be used.' };
-    if (s.status === 'paused') return { key: 'paused', label: 'Paused', tip: s.last_error ? 'Paused automatically: ' + s.last_error : 'Nothing is sent from this account until you resume it.' };
+    if (s.status === 'paused') return { key: 'halted', label: 'Paused', tip: s.last_error ? 'Paused automatically: ' + s.last_error : 'Nothing is sent from this account until you resume it.' };
     if (s.health_score < (s.health_floor || 50) && !isForced(s)) return { key: 'error', label: 'Needs attention', tip: 'The health score (' + s.health_score + ') is below this account\u2019s protection threshold (' + (s.health_floor || 50) + '), so it is not used until it recovers. You can override this with Force continue in its settings.' };
     if (s.warmup_enabled && s.limit_today < s.daily_limit) return { key: 'active', label: s.warmup_slowed ? 'Warming up (slowed)' : 'Warming up', tip: 'Warm-up day ' + s.warmup_day + ' of about ' + s.warmup_reaches_day + '. Today: up to ' + s.limit_today + ' emails, growing each day the account is really used.' + (s.warmup_slowed ? ' Growth is slowed because of recent bounces.' : '') };
     if (isForced(s)) return { key: 'active', label: 'Active (forced)', tip: 'Force continue is on until ' + fmt.dateTime(s.force_until) + ': automatic health pauses are skipped for this account.' };
@@ -193,7 +193,7 @@
   }
 
   // ---- settings slide-over -----------------------------------------------------------------
-  function settingsPanel(s, onDone) {
+  function settingsPanel(s, onDone, rt) {
     var p = ui.panel(s.email), err = h('div', { class: 'form-error hidden', role: 'alert' });
     var ph = p.body.parentNode && p.body.parentNode.querySelector('.panel-head h2');
     if (ph) { while (ph.firstChild) ph.removeChild(ph.firstChild); ph.appendChild(ui.email(s.email)); }
@@ -233,8 +233,8 @@
       forceBtn.onclick = function () {
         function go() {
           forceBtn.disabled = true;
-          return SB.api.patch('/api/senders/' + s.id, { force_continue: !on }).then(function (r) { ui.toast(!on ? 'Force continue is on for 72 hours' : 'Force continue turned off'); onDone(); on = r.sender.force_active; paintForce(on, r.sender.force_until); },
-            function (e) { ui.toast(SB.api.friendly(e), true); }).then(function () { forceBtn.disabled = false; });
+          return SB.api.patch('/api/senders/' + s.id, { force_continue: !on }).then(function (r) { ui.toast(!on ? 'Force continue is on for 72 hours' : 'Force continue turned off'); onDone(); p.close(); settingsPanel(r.sender, onDone, rt); },
+            function (e) { ui.toast(SB.api.friendly(e), true); forceBtn.disabled = false; });
         }
         if (on) return go();
         ui.confirm({ title: (s.status === 'paused' ? 'Force start' : 'Force continue') + ' ' + s.email + '?', message: 'Automatic pauses for low health or repeated failures will be skipped for 72 hours. Only do this if you accept the risk to this account\u2019s reputation.', confirmLabel: s.status === 'paused' ? 'Force start' : 'Force continue', danger: true, onConfirm: go });
@@ -243,14 +243,13 @@
     forceBox.appendChild(h('div', { class: 'small muted' }, forceTxt)); forceBox.appendChild(h('div', null, forceBtn));
     paintForce(!!s.force_active, s.force_until);
 
-    var usage = h('div', { class: 'usage' },
-      h('div', { class: 'usage-top' }, h('span', { text: 'Today' }), h('b', { text: fmt.num(s.sent_today) + ' of ' + fmt.num(s.limit_today) })), ui.progress(s.limit_today ? s.sent_today / s.limit_today * 100 : 0));
-
     var save = h('button', { class: 'btn btn-primary', type: 'button' }, 'Save changes');
     save.addEventListener('click', function () {
       err.classList.add('hidden');
       var lim = num(limit);
       if (!isFinite(lim) || lim < 1 || lim > CAP) { err.textContent = 'Emails per day must be between 1 and ' + CAP + '.'; err.classList.remove('hidden'); return; }
+      if (mode.value === 'random' && num(dmin) > num(dmax)) { err.textContent = 'The shortest wait cannot be longer than the longest wait.'; err.classList.remove('hidden'); return; }
+      if (!s.has_password && !newPass.value) { err.textContent = 'Add an App Password so this account can send.'; err.classList.remove('hidden'); return; }
       var body = { reply_detection: replyOn.checked, protection_level: level, from_name: name.value, daily_limit: lim, warmup_enabled: warm.box.checked, warmup_pace: warm.pace.value, delay_mode: mode.value, signature_html: textToSig(sig.value), tracking_domain: track.value.trim() };
       if (mode.value === 'random') { body.delay_min_sec = num(dmin); body.delay_max_sec = num(dmax); } else body.delay_fixed_sec = num(dfix);
       if (newPass.value) body.password = newPass.value;
@@ -275,7 +274,7 @@
     var where = [s.provider === 'gmail' ? 'Gmail' : 'Custom SMTP', s.smtp_host ? 'SMTP ' + s.smtp_host + (s.smtp_port ? ':' + s.smtp_port : '') : null, s.imap_host ? 'IMAP ' + s.imap_host : null].filter(Boolean).join(' · ');
 
     function section(title, desc, kids) {
-      return h('section', { class: 'set-sec' }, h('h3', { class: 'sub-h', text: title }), desc ? h('p', { class: 'small muted sec-desc', text: desc }) : null, kids);
+      return h('section', { class: 'sd-sec card' }, h('div', { class: 'sd-sec-h' }, h('h3', { text: title }), desc ? h('p', { class: 'small muted', text: desc }) : null), kids);
     }
     // Risk: one plain verdict and the reasons behind it.
     var rk = s.risk || { level: 'low', factors: [] }, rm = RISK[rk.level] || RISK.low;
@@ -296,27 +295,34 @@
         h('li', { text: '+' + r.reply + ' when a real reply arrives' }),
         h('li', { text: 'At most +' + r.day_max + ' a day, never above 100. A serious problem pauses healing that day.' })));
 
-    p.body.appendChild(h('div', { class: 'panel-pad' }, err, usage,
-      h('div', { class: 'actions pad-b' }, toggle),
-      conn,
+    var hi = healthInfo(s.health_score), st = state(s), pct = s.limit_today ? Math.min(100, s.sent_today / s.limit_today * 100) : 0;
+    var summary = h('div', { class: 'sd-summary card' },
+      h('div', { class: 'sd-sum-top' }, pill(st), h('div', { class: 'small muted', text: nextLine(s) })),
+      h('div', { class: 'sd-stats' },
+        h('div', { tip: 'Emails sent today out of what this account may send today (warm-up limits included).' }, h('span', { class: 'small muted', text: 'Sent today' }), h('b', { text: fmt.num(s.sent_today) + ' / ' + fmt.num(s.limit_today) }), ui.progress(pct)),
+        h('div', { tip: HEALTH_TIP }, h('span', { class: 'small muted', text: 'Health' }), h('b', { text: s.health_score + ' / 100' }), h('span', { class: 'chip chip-' + hi.cls, text: hi.label })),
+        h('div', { tip: 'Replies and bounces are read from this account\u2019s inbox.' }, h('span', { class: 'small muted', text: 'Replies' }), trackingChip(rt || 'pending'))),
+      h('div', { class: 'actions' }, toggle));
+
+    p.body.appendChild(h('div', { class: 'panel-pad sd-wrap' }, err, summary, conn,
       section('Connection & credentials', where, h('div', null,
-        h('div', { class: 'set-row' }, h('div', { class: 'set-txt' }, h('label', { for: 'st-reply', text: 'Replies detected' }, ' ', ui.info('SenderBolt reads this account’s inbox to notice replies. Each reply stops follow-ups for THAT person only; everyone else in the campaign keeps going.')),
+        h('div', { class: 'set-row' }, h('div', { class: 'set-txt' }, h('label', { for: 'st-reply', text: 'Replies detected' }, ' ', ui.info('SenderBolt reads this account\u2019s inbox to notice replies. Each reply stops follow-ups for THAT person only; everyone else in the campaign keeps going.')),
           h('div', { class: 'hint', text: 'Stop follow-ups for a person who replies. Turn off to keep following up regardless (replies still reach your Inbox). "Stop campaign" requests and bounces are always respected.' })), replyOn),
         field('Replace App Password', newPass, 'Use this if Google revoked the old one. The current one is never shown.', 'st-pass'),
         h('div', { class: 'actions' }, testBtn))),
-      section('Daily limit & warm-up', 'How many emails this account may send per day.', h('div', null,
+      section('Daily limit & warm-up', 'How many emails this account may send per day, and how fast it ramps up.', h('div', null,
         field('Emails per day', limit, 'Maximum ' + CAP + '. Gmail allows about 500 per day, so ' + CAP + ' keeps a safe 100-email buffer and protects your account.', 'st-limit'), warm.node)),
       section('Sending pace', 'The pause between two emails from this account.', h('div', null,
         field('Pause between emails', mode, 'Random pauses look like a human. Very short pauses can trigger spam filters.', 'st-mode'), randBox, fixBox)),
       section('Protection & risk', 'When SenderBolt stops this account on its own, and what it is watching.', h('div', null, riskBox,
-        field('Protection level', levelBox, 'How early SenderBolt pauses this account to protect its reputation. Based on the account’s health score and failed sends.', 'st-level'),
+        field('Protection level', levelBox, 'How early SenderBolt pauses this account to protect its reputation. Based on the account\u2019s health score and failed sends.', 'st-level'),
         forceBox)),
       section('Health healing', 'A damaged score recovers gradually: calm days, clean sending and replies earn points back.', healBox),
-      section('Identity & signature', null, h('div', null,
-        field('Name shown to recipients', name, null, 'st-name'),
+      section('Identity & signature', 'What recipients see.', h('div', null,
+        field('Name shown to recipients', name, 'People see this as the sender name. Use a real person\u2019s name for best results.', 'st-name'),
         field('Added to the end of every email', sig, 'Plain text. Line breaks are kept.', 'st-sig'))),
       section('Advanced', null, field('Tracking domain', track, 'Only needed if you use a custom domain for unsubscribe links.', 'st-track')),
-      h('div', { class: 'panel-foot' }, save, del)));
+      h('div', { class: 'sd-foot' }, h('button', { class: 'btn btn-primary', type: 'button', on: { click: function () { save.click(); } } }, 'Save changes'), del)));
   }
 
   // ---- quick actions (one click, right on the card) -------------------------------------------------
@@ -336,7 +342,7 @@
       return SB.api.patch('/api/senders/' + s.id, { force_continue: true }).then(function () { ui.toast('Force continue is on for 72 hours'); onDone(); close(); }, function (e) { ui.toast(SB.api.friendly(e), true); });
     });
     act('Test connection', function () { close(); return SB.api.post('/api/senders/' + s.id + '/test', {}).then(function (r) { showTest(s, r); onDone(); }, function (e) { ui.toast(SB.api.friendly(e), true); }); });
-    act('Open settings', function () { close(); settingsPanel(s, onDone); });
+    act('Open settings', function () { close(); settingsPanel(s, onDone, rt); });
     body.appendChild(acts);
     close = ui.modal({ title: 'This account needs attention', body: body, actions: [{ label: 'Close' }] });
   }
@@ -348,7 +354,7 @@
     var testBtn = h('button', { class: 'btn btn-sm', type: 'button', tip: 'Logs in to this account right now to check that sending and reply detection work.' }, 'Test connection');
     testBtn.addEventListener('click', function () { runTest(s, testBtn, onDone); });
     var setBtn = h('button', { class: 'btn btn-sm', type: 'button' }, 'Settings');
-    setBtn.addEventListener('click', function () { settingsPanel(s, onDone); });
+    setBtn.addEventListener('click', function () { settingsPanel(s, onDone, rt); });
     // Pause / Resume in one click (no dialog: both are instantly reversible and change nothing about the people in campaigns).
     var quick = [];
     if (s.status === 'active') {

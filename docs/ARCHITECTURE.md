@@ -1,4 +1,4 @@
-# SenderBolt - Architecture Report (updated through v1.9.1)
+# SenderBolt - Architecture Report (updated through v1.9.2)
 
 Target runtime: **Node.js 12.22.x on Windows 7 (64-bit)**. Code is written in ES2018-style JavaScript
 (no `?.`, `??`, or other post-Node-12 syntax) with promise chains.
@@ -407,3 +407,17 @@ Browser check done for this release: the app shell and sign-in screen load in he
 | `src/services/projects.js` | `campaignTable` accepts `project_id` (works for archived projects too). |
 | `src/services/inbox.js` | `status` filter values: `successful`, `not_successful`, `interested`, `more_info`, `not_interested`, `neutral` (untagged = neutral). Campaign-state values are rejected with 400. |
 | `test/v190.js` | Adds the inbox status-filter test. |
+
+
+## v1.9.2 - IMAP crash guard, Unsubscriptions tabs, sender settings, project aggregate rows
+
+| File | Role |
+|---|---|
+| `src/engine/mailbox.js` | Every IMAP operation runs in its own `domain`. A throw inside the `imap` socket parser (for example "Cannot read property 'charAt' of undefined") becomes a rejected `IMAP_PROTOCOL` error, the connection is destroyed and nothing reaches `uncaughtException`. |
+| `src/engine/inboxSync.js` | `IMAP_PROTOCOL` counts as transient (1, 2, 4, 5 min back-off) with a plain message. |
+| `src/services/projects.js` | `_tableData` loads once; `buildRows` makes one row per campaign (own numbers); `aggregateRows` makes the project row (totals over non-archived campaigns). `GET /api/projects` items carry `row`. |
+| `public/js/screens/campaigngrid.js` | `dataCells`, `row`, `head`, `table`: one set of columns for project and campaign rows. |
+| `public/js/screens/home.js` | One table: project rows (aggregate) with campaign rows (own) underneath, project actions menu. |
+| `public/js/screens/senders.js`, `public/css/app.css` | Card-based Settings panel (`.sd-*`), `pill-halted` (red paused sender). |
+| `public/js/screens/hub.js`, `settings.js` | Tab order (All first); red Paused badge. |
+| `test/mailbox.js`, `test/v190.js` | Parser-throw test; aggregate-vs-own-numbers test. |

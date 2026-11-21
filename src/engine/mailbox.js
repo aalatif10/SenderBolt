@@ -10,6 +10,8 @@
 //
 // Uses the "imap" and "mailparser" packages (see `npm run doctor` if they fail to load).
 
+var domain = require('domain');
+
 var BATCH = 100;
 var OP_TIMEOUT_MS = 120000;
 
@@ -32,11 +34,30 @@ function createLive(opts) {
   function parseStream(stream) {
     return Promise.resolve().then(function () { return parser.simpleParser(stream); });   // sync throws become rejections
   }
+  // Every IMAP operation runs inside its own domain. The "imap" package can THROW from inside its socket parser when a server answers
+  // partially or oddly ("Cannot read property 'charAt' of undefined" in _resUntagged). That throw happens in a socket event handler, where no
+  // try/catch can reach it and Node would report an uncaughtException. The domain catches it, so the operation fails cleanly with a retryable
+  // error, the connection is destroyed (never left half-open) and the rest of the server is not affected.
   function withImap(creds, fn) {
+    var ctx = { imap: null, settled: false }, d = domain.create(), failOp = null;
+    return new Promise(function (resolve, reject) {
+      failOp = function (e) { if (ctx.settled) return; ctx.settled = true; reject(e); };
+      d.on('error', function (e) {
+        var err = new Error('The mail server sent an unexpected response');
+        err.code = 'IMAP_PROTOCOL'; err.source = 'protocol'; err.cause = e;
+        try { if (ctx.imap) ctx.imap.destroy(); } catch (x) { /* already closed */ }
+        failOp(err);
+      });
+      d.run(function () {
+        rawWithImap(creds, fn, ctx).then(function (r) { ctx.settled = true; resolve(r); }, failOp);
+      });
+    });
+  }
+  function rawWithImap(creds, fn, ctx) {
     try { libs(); } catch (e) { return Promise.reject(e); }      // always a rejection, never a synchronous throw
     var imap;
     try { imap = new Imap({ user: creds.user, password: creds.pass, host: creds.host, port: creds.port, tls: true,
-      tlsOptions: { servername: creds.host, minVersion: 'TLSv1.2' }, connTimeout: 30000, authTimeout: 30000 }); } catch (e2) { return Promise.reject(e2); }
+      tlsOptions: { servername: creds.host, minVersion: 'TLSv1.2' }, connTimeout: 30000, authTimeout: 30000 }); ctx.imap = imap; } catch (e2) { return Promise.reject(e2); }
     var lateError = null;
     imap.on('error', function (e) { lateError = e; });                   // never let a socket error crash the process
     // Whole-operation guard: a server that accepts the connection and then goes silent must not hang the sync forever.

@@ -57,6 +57,7 @@ Set `SENDERBOLT_PUBLIC_ORIGIN=https://your-domain` to get one-click unsubscribe 
 **Projects and Campaigns (v1.9.1)**
 - The home page is one view, **Projects and Campaigns**: project rows with their totals. Open a project with the arrow to see its campaigns in the shared campaign table: name, status, current state ("Next follow-up in 2h 10m"), created ("11 minutes ago"), progression, performance (Scheduled, Sent, Opened, Replied, Successful; hover each for what it means) and a **⋮** menu (Pause/Resume, Duplicate, Archive/Restore, Rename).
 - In both places the progression is the segmented step bar: Initial email, Follow-up 1 to 5, with each step's state in the dark tooltip.
+- A project row uses the same columns as a campaign row, but its numbers are the **totals over all its campaigns** (with one campaign it equals that campaign). Each campaign row underneath shows only its own numbers. Archived campaigns are left out of the totals.
 - The **Project page** shows the same table with a filter bar (total count, search by name, Status and Email accounts multi-selects) plus checkboxes to move or delete campaigns in bulk.
 
 **Inbox filters (v1.9)**
@@ -117,3 +118,8 @@ Set `SENDERBOLT_PUBLIC_ORIGIN=https://your-domain` to get one-click unsubscribe 
 5. **Recent activity** shows the last actions on your account.
 
 **Safety notes:** your session ends after 2 hours of inactivity; passwords are never stored in the browser; everything the page shows from the server is displayed as plain text.
+
+**Housekeeping (v1.9.2)**
+- Unsubscriptions tabs: All, Added by you, Unsubscribed, Bounced, Complaints. A paused sending account is shown in red on Sending accounts and in Settings.
+- Sender Settings is a set of cards: summary (status, today, health, replies), Connection & credentials, Daily limit & warm-up, Sending pace, Protection & risk, Health healing, Identity & signature, Advanced. Force continue refreshes the whole panel; the pause between emails is checked (shortest <= longest).
+- A malformed answer from a mail server can no longer crash the server: that sync fails cleanly, the connection is closed and it is retried with back-off.

@@ -231,4 +231,34 @@ h.test('Status filter matches the reply tags; successful/not_successful keep the
   });
 });
 
+h.group('project row = aggregate, campaign rows = own numbers');
+h.test('a project row equals its only campaign; with several campaigns it is their sum while each campaign keeps its own numbers', function () {
+  var ProjectsService = require('../src/services/projects').ProjectsService;
+  return setup().then(function (c) {
+    var proj = new ProjectsService(c.db, { campaigns: c.camps, now: function () { return c.clock.t; } });
+    return c.leads.createFolder(c.a, 'F').then(function (f) {
+      return c.leads.importLeads(c.a, f.id, 'paste', 'p1@co1.com\np2@co2.com\np3@co3.com').then(function () {
+        return c.camps.create(c.a, { name: 'Alpha', steps: [{ subject: 'Hi', body_html: '<p>x</p>' }, { subject: 'Again', body_html: '<p>y</p>', delay_days: 3 }], sender_ids: [c.sid], folder_id: f.id });
+      });
+    }).then(function (camp) { c.camp = camp; return c.camps.start(c.a, camp.id); })
+      .then(function () { return Promise.all([proj.list(c.a, {}), proj.campaignTable(c.a, {})]); }).then(function (r) {
+        var p = r[0].items[0], rows = r[1].items;
+        assert.strictEqual(rows.length, 1); assert.ok(p.row, 'project has an aggregated row');
+        ['scheduled', 'sent', 'leads', 'progress_pct', 'display_status', 'next_send_at', 'next_kind'].forEach(function (k) { assert.strictEqual(p.row[k], rows[0][k], k); });
+        assert.deepStrictEqual(p.row.step_progress.map(function (x) { return [x.sent, x.capacity]; }), rows[0].step_progress.map(function (x) { return [x.sent, x.capacity]; }));
+        assert.strictEqual(p.row.scheduled, 6, '3 people x 2 emails');
+        return c.camps.duplicate(c.a, c.camp.id);
+      }).then(function () { return Promise.all([proj.list(c.a, {}), proj.campaignTable(c.a, {})]); }).then(function (r) {
+        var p = r[0].items[0], rows = r[1].items;
+        assert.strictEqual(rows.length, 2); assert.strictEqual(p.row.campaign_count, 2);
+        assert.strictEqual(p.row.scheduled, rows[0].scheduled + rows[1].scheduled); assert.strictEqual(p.row.leads, rows[0].leads + rows[1].leads);
+        assert.strictEqual(p.row.step_progress[0].capacity, rows[0].step_progress[0].capacity + rows[1].step_progress[0].capacity);
+        assert.ok(rows.some(function (x) { return x.scheduled !== p.row.scheduled; }), 'a campaign row keeps its own number, not the project total');
+        return c.camps.setArchived(c.a, c.copyId || rows.filter(function (x) { return x.status === 'draft'; })[0].id, true);
+      }).then(function () { return proj.list(c.a, {}); }).then(function (r) {
+        assert.strictEqual(r.items[0].row.campaign_count, 1, 'archived campaigns are left out of the aggregate, like in the expanded list');
+      });
+  });
+});
+
 h.run();
