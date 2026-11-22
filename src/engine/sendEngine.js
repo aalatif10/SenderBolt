@@ -29,6 +29,7 @@ var capacityToday = require('../services/senders').capacityToday;
 var senderHealth = require('../services/senderHealth');
 var images = require('../services/images');
 var state = require('../services/campaignState');
+var settingsLib = require('../services/settings');
 var stateLib = state;
 
 var DAY = 86400000;
@@ -161,13 +162,27 @@ E._processSender = function (sender, t, openIds, stats) {
   return next();
 };
 
+// The sending priority is a SYSTEM preference (Settings -> System preferences), the same for every campaign of the owner.
+E._priorityFor = function (senderId) {
+  return this.db.get('SELECT us.prefs AS prefs FROM senders s LEFT JOIN user_settings us ON us.user_id = s.user_id WHERE s.id = ?', [senderId]).then(function (r) {
+    return settingsLib.readPrefs(r && r.prefs).priority_mode;
+  }, function () { return 'followups_first'; });
+};
+
 E._nextCandidate = function (senderId, t, openIds) {
+  var self = this;
+  return this._priorityFor(senderId).then(function (mode) { return self._nextCandidateBy(senderId, t, openIds, mode); });
+};
+
+E._nextCandidateBy = function (senderId, t, openIds, mode) {
+  // mode comes from a whitelist (readPrefs), never from user text, so it is safe to pick the ORDER BY expression from it
+  var order = mode === 'new_first' ? '(cl.current_step > 0)' : mode === 'balanced' ? '0' : '(cl.current_step = 0)';
   return this.db.get(
     'SELECT cl.id AS cl_id, cl.campaign_id, cl.lead_id, cl.current_step, c.user_id, c.track_opens, l.email, l.domain, l.first_name, l.last_name, l.company, l.custom ' +
     "FROM campaign_leads cl JOIN leads l ON l.id = cl.lead_id JOIN campaigns c ON c.id = cl.campaign_id " +
     "WHERE cl.sender_id = ? AND cl.status = 'active' AND cl.next_send_at <= ? AND c.status = 'active' AND c.id IN (" + openIds.map(function () { return '?'; }).join(',') + ') ' +
     // Priority: follow-ups before new first emails (default), the opposite, or simply the oldest due first.
-    "ORDER BY CASE c.priority_mode WHEN 'followups_first' THEN (cl.current_step = 0) WHEN 'new_first' THEN (cl.current_step > 0) ELSE 0 END, cl.next_send_at, cl.position, cl.id LIMIT 1", [senderId, t].concat(openIds));
+    'ORDER BY ' + order + ', cl.next_send_at, cl.position, cl.id LIMIT 1', [senderId, t].concat(openIds));
 };
 
 E._stepsFor = function (campaignId) {
@@ -381,30 +396,19 @@ E._onFailure = function (sender, c, steps, claim, err) {
   });
 };
 
-// ---------- campaign-level error status ----------
-// A campaign whose waiting leads all belong to unusable senders shows as 'error' (dashboard "With Error");
-// it returns to 'active' automatically once a sender is usable again.
+// ---------- campaigns are never blocked ----------
+// Protection works on SENDER accounts only: a sender that falls below its health line is paused (see senderHealth), and its people simply
+// wait. The campaign itself keeps its own status. Older versions marked such campaigns 'error'; this puts any of those back to 'active'.
 E._reconcile = function (t) {
   var self = this;
   if (t - this._reconciledAt < RECONCILE_EVERY_MS) return Promise.resolve();
   this._reconciledAt = t;
-  return this.db.all("SELECT id, parent_id, status FROM campaigns WHERE status IN ('active','error') AND EXISTS (SELECT 1 FROM campaign_leads cl WHERE cl.campaign_id = campaigns.id)").then(function (camps) {
+  return this.db.all("SELECT id, parent_id FROM campaigns WHERE status = 'error'").then(function (camps) {
     return camps.reduce(function (p, c) {
       return p.then(function () {
-        return self.db.get("SELECT COUNT(*) AS n, COALESCE(SUM(CASE WHEN s.status = 'active' AND (s.health_score >= CASE s.protection_level WHEN 'low' THEN ? WHEN 'high' THEN ? ELSE ? END OR (s.force_until IS NOT NULL AND s.force_until > ?)) THEN 1 ELSE 0 END), 0) AS usable FROM campaign_leads cl LEFT JOIN senders s ON s.id = cl.sender_id WHERE cl.campaign_id = ? AND cl.status = 'active'", [health.LEVELS.low.pauseBelow, health.LEVELS.high.pauseBelow, health.LEVELS.medium.pauseBelow, t, c.id]).then(function (r) {
-          if (r.n > 0 && Number(r.usable) === 0 && c.status === 'active') {
-            return self.db.get("SELECT s.last_error AS e, s.status AS st FROM campaign_leads cl JOIN senders s ON s.id = cl.sender_id WHERE cl.campaign_id = ? AND cl.status = 'active' LIMIT 1", [c.id]).then(function (why) {
-              var reason = (why && why.e) || 'All sending accounts for this campaign are paused or disabled';
-              return self.db.run("UPDATE campaigns SET status = 'error', last_error = ?, updated_at = ? WHERE id = ?", [reason, t, c.id]);
-            }).then(function () { return c.parent_id ? state.syncMain(self.db, c.parent_id, t) : null; });
-          }
-          if (c.status === 'error' && (r.n === 0 || Number(r.usable) > 0)) {
-            return self.db.run("UPDATE campaigns SET status = 'active', last_error = NULL, updated_at = ? WHERE id = ?", [t, c.id])
-              .then(function () { return state.completeIfDone(self.db, c.id, t); })
-              .then(function () { return c.parent_id ? state.syncMain(self.db, c.parent_id, t) : null; });
-          }
-          return null;
-        });
+        return self.db.run("UPDATE campaigns SET status = 'active', last_error = NULL, updated_at = ? WHERE id = ?", [t, c.id])
+          .then(function () { return state.completeIfDone(self.db, c.id, t); })
+          .then(function () { return c.parent_id ? state.syncMain(self.db, c.parent_id, t) : null; });
       });
     }, Promise.resolve());
   });

@@ -146,7 +146,11 @@ h.group('v1.8 send priority');
 h.test('followups_first / new_first / balanced decide who goes next when both are due', function () {
   function run(mode, expectStep) {
     return setup().then(function (c) {
-      return launch(c, 2, { priority_mode: mode }).then(function () {
+      return launch(c, 2).then(function () {
+        return c.db.run('INSERT OR IGNORE INTO user_settings (user_id, updated_at) VALUES (?, ?)', [c.a, 1]);
+      }).then(function () {
+        return c.db.run('UPDATE user_settings SET prefs = ? WHERE user_id = ?', [JSON.stringify({ priority_mode: mode }), c.a]);
+      }).then(function () {
         return c.db.all('SELECT id FROM campaign_leads ORDER BY id');
       }).then(function (ids) {
         // person 0: follow-up due 1 hour ago (step 1); person 1: first email due 2 hours ago (older)
@@ -160,12 +164,20 @@ h.test('followups_first / new_first / balanced decide who goes next when both ar
   }
   return run('followups_first', 1).then(function () { return run('new_first', 0); }).then(function () { return run('balanced', 0); });
 });
-h.test('priority is validated, defaults to follow-ups first and round-trips in the campaign settings', function () {
+h.test('priority is a system preference: validated, defaults to follow-ups first, and campaigns no longer carry it', function () {
+  var Settings = require('../src/services/settings').SettingsService;
   return setup().then(function (c) {
-    return h.expectReject(launch(c, 1, { priority_mode: 'whenever' }, false), 'validation').then(function () { return launch(c, 1, {}, false); }).then(function (camp) {
-      assert.strictEqual(camp.settings.priority_mode, 'followups_first');
-      return c.camps.update(c.a, camp.id, { priority_mode: 'new_first' });
-    }).then(function (u) { assert.strictEqual(u.settings.priority_mode, 'new_first'); });
+    var svc = new Settings(c.db);
+    return svc.get(c.a).then(function (r) {
+      assert.strictEqual(r.settings.prefs.priority_mode, 'followups_first');
+      return h.expectReject(svc.update(c.a, { prefs: { priority_mode: 'whenever' } }), 'validation');
+    }).then(function () { return svc.update(c.a, { prefs: { priority_mode: 'new_first' } }); })
+      .then(function () { return svc.get(c.a); }).then(function (r) {
+        assert.strictEqual(r.settings.prefs.priority_mode, 'new_first');
+        return launch(c, 1, { priority_mode: 'balanced' }, false);
+      }).then(function (camp) { assert.strictEqual(camp.settings.priority_mode, undefined, 'a campaign has no priority of its own'); });
+  });
+});
   });
 });
 
@@ -293,6 +305,17 @@ h.test('risky filter + counts; bulk-removing bounced people hides them but keeps
       r[2].forEach(function (x) { assert.strictEqual(x.status, 'bounced', 'status untouched'); assert.ok(x.removed_at); });
       assert.strictEqual(r[3].n, 1, 'message history kept'); assert.strictEqual(r[4].stats.bounced, 2, 'campaign analytics keep the bounces');
     });
+  });
+});
+
+h.test('Home health: dismissed alerts are stored per user, validated, separate from reviewed ones', function () {
+  var SettingsService = require('../src/services/settings').SettingsService;
+  return setup().then(function (c) {
+    var svc = new SettingsService(c.db);
+    return h.expectReject(svc.setHealthDismissed(c.a, ['nope']), 'validation').then(function () { return svc.setHealthDismissed(c.a, ['p:1:bounce']); })
+      .then(function (r) { assert.deepStrictEqual(r.health_dismissed, ['p:1:bounce']); return svc.get(c.a); })
+      .then(function (r) { assert.deepStrictEqual(r.settings.health_dismissed, ['p:1:bounce']); assert.deepStrictEqual(r.settings.health_seen, []); return svc.setHealthDismissed(c.a, []); })
+      .then(function () { return svc.get(c.a); }).then(function (r) { assert.deepStrictEqual(r.settings.health_dismissed, []); });
   });
 });
 

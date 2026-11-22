@@ -57,7 +57,6 @@ function validateStep(s, i) {
   return { step_no: i, delay_days: delay, subject: subject, body_html: body };
 }
 
-var PRIORITY_MODES = ['followups_first', 'balanced', 'new_first'];
 var MAX_START_DAYS = 90;
 // Local calendar date (YYYY-MM-DD) of a UTC timestamp in a campaign's own time zone.
 function localDate(ms, offsetMin) { return new Date(ms + offsetMin * 60000).toISOString().slice(0, 10); }
@@ -80,10 +79,6 @@ function validateSettings(input, base, nowMs) {
     var m = v.intIn(input.active_days, 1, 127); if (m === null) throw bad('active_days', 'Choose at least one day to send on');
     o.active_days = m; o.weekdays_only = (m & 65) === 0 ? 1 : 0;      // keep the old flag truthful for older readers
   } else if (has('weekdays_only')) o.active_days = null;
-  if (has('priority_mode')) {
-    if (PRIORITY_MODES.indexOf(input.priority_mode) === -1) throw bad('priority_mode', 'Priority must be one of: ' + PRIORITY_MODES.join(', '));
-    o.priority_mode = input.priority_mode;
-  }
   // Scheduled start: "start_date" is a local calendar day (YYYY-MM-DD) in the campaign's time zone; null / '' means start right away.
   if (has('start_date')) {
     if (input.start_date === null || input.start_date === '') o.start_at = null;
@@ -421,7 +416,7 @@ C.get = function (userId, id) {
         created_at: camp.created_at, updated_at: camp.updated_at, split_seed: camp.split_seed, batch_size: camp.batch_size,
         settings: { window_start_hour: camp.window_start_hour, window_end_hour: camp.window_end_hour, utc_offset_min: camp.utc_offset_min,
           weekdays_only: camp.weekdays_only, active_days: camp.active_days || (camp.weekdays_only ? 62 : 127), stop_on_reply: camp.stop_on_reply, track_opens: camp.track_opens,
-          start_at: camp.start_at || null, start_date: camp.start_at ? localDate(camp.start_at, camp.utc_offset_min) : null, priority_mode: camp.priority_mode || 'followups_first' },
+          start_at: camp.start_at || null, start_date: camp.start_at ? localDate(camp.start_at, camp.utc_offset_min) : null },
         steps: stepProgress.describe(res[1], stepProgress.sum((parts.length ? parts : [camp]).map(function (c) { return prog[c.id]; }))).map(function (d, k) {
           return Object.assign({}, res[1][k], { sent: d.sent, capacity: d.capacity, pct: d.pct, locked: !!locked[res[1][k].step_no] });
         }),
@@ -674,7 +669,7 @@ C.update = function (userId, id, input, ip) {
       senderIds = v.idArray(input.sender_ids, 1, MAX_SENDERS);
       if (!senderIds) throw bad('sender_ids', 'Choose 1 to ' + MAX_SENDERS + ' sending accounts');
     }
-    var hasSettings = ['window_start_hour', 'window_end_hour', 'utc_offset_min', 'weekdays_only', 'active_days', 'stop_on_reply', 'track_opens', 'priority_mode', 'start_date'].some(function (k) { return input[k] !== undefined; });
+    var hasSettings = ['window_start_hour', 'window_end_hour', 'utc_offset_min', 'weekdays_only', 'active_days', 'stop_on_reply', 'track_opens', 'start_date'].some(function (k) { return input[k] !== undefined; });
     if (hasSettings) settings = validateSettings(input, c, self.now());
     return self.db.all('SELECT * FROM campaigns WHERE parent_id = ? AND user_id = ? ORDER BY id', [id, userId]);
   }).then(function (kids) {

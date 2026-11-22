@@ -122,6 +122,11 @@ Set `SENDERBOLT_PUBLIC_ORIGIN=https://your-domain` to get one-click unsubscribe 
 **Housekeeping (v1.9.2)**
 - Unsubscriptions tabs: All, Added by you, Unsubscribed, Bounced, Complaints. A paused sending account is shown in red on Sending accounts and in Settings.
 - Sender Settings is a set of cards: summary (status, today, health, replies), Connection & credentials, Daily limit & warm-up, Sending pace, Protection & risk, Health healing, Identity & signature, Advanced. Force continue refreshes the whole panel; the pause between emails is checked (shortest <= longest).
+**Housekeeping (v1.9.8)**
+- **Sending priority** (follow-ups first, balanced, new emails first) now lives in **Settings → System preferences → Campaign defaults** and applies to all your campaigns. It is no longer chosen per campaign (the campaign wizard has no Priority step).
+- Campaigns are never blocked by protection. If a sending account falls below its health line (too many bounces) only that **account** is paused; the campaign keeps its status and its people wait. Older "blocked" campaigns are set back to active automatically, and the "a campaign is blocked" alert is gone.
+- **Campaign health** alerts have a small **×** to dismiss them. A dismissed alert stays hidden until the problem goes away and comes back (stored on the server, migration 014).
+
 **Housekeeping (v1.9.7)**
 - Sender drawer: the summary card scrolls with the page and is more compact, the side margins are smaller, **Tracking domain** now sits in the Connection card, and every card starts closed each time you open the drawer (only a card with a problem or warning opens by itself).
 - Health healing is now +1 for a calm day, **+1 for every 10 clean emails**, +1 for a reply, **at most +10 a day**, never above 100 (the text in the drawer and the calculation use the same numbers).

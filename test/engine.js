@@ -261,13 +261,13 @@ h.test('reply tracking gate (live mode): no sending until the mailbox is armed a
     }).then(function (r) { assert.strictEqual(r.sent, 0, 'sync is stale (>15 min) -> paused again'); });
   });
 });
-h.test('campaign shows error when no waiting lead has a usable sender, and recovers', function () {
+h.test('a campaign is never blocked when its sender is paused (it stays active); an old error status is cleared', function () {
   return setup().then(function (c) {
     return launch(c, 1).then(function () { return c.senders.setStatus(c.a, c.sid, 'paused'); }).then(function () { return c.engine.tick(); })
       .then(function () { return c.camps.get(c.a, c.camp.id); }).then(function (camp) {
-        assert.strictEqual(camp.status, 'error');
-        return c.senders.setStatus(c.a, c.sid, 'active').then(function () { return adv(c, 31000); });
-      }).then(function () { return c.camps.get(c.a, c.camp.id); }).then(function (camp) { assert.notStrictEqual(camp.status, 'error'); });
+        assert.strictEqual(camp.status, 'active', 'protection pauses the sender, not the campaign');
+        return c.db.run("UPDATE campaigns SET status = 'error', last_error = 'old' WHERE id = ?", [c.camp.id]).then(function () { return adv(c, 31000); });
+      }).then(function () { return c.camps.get(c.a, c.camp.id); }).then(function (camp) { assert.strictEqual(camp.status, 'active', 'a leftover error status from an older version is cleared'); });
   });
 });
 

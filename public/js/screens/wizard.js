@@ -15,7 +15,7 @@
   function blankState() {
     return { step: 0, name: '', steps: [{ subject: '', body_html: '', delay_days: null }], sender_ids: [], folder_ids: [], exclude_role: false, dup: null,
       lead_statuses: STATUSES.slice(), split: { enabled: false, batch_size: 26, seed: null },
-      settings: { window_start_hour: 9, window_end_hour: 17, utc_offset_min: -new Date().getTimezoneOffset(), weekdays_only: true, active_days: 62, stop_on_reply: true, track_opens: false, start_date: null, priority_mode: 'followups_first' } };
+      settings: { window_start_hour: 9, window_end_hour: 17, utc_offset_min: -new Date().getTimezoneOffset(), weekdays_only: true, active_days: 62, stop_on_reply: true, track_opens: false, start_date: null } };
   }
   function merge(base, d) {            // draft data -> full state (draft fields may be null)
     var s = base; d = d || {};
@@ -396,11 +396,6 @@
           r.same_company_in_one_batch ? h('p', { class: 'hint warn', text: r.same_company_in_one_batch + ' company contact(s) still share a batch. Shuffle again or use a smaller batch size.' }) : h('p', { class: 'hint ok', text: 'People from the same company are spread across different batches.' })));
       }, function (e) { if (mine === audSeq) SB.mount(splitBox, h('div', { class: 'callout warn', text: e.message })); });
     }
-    var PRIORITY = [
-      ['followups_first', 'Follow-ups first (recommended)', 'People who already heard from you are served before brand-new contacts, so a follow-up is never delayed by a big first-email batch.'],
-      ['balanced', 'Balanced', 'Whoever has been waiting longest goes first, whether it is a first email or a follow-up.'],
-      ['new_first', 'New emails first', 'Reach new contacts as fast as possible; follow-ups go out as capacity allows.']
-    ];
     function stepSending() {
       var list = senders.length ? h('div', { class: 'table-wrap wz-tbl' }, h('table', { class: 'table' },
         h('thead', null, h('tr', null, h('th', { class: 'row-check' }), h('th', { text: 'Sending account' }), h('th', { text: 'Status' }), h('th', null, 'Daily limit ', ui.info('How many emails this account may send per day, including its warm-up ramp.')), h('th', { text: 'Sent today' }))),
@@ -470,17 +465,6 @@
         return h('div', null, h('div', { class: 'set-row' }, h('div', { class: 'set-txt' }, h('label', { for: 'wz-start-on', text: 'Start on a specific day' }), h('div', { class: 'hint', text: 'Turn on to choose the day the first emails begin.' })), sw), dateRow, note);
       }
       function tzName(m) { var ab = Math.abs(m); return 'UTC' + (m < 0 ? '-' : '+') + (ab / 60 | 0) + (ab % 60 ? ':30' : ''); }
-      // ---- priority (v1.8) ----
-      function priorityControls() {
-        var box = h('div', { class: 'radio-stack', role: 'radiogroup', 'aria-label': 'Send priority' });
-        PRIORITY.forEach(function (o) {
-          var r = h('input', { type: 'radio', name: 'wz-prio', id: 'wz-prio-' + o[0] }); r.checked = ss.priority_mode === o[0];
-          var lab = h('label', { class: 'radio-card' + (r.checked ? ' on' : ''), for: 'wz-prio-' + o[0] }, r, h('div', null, h('b', { text: o[1] }), h('span', { class: 'hint', text: o[2] })));
-          r.addEventListener('change', function () { if (!r.checked) return; ss.priority_mode = o[0]; touch(); Array.prototype.forEach.call(box.children, function (c) { c.classList.remove('on'); }); lab.classList.add('on'); });
-          box.appendChild(lab);
-        });
-        return box;
-      }
       var split = st.split, batch = h('input', { class: 'input wz-days', id: 'wz-batch', type: 'text', inputmode: 'numeric', maxlength: 6, value: String(split.batch_size || ''), 'aria-label': 'Batch size' });
       batch.addEventListener('input', function () { var d = batch.value.replace(/\D/g, '').slice(0, 6); if (d !== batch.value) batch.value = d; split.batch_size = d ? parseInt(d, 10) : null; split.seed = null; touch(); refreshSplit(); });
       var useSplit = h('input', { type: 'checkbox', id: 'wz-split' }); useSplit.checked = split.enabled;
@@ -498,7 +482,6 @@
             h('div', { class: 'field' }, h('label', { for: 'wz-tz' }, 'Time zone'), tz))]),
         section('Start', 'Begin right away, or schedule the campaign to start on a specific day.', [startControls()]),
         section('Sender accounts', 'Select the account(s) that send this campaign. With several, the emails are shared between them.', [list, capBox, h('p', { class: 'hint', text: W.sendersHint })]),
-        section('Priority', 'When an account has both new first emails and follow-ups waiting, which should go out first?', [priorityControls()]),
         section('Replies', 'What happens to the rest of a sequence when someone answers.', [toggle('wz-sr', 'stop_on_reply', 'Stop the sequence when someone replies', W.stopHint)]),
         section('Tracking', 'Choose whether to track email opens. Tracking works for HTML emails only.', [toggle('wz-to', 'track_opens', 'Track email opens', W.opensHint),
           st.settings.track_opens && SB.status && SB.status.public_origin_set === false ? h('div', { class: 'banner banner-warn inline', role: 'status' }, SB.icon('alert'), SB.S.studio.trackingInactive) : null]),
@@ -542,7 +525,6 @@
         editId ? null : row('Audience', chosenLists.length ? chosenLists.map(function (f) { return f.name; }).join(', ') : '-'), row('Senders', chosen.length ? chosen.map(function (s) { return s.label || s.email; }).join(', ') : '-'),
         row('Starts', st.settings.start_date ? fmt.isoDate(st.settings.start_date) + ' at ' + fmt.hour12(st.settings.window_start_hour) : 'As soon as you press Start'),
         row('Window', fmt.hourRange(st.settings.window_start_hour, st.settings.window_end_hour) + ', ' + dayNames(st.settings.active_days)),
-        row('Priority', (PRIORITY.filter(function (o) { return o[0] === st.settings.priority_mode; })[0] || PRIORITY[0])[1].replace(' (recommended)', '')),
         editId ? null : row('Smart Split', st.split.enabled ? 'Batches of ' + st.split.batch_size : 'Off'),
         editId ? null : h('div', { class: 'field pad-t' }, h('label', { for: 'wz-project' }, 'Add to project'), projSel)));
       out.appendChild(h('div', { class: 'actions wz-final' },
@@ -560,7 +542,7 @@
       if (st.dup === 'remove') body.exclude_duplicates = true; else if (st.dup === 'keep') body.skip_in_active = false;
       body.window_start_hour = st.settings.window_start_hour; body.window_end_hour = st.settings.window_end_hour; body.utc_offset_min = st.settings.utc_offset_min;
       body.active_days = st.settings.active_days; body.stop_on_reply = st.settings.stop_on_reply; body.track_opens = st.settings.track_opens;
-      body.start_date = st.settings.start_date || null; body.priority_mode = st.settings.priority_mode || 'followups_first';
+      body.start_date = st.settings.start_date || null;
       if (st.split.enabled) body.split = { batch_size: st.split.batch_size, seed: st.split.seed === null ? undefined : st.split.seed };
       if (editId) {
         delete body.folder_ids; delete body.exclude_role; delete body.lead_statuses; delete body.split;

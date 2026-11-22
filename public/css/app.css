@@ -767,3 +767,9 @@ td .email-trunc { max-width: 260px; } .panel-head h2 .email-trunc { max-width: 3
 .btn-test.is-fail { color: var(--bad); border-color: var(--bad); background: var(--bad-soft); }
 .btn-test[aria-busy="true"] { opacity: .8; cursor: progress; }
 .sd-test-note { color: var(--bad); margin-top: var(--space-2); word-break: break-word; }
+
+/* Campaign health: dismiss button */
+.health-top { display: flex; align-items: center; gap: 6px; }
+.health-x { width: 24px; height: 24px; display: inline-grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--text-3); cursor: pointer; }
+.health-x:hover { background: var(--surface-2); color: var(--text); } .health-x:focus-visible { outline: 2px solid var(--accent); }
+.health-x .icon { width: 14px; height: 14px; }

@@ -114,6 +114,11 @@
       h('a', { class: 'btn btn-primary', href: '#/senders' }, SB.icon('send'), 'Manage accounts')), accBox));
 
     // ---- system preferences: defaults new campaigns start from ----
+    var PRIORITY = [
+      ['followups_first', 'Follow-ups first (recommended)', 'People who already heard from you are served before brand-new contacts, so a follow-up is never delayed by a big first-email batch.'],
+      ['balanced', 'Balanced', 'Whoever has been waiting longest goes first, whether it is a first email or a follow-up.'],
+      ['new_first', 'New emails first', 'Reach new contacts as fast as possible; follow-ups go out as capacity allows.']
+    ];
     var P = T.prefs, prefBox = h('div', null, h('div', { class: 'skeleton' }));
     SB.api.get('/api/settings').then(function (r) {
       if (dead) return;
@@ -129,11 +134,19 @@
       var from = hourSel('pf-from', v.window_start_hour, 0, 23), to = hourSel('pf-to', v.window_end_hour, 1, 24), off = h('select', { class: 'input', id: 'pf-tz' }), delay = num('pf-delay', v.default_delay_days, 1, 60);
       for (var m = -720; m <= 840; m += 30) { off.appendChild(h('option', { value: m }, 'UTC' + (m < 0 ? '-' : '+') + Math.floor(Math.abs(m) / 60) + (Math.abs(m) % 60 ? ':30' : ''))); }
       off.value = String(v.utc_offset_min);
+      var prio = v.priority_mode || 'followups_first';
+      var prioBox = h('div', { class: 'radio-stack', role: 'radiogroup', 'aria-label': 'Sending priority' });
+      PRIORITY.forEach(function (o) {
+        var r = h('input', { type: 'radio', name: 'pf-prio', id: 'pf-prio-' + o[0] }); r.checked = prio === o[0];
+        var lab = h('label', { class: 'radio-card' + (r.checked ? ' on' : ''), for: 'pf-prio-' + o[0] }, r, h('div', null, h('b', { text: o[1] }), h('span', { class: 'hint', text: o[2] })));
+        r.addEventListener('change', function () { if (!r.checked) return; prio = o[0]; Array.prototype.forEach.call(prioBox.children, function (c) { c.classList.remove('on'); }); lab.classList.add('on'); });
+        prioBox.appendChild(lab);
+      });
       var wk = chk('pf-wk', v.weekdays_only), sr = chk('pf-sr', v.stop_on_reply), to2 = chk('pf-op', v.track_opens), err = h('div', { class: 'form-error hidden', role: 'alert' });
       var save = h('button', { class: 'btn btn-primary', type: 'button', id: 'pf-save' }, 'Save preferences');
       save.addEventListener('click', function () {
         err.classList.add('hidden'); save.disabled = true;
-        SB.api.put('/api/settings', { prefs: { window_start_hour: Number(from.value), window_end_hour: Number(to.value), utc_offset_min: Number(off.value), weekdays_only: wk.checked, stop_on_reply: sr.checked, track_opens: to2.checked, default_delay_days: Number(delay.value) } })
+        SB.api.put('/api/settings', { prefs: { window_start_hour: Number(from.value), window_end_hour: Number(to.value), utc_offset_min: Number(off.value), weekdays_only: wk.checked, stop_on_reply: sr.checked, track_opens: to2.checked, priority_mode: prio, default_delay_days: Number(delay.value) } })
           .then(function () { ui.toast('Preferences saved'); }, function (e) { err.textContent = SB.api.friendly(e); err.classList.remove('hidden'); }).then(function () { save.disabled = false; });
       });
       SB.mount(prefBox, h('div', null, err, h('p', { class: 'muted small', text: P.intro }),
@@ -143,7 +156,8 @@
         h('div', { class: 'field' }, h('label', { for: 'pf-delay' }, 'Days to wait before a follow-up'), delay),
         h('div', { class: 'field check' }, wk, h('label', { for: 'pf-wk' }, 'Skip weekends'), h('div', { class: 'hint', text: SB.S.wizard.weekdaysHint })),
         h('div', { class: 'field check' }, sr, h('label', { for: 'pf-sr' }, 'Stop follow-ups after a reply'), h('div', { class: 'hint', text: SB.S.wizard.stopHint })),
-        h('div', { class: 'field check' }, to2, h('label', { for: 'pf-op' }, 'Track opens'), h('div', { class: 'hint', text: SB.S.wizard.opensHint })), save));
+        h('div', { class: 'field check' }, to2, h('label', { for: 'pf-op' }, 'Track opens'), h('div', { class: 'hint', text: SB.S.wizard.opensHint })),
+        h('div', { class: 'field' }, h('label', { text: 'Sending priority ' }, ui.info('When an account has both new first emails and follow-ups waiting, which should go out first? This applies to all your campaigns.')), prioBox), save));
     }, function (e) { if (!dead) SB.mount(prefBox, h('div', { class: 'form-error', text: SB.api.friendly(e) })); });
     gridPref.appendChild(h('div', { class: 'card st-wide' }, h('h2', { text: 'Campaign defaults' }), prefBox));
 

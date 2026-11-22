@@ -13,7 +13,8 @@ var S = SettingsService.prototype;
 
 // System preferences: defaults the campaign wizard starts from. Whitelisted keys only, each range-checked.
 var v = require('../lib/validate');
-var PREF_DEFAULTS = { window_start_hour: 9, window_end_hour: 17, utc_offset_min: 0, weekdays_only: 1, stop_on_reply: 1, track_opens: 0, default_delay_days: 3 };
+var PREF_DEFAULTS = { window_start_hour: 9, window_end_hour: 17, utc_offset_min: 0, weekdays_only: 1, stop_on_reply: 1, track_opens: 0, default_delay_days: 3, priority_mode: 'followups_first' };
+var PRIORITY_MODES = ['followups_first', 'balanced', 'new_first'];
 function cleanPrefs(input) {
   var o = Object.assign({}, PREF_DEFAULTS);
   function num(k, lo, hi) {
@@ -29,6 +30,10 @@ function cleanPrefs(input) {
   }
   num('window_start_hour', 0, 23); num('window_end_hour', 1, 24); num('utc_offset_min', -720, 840); num('default_delay_days', 1, 60);
   flag('weekdays_only'); flag('stop_on_reply'); flag('track_opens');
+  if (input.priority_mode !== undefined) {
+    if (PRIORITY_MODES.indexOf(input.priority_mode) === -1) throw new AppError('validation', 'Priority must be one of: ' + PRIORITY_MODES.join(', '), 400, { prefs: 'priority_mode' });
+    o.priority_mode = input.priority_mode;
+  }
   if (o.window_end_hour <= o.window_start_hour) throw new AppError('validation', 'The sending window must end after it starts', 400, { prefs: 'window_end_hour' });
   return o;
 }
@@ -47,19 +52,22 @@ function readSeen(raw) {
 
 // Home 'Campaign health': remember which alerts were reviewed. The client sends the keys it is showing; anything that is not
 // shown any more is dropped, so a problem that comes back counts as new again.
-S.setHealthSeen = function (userId, keys) {
+S.setHealthSeen = function (userId, keys) { return this._setAlertList(userId, keys, 'health_seen'); };
+// Same, for alerts the owner dismissed (hidden until the problem goes away and comes back).
+S.setHealthDismissed = function (userId, keys) { return this._setAlertList(userId, keys, 'health_dismissed'); };
+S._setAlertList = function (userId, keys, col) {
   var self = this, t = this.now();
   if (!Array.isArray(keys) || keys.length > 200 || !keys.every(function (k) { return typeof k === 'string' && SEEN_KEY.test(k); })) return Promise.reject(new AppError('validation', 'Invalid alert list', 400, { keys: 'Invalid' }));
   var uniq = keys.filter(function (k, i) { return keys.indexOf(k) === i; });
   return this.db.get('SELECT 1 AS x FROM user_settings WHERE user_id = ?', [userId]).then(function (ex) {
     if (!ex) return self.db.run('INSERT INTO user_settings (user_id, updated_at) VALUES (?,?)', [userId, t]);
-  }).then(function () { return self.db.run('UPDATE user_settings SET health_seen = ? WHERE user_id = ?', [JSON.stringify(uniq), userId]); })
-    .then(function () { return { health_seen: uniq }; });
+  }).then(function () { return self.db.run('UPDATE user_settings SET ' + col + ' = ? WHERE user_id = ?', [JSON.stringify(uniq), userId]); })   // col is one of two fixed names, never user input
+    .then(function () { var o = {}; o[col] = uniq; return o; });
 };
 
 S.get = function (userId) {
-  return this.db.get('SELECT default_signature_html, prefs, health_seen, updated_at FROM user_settings WHERE user_id = ?', [userId]).then(function (r) {
-    return { settings: { default_signature_html: r ? r.default_signature_html : null, prefs: readPrefs(r && r.prefs), health_seen: readSeen(r && r.health_seen), updated_at: r ? r.updated_at : null } };
+  return this.db.get('SELECT default_signature_html, prefs, health_seen, health_dismissed, updated_at FROM user_settings WHERE user_id = ?', [userId]).then(function (r) {
+    return { settings: { default_signature_html: r ? r.default_signature_html : null, prefs: readPrefs(r && r.prefs), health_seen: readSeen(r && r.health_seen), health_dismissed: readSeen(r && r.health_dismissed), updated_at: r ? r.updated_at : null } };
   });
 };
 
@@ -102,4 +110,4 @@ function withSignature(db, userId, sender) {
   });
 }
 
-module.exports = { SettingsService: SettingsService, withSignature: withSignature };
+module.exports = { SettingsService: SettingsService, withSignature: withSignature, readPrefs: readPrefs, PRIORITY_MODES: PRIORITY_MODES };

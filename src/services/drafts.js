@@ -42,8 +42,7 @@ function normalise(d) {
     active_days: numOrNull(st.active_days, 1, 127),
     stop_on_reply: st.stop_on_reply === undefined ? true : !!st.stop_on_reply,
     track_opens: !!st.track_opens,
-    start_date: typeof st.start_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(st.start_date) ? st.start_date : null,
-    priority_mode: ['followups_first', 'balanced', 'new_first'].indexOf(st.priority_mode) !== -1 ? st.priority_mode : 'followups_first'
+    start_date: typeof st.start_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(st.start_date) ? st.start_date : null
   };
   return out;
 }
