@@ -384,6 +384,8 @@ Browser check done for this release: the app shell and sign-in screen load in he
 | Area | File | Role |
 |---|---|---|
 | Migration | `src/db/migrations/012_v190.sql` | senders: `health_heal`, `health_heal_day`, `health_severe_n`, `health_base`, `connection_error(_at)`, `sync_transient`, `sync_failures`, `sync_retry_at`; campaigns: `archived`. |
+| Migration | `src/db/migrations/013_outcome.sql` | campaign_leads: `outcome` ('successful' or NULL), `outcome_at`. Set by `POST /api/inbox/threads/:id/outcome` (`InboxService.setOutcome`); independent of reply sentiment. |
+| Sync diagnostics | `src/engine/mailbox.js` (`probe`), `src/engine/inboxSync.js` (`phaseOf`, `friendlyError`, `probeHint`) | Time-outs are classified connect/login/read; probe (DNS→TCP→TLS) runs at the 3rd consecutive failure and every 10th, and in `senderTest`. |
 | Health | `src/lib/health.js`, `src/services/senderHealth.js` | Stored score = min(100, base + heal). `HEAL` rules, `healPoints`, `clampHeal`; `healDaily` credits completed UTC days (hourly from the scheduler); a new severe event resets heal. |
 | Connection errors | `src/lib/sendErrors.js`, `src/engine/sendEngine.js`, `src/services/senderTest.js` | Auth/network errors keep the sender active, set `connection_error`, back off 15/5 min, do not consume the lead's attempts or touch health. Cleared by the next success or a passing test. |
 | IMAP time-outs | `src/engine/mailbox.js`, `src/engine/inboxSync.js` | 30 s connect/auth timeouts, 120 s whole-operation guard; transient failures back off 1/2/4/5 min (login failures 15 min), logged on the first and every 10th failure, do not block sending. |

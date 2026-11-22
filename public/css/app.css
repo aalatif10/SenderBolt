@@ -718,3 +718,7 @@ td .email-trunc { max-width: 260px; } .panel-head h2 .email-trunc { max-width: 3
 .pc-table.ct-steps-table .c-steps { min-width: 96px; width: 96px; } .pc-table.ct-steps-table .stepbar { min-width: 88px; }
 .pc-table td.num, .pc-table th.num { padding-left: 3px; padding-right: 3px; }
 .pc-table .ct-act { width: 30px; padding-right: 8px; } .pc-table .status-col .pill { white-space: nowrap; }
+
+/* inbox: manual Successful outcome next to the reply tags */
+.ib-tag-sep { width: 1px; align-self: stretch; background: var(--border); margin: 2px var(--space-1); }
+.ib-chip .icon { width: 13px; height: 13px; margin-right: 4px; } .ib-row-bot .tag .icon { width: 12px; height: 12px; margin-right: 3px; }

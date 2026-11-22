@@ -11,6 +11,9 @@
 // Uses the "imap" and "mailparser" packages (see `npm run doctor` if they fail to load).
 
 var domain = require('domain');
+var net = require('net');
+var tls = require('tls');
+var dns = require('dns');
 
 var BATCH = 100;
 var OP_TIMEOUT_MS = 120000;
@@ -44,12 +47,15 @@ function createLive(opts) {
       failOp = function (e) { if (ctx.settled) return; ctx.settled = true; reject(e); };
       d.on('error', function (e) {
         var err = new Error('The mail server sent an unexpected response');
-        err.code = 'IMAP_PROTOCOL'; err.source = 'protocol'; err.cause = e;
+        err.code = 'IMAP_PROTOCOL'; err.source = 'protocol'; err.cause = e; err.imapHost = creds && creds.host; err.imapPort = creds && creds.port;
         try { if (ctx.imap) ctx.imap.destroy(); } catch (x) { /* already closed */ }
         failOp(err);
       });
       d.run(function () {
-        rawWithImap(creds, fn, ctx).then(function (r) { ctx.settled = true; resolve(r); }, failOp);
+        rawWithImap(creds, fn, ctx).then(function (r) { ctx.settled = true; resolve(r); }, function (e) {
+          if (e && typeof e === 'object' && !e.imapHost) { e.imapHost = creds && creds.host; e.imapPort = creds && creds.port; }   // which mailbox failed, for a useful message
+          failOp(e);
+        });
       });
     });
   }
@@ -62,7 +68,7 @@ function createLive(opts) {
     imap.on('error', function (e) { lateError = e; });                   // never let a socket error crash the process
     // Whole-operation guard: a server that accepts the connection and then goes silent must not hang the sync forever.
     var guard = null, guardPromise = new Promise(function (resolve, reject) {
-      guard = setTimeout(function () { var e = new Error('Timed out while talking to the mail server'); e.code = 'ETIMEDOUT'; e.source = 'timeout'; reject(e); }, OP_TIMEOUT_MS);
+      guard = setTimeout(function () { var e = new Error('Timed out while talking to the mail server'); e.code = 'ETIMEDOUT'; e.source = 'timeout-op'; reject(e); }, OP_TIMEOUT_MS);
       if (guard.unref) guard.unref();
     });
     function done() { clearTimeout(guard); }
@@ -98,8 +104,33 @@ function createLive(opts) {
       contentType: header(p, 'content-type'), dsn: dsn
     };
   }
+  // Step-by-step connectivity check of host:port, used to explain a repeating time-out: DNS -> TCP -> TLS. Never throws; every step has its own limit.
+  // Result: { ok, step: 'dns' | 'tcp' | 'tls' | 'ok', ms, detail }
+  function probe(creds) {
+    var host = creds && creds.host, port = (creds && creds.port) || 993, t0 = Date.now(), LIMIT = 8000;
+    return new Promise(function (resolve) {
+      var done = false, sock = null, timer = null;
+      function finish(step, ok, detail) { if (done) return; done = true; clearTimeout(timer); try { if (sock) sock.destroy(); } catch (e) { /* closed */ } resolve({ ok: ok, step: step, ms: Date.now() - t0, detail: detail || '' }); }
+      if (!host) return finish('dns', false, 'no mail server address');
+      dns.lookup(host, function (err) {
+        if (err) return finish('dns', false, err.code || 'lookup failed');
+        var step = 'tcp';
+        timer = setTimeout(function () { finish(step, false, 'no answer within ' + LIMIT / 1000 + 's'); }, LIMIT);
+        sock = net.connect({ host: host, port: port });
+        sock.once('error', function (e) { finish(step, false, e.code || 'connection failed'); });
+        sock.once('connect', function () {
+          step = 'tls'; sock.removeAllListeners('error');
+          var ts = tls.connect({ socket: sock, servername: host, minVersion: 'TLSv1.2' });
+          sock = ts;
+          ts.once('error', function (e) { finish('tls', false, e.code || e.message || 'handshake failed'); });
+          ts.once('secureConnect', function () { finish('ok', true, ''); });
+        });
+      });
+    });
+  }
   return {
     mode: 'live',
+    probe: probe,
     verify: function (creds) { return withImap(creds, function () { return true; }); },
     baseline: function (creds) {
       return withImap(creds, function (imap, box) { return { uidValidity: box.uidvalidity, lastUid: Math.max(0, (box.uidnext || 1) - 1) }; });

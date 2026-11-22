@@ -24,6 +24,7 @@ module.exports = function register(router, d) {
   router.post('/api/inbox/threads/:id/reply', { limit: replyLimit, maxBody: 60000 }, function (ctx) {
     return I.reply(ctx.user.id, parseId(ctx.params.id), ctx.body, ctx.ip).then(function (r) { return reply(201, r); });
   });
+  router.post('/api/inbox/threads/:id/outcome', function (ctx) { return I.setOutcome(ctx.user.id, parseId(ctx.params.id), ctx.body.outcome === undefined ? null : ctx.body.outcome, ctx.ip); });
   router.post('/api/inbox/messages/:id/sentiment', function (ctx) { return I.setSentiment(ctx.user.id, parseId(ctx.params.id), ctx.body.sentiment, ctx.ip); });
 
   router.post('/api/inbox/sync', { limit: syncLimit }, function (ctx) {

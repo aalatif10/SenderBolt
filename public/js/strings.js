@@ -27,7 +27,7 @@ SB.S = {
     sent: 'Emails successfully handed to your email provider (includes follow-ups).',
     opened: 'People who opened at least one email. Approximate: some mail apps block the tracking image. Shows "Off" when open tracking is off.',
     replied: 'People who wrote back. Out-of-office and bounce notices do not count.',
-    successful: 'People whose reply shows interest (tagged Interested). The replies worth following up first.'
+    successful: 'People you marked as Successful in the Inbox: a deal or result you won.'
   },
   metric: {
     leads: 'Total people in this project\'s campaigns.',
@@ -122,6 +122,8 @@ SB.S = {
       not_interested: { label: 'Not interested', cls: 'not', tip: 'They said no. They are removed from the sequence automatically.' },
       neutral: { label: 'Neutral', cls: 'neu', tip: 'Not clear yet. Read it and choose a tag yourself.' }
     },
+    successful: { label: 'Successful', cls: 'int', tip: 'Click to mark this lead as Successful (a deal or result you won). Click again to undo. It is separate from the reply tag, and it lets you filter and group your wins.' },
+    successfulTab: 'Conversations you marked Successful.',
     kinds: { auto_reply: 'Automatic reply (out of office)', bounce: 'Delivery failure notice' },
     syncTip: 'Checks every connected mailbox for new replies right now. It also happens automatically in the background.',
     sentimentTip: 'The tag is guessed from the words. Click a different one to correct it; your choice is kept.',

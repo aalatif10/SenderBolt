@@ -57,8 +57,11 @@ I._list = function (userId, q) {
     'JOIN campaigns c ON c.id = cl.campaign_id JOIN leads l ON l.id = cl.lead_id LEFT JOIN senders s ON s.id = cl.sender_id LEFT JOIN suppression sp ON sp.user_id = m.user_id AND sp.email = l.email WHERE m.user_id = ?';
   var p = [userId, userId], extra = '';
   if (q.sentiment !== undefined && q.sentiment !== '') {
-    if (SENTIMENTS.indexOf(q.sentiment) === -1) throw new AppError('validation', 'Unknown sentiment filter', 400);
-    extra += ' AND m.sentiment = ?'; p.push(q.sentiment);
+    if (q.sentiment === 'successful') extra += " AND cl.outcome = 'successful'";            // the manual outcome tab
+    else {
+      if (SENTIMENTS.indexOf(q.sentiment) === -1) throw new AppError('validation', 'Unknown sentiment filter', 400);
+      extra += ' AND m.sentiment = ?'; p.push(q.sentiment);
+    }
   }
   if (q.unread === '1' || q.unread === 1 || q.unread === true) extra += ' AND x.unread > 0';
   if (q.campaign_id !== undefined && q.campaign_id !== '') {
@@ -82,14 +85,15 @@ I._list = function (userId, q) {
   if (cids.length) { extra += ' AND (c.id IN (' + v.placeholders(cids.length) + ') OR c.parent_id IN (' + v.placeholders(cids.length) + '))'; p = p.concat(cids, cids); }
   if (sids.length) { extra += ' AND cl.sender_id IN (' + v.placeholders(sids.length) + ')'; p = p.concat(sids); }
   if (q.read === '1' || q.read === 1 || q.read === true) extra += ' AND x.unread = 0';
-  // Status uses the SAME tags the conversations show (the tag of the latest detected reply, automatic or set by hand):
-  //   interested | more_info | not_interested | neutral (an untagged reply counts as neutral)
-  //   successful     = tagged Interested (the "Successful" column of the campaigns table)
-  //   not_successful = tagged Not interested, or the person opted out / the address bounced
-  // Several values combine with OR. Campaign-state values (in sequence, paused, stopped) are not tags and are rejected.
+  // Status filter (several values combine with OR):
+  //   interested | more_info | not_interested | neutral : the tag of the latest detected reply (automatic or set by hand; an untagged reply is neutral)
+  //   successful     : conversations YOU marked Successful in the thread (a deal or outcome that was won), whatever the reply tag is
+  //   not_successful : closed without a win because the person opted out or the address bounced (not marked Successful).
+  //                    "Said no" is the Not interested tag, so the two do not overlap.
+  // Campaign-state values (in sequence, paused, stopped) are not tags and are rejected.
   if (q.status !== undefined && q.status !== '') {
     var STATUS_SQL = { interested: "m.sentiment = 'interested'", more_info: "m.sentiment = 'more_info'", not_interested: "m.sentiment = 'not_interested'", neutral: "(m.sentiment = 'neutral' OR m.sentiment IS NULL)",
-      successful: "m.sentiment = 'interested'", not_successful: "(m.sentiment = 'not_interested' OR cl.status IN ('unsubscribed','bounced'))" };
+      successful: "cl.outcome = 'successful'", not_successful: "(cl.outcome IS NULL AND cl.status IN ('unsubscribed','bounced'))" };
     var conds = String(q.status).split(',').map(function (k) {
       var c1 = Object.prototype.hasOwnProperty.call(STATUS_SQL, k.trim()) ? STATUS_SQL[k.trim()] : null;
       if (!c1) throw new AppError('validation', 'Unknown status filter', 400);
@@ -104,13 +108,14 @@ I._list = function (userId, q) {
   }
   return Promise.all([
     this.db.all('SELECT m.id, m.campaign_lead_id, m.subject, m.sentiment, m.sentiment_manual, m.received_at, substr(m.body_text, 1, 1200) AS snippet, cl.status_note AS status_note, sp.reason AS suppression_reason, x.unread, x.replies, ' +
-      'l.email AS lead_email, l.first_name, l.last_name, l.company, c.id AS campaign_id, c.name AS campaign_name, cl.status AS lead_status, s.id AS sender_id, s.email AS sender_email ' +
+      'l.email AS lead_email, l.first_name, l.last_name, l.company, c.id AS campaign_id, c.name AS campaign_name, cl.status AS lead_status, cl.outcome AS outcome, s.id AS sender_id, s.email AS sender_email ' +
       sql + extra + ' ORDER BY m.received_at DESC, m.id DESC LIMIT ? OFFSET ?', p.concat([limit, offset])),
     this.db.get('SELECT COUNT(*) AS n ' + sql + extra, p),
     this.db.all('SELECT m.sentiment AS k, COUNT(*) AS n FROM (' + conv + ') x JOIN messages m ON m.id = x.last_id GROUP BY m.sentiment', [userId]),
-    this.db.get("SELECT COUNT(DISTINCT campaign_lead_id) AS n FROM messages WHERE user_id = ? AND direction = 'in' AND kind = 'email' AND read_at IS NULL AND campaign_lead_id IS NOT NULL", [userId])
+    this.db.get("SELECT COUNT(DISTINCT campaign_lead_id) AS n FROM messages WHERE user_id = ? AND direction = 'in' AND kind = 'email' AND read_at IS NULL AND campaign_lead_id IS NOT NULL", [userId]),
+    this.db.get("SELECT COUNT(*) AS n FROM (" + conv + ") x JOIN campaign_leads cl ON cl.id = x.campaign_lead_id WHERE cl.outcome = 'successful'", [userId])
   ]).then(function (r) {
-    var counts = { interested: 0, more_info: 0, not_interested: 0, neutral: 0 };
+    var counts = { interested: 0, more_info: 0, not_interested: 0, neutral: 0, successful: r[4].n };
     r[2].forEach(function (row) { if (counts[row.k] !== undefined) counts[row.k] = row.n; });
     r[0].forEach(function (it) {
       it.snippet = replyParse.snippet(it.snippet || '', 200);          // the reply itself, never the signature or the quoted history
@@ -123,7 +128,7 @@ I._list = function (userId, q) {
 
 // Loads a conversation the user owns, or 404.
 I._conversation = function (userId, clId) {
-  return this.db.get('SELECT cl.id, cl.status, cl.status_note, cl.sender_id, cl.lead_id, cl.campaign_id, c.name AS campaign_name, c.user_id, ' +
+  return this.db.get('SELECT cl.id, cl.status, cl.status_note, cl.outcome, cl.sender_id, cl.lead_id, cl.campaign_id, c.name AS campaign_name, c.user_id, ' +
     'l.email AS lead_email, l.first_name, l.last_name, l.company ' +
     'FROM campaign_leads cl JOIN campaigns c ON c.id = cl.campaign_id JOIN leads l ON l.id = cl.lead_id WHERE cl.id = ? AND c.user_id = ?', [clId, userId]).then(function (r) {
     if (!r) throw new AppError('not_found', 'Conversation not found', 404);
@@ -142,7 +147,7 @@ I.thread = function (userId, clId) {
       db.get('SELECT reason FROM suppression WHERE user_id = ? AND email = ?', [userId, conv.lead_email])
     ]).then(function (r) {
       return {
-        conversation: { id: conv.id, status: conv.status, campaign_id: conv.campaign_id, campaign_name: conv.campaign_name,
+        conversation: { id: conv.id, status: conv.status, outcome: conv.outcome || null, campaign_id: conv.campaign_id, campaign_name: conv.campaign_name,
           lead: { id: conv.lead_id, email: conv.lead_email, first_name: conv.first_name, last_name: conv.last_name, company: conv.company },
           sender: r[1] || null, suppressed: r[2] ? r[2].reason : null, opt_out: optOutKind(conv.status, conv.status_note, r[2] && r[2].reason) },
         messages: r[0].map(function (m) {
@@ -176,6 +181,16 @@ I.markRead = function (userId, clId, read) {
       : "UPDATE messages SET read_at = NULL WHERE campaign_lead_id = ? AND user_id = ? AND direction = 'in' AND id = (SELECT MAX(id) FROM messages WHERE campaign_lead_id = ? AND user_id = ? AND direction = 'in' AND kind = 'email')";
     return self.db.run(sql, read ? [t, clId, userId] : [clId, userId, clId, userId]);
   }).then(function () { return { ok: true }; });
+};
+
+// Mark / unmark a conversation as Successful (manual). outcome: 'successful' | null.
+I.setOutcome = function (userId, clId, outcome, ip) {
+  var self = this;
+  if (outcome !== 'successful' && outcome !== null) return Promise.reject(new AppError('validation', 'Unknown outcome', 400));
+  return this._conversation(userId, clId).then(function () {
+    return self.db.run('UPDATE campaign_leads SET outcome = ?, outcome_at = ? WHERE id = ?', [outcome, outcome ? self.now() : null, clId]);
+  }).then(function () { return audit.log(self.db, { userId: userId, action: 'inbox.outcome', entity: 'campaign_lead', entityId: clId, ip: ip, meta: { outcome: outcome } }, self.now); })
+    .then(function () { return { ok: true, outcome: outcome }; });
 };
 
 I.setSentiment = function (userId, messageId, sentiment, ip) {

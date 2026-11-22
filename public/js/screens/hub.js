@@ -83,11 +83,12 @@
     root.appendChild(topBox); root.appendChild(box);
     SB.mount(box, h('div', { class: 'skeleton' }));
     function load() {
-      return Promise.all([SB.api.get('/api/campaigns'), SB.api.get('/api/senders')]).then(function (r) {
+      // The campaign table rows carry the real next send time (sending window, days, time zone and sender allowance already applied).
+      return Promise.all([SB.api.get('/api/campaign-table'), SB.api.get('/api/senders')]).then(function (r) {
         if (dead) return;
-        var camps = mainCampaigns(r[0].items), senders = r[1].items, waiting = 0, running = 0;
-        var live = camps.filter(function (c) { return c.status === 'active' || c.status === 'preparing' || c.status === 'paused'; });
-        live.forEach(function (c) { var s = c.stats || {}; waiting += (s.active || 0) + (s.pending || 0); if (c.status === 'active') running++; });
+        var camps = r[0].items, senders = r[1].items, waiting = 0, running = 0;
+        var live = camps.filter(function (c) { return ['active', 'planned', 'preparing', 'paused'].indexOf(c.display_status) !== -1; });
+        live.forEach(function (c) { var s = c.stats || {}; waiting += (s.active || 0) + (s.pending || 0); if (c.display_status === 'active') running++; });
         var sentToday = 0, cap = 0; senders.forEach(function (s) { sentToday += s.sent_today || 0; if (s.status === 'active') cap += s.limit_today || 0; });
         SB.mount(topBox, h('div', { class: 'grid-tiles' },
           ui.tile('Running campaigns', fmt.num(running), 'of ' + fmt.num(live.length) + ' with people waiting', 'Campaigns that are sending right now.'),
@@ -96,12 +97,12 @@
         if (!live.length) { SB.mount(box, h('div', { class: 'card empty' }, h('h2', { text: 'No pending emails' }), h('p', { text: 'There is nothing waiting. Start a campaign and its upcoming emails show up here.' }), h('a', { class: 'btn btn-primary', href: '#/campaign/new' }, SB.icon('plus'), 'New campaign'))); return; }
         live.sort(function (a, b) { var x = a.next_send_at, y = b.next_send_at; if (x === y) return 0; if (x === null || x === undefined) return 1; if (y === null || y === undefined) return -1; return x - y; });
         SB.mount(box, h('div', null, h('div', { class: 'section-title' }, h('h2', { text: 'Scheduled' })), h('div', { class: 'table-wrap card' }, h('table', { class: 'table' },
-          h('thead', null, h('tr', null, h('th', { text: 'Campaign' }), h('th', { text: 'Status' }), h('th', { text: 'Sequence' }), h('th', { text: 'People waiting' }), h('th', null, 'Next email ', ui.info('When the next email in this campaign is due. Emails only go out inside the sending window.')))),
+          h('thead', null, h('tr', null, h('th', { text: 'Campaign' }), h('th', { text: 'Status' }), h('th', { text: 'Sequence' }), h('th', { text: 'People waiting' }), h('th', null, 'Next email ', ui.info('When the next email in this campaign leaves, in days, hours and minutes. It already counts the sending days and hours, the time zone and each sending account’s daily limit.')))),
           h('tbody', null, live.map(function (c) {
             var s = c.stats || {};
-            return h('tr', { class: 'row-link', on: { click: function () { location.hash = '#/campaign/' + c.id; } } }, h('td', null, h('b', { text: c.name })), h('td', null, ui.statusPill(c.status)),
+            return h('tr', { class: 'row-link', on: { click: function () { location.hash = '#/campaign/' + c.id; } } }, h('td', null, h('b', { text: c.name })), h('td', null, SB.campaignGrid.pill(c.display_status)),
               h('td', { class: 'c-steps' }, c.step_progress ? ui.stepBar(c.step_progress, { compact: true }) : null), h('td', { text: fmt.num((s.active || 0) + (s.pending || 0)) }),
-              h('td', { class: 'nowrap', tip: c.next_send_at ? fmt.full(c.next_send_at) : '' }, c.status === 'active' ? fmt.until(c.next_send_at) : '-'));
+              h('td', { class: 'nowrap' }, SB.campaignGrid.currentState(c)));
           }))))));
       }, function (e) { if (!dead) fail(box, e); });
     }

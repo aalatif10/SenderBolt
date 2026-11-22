@@ -210,7 +210,7 @@ h.test('Status filter matches the reply tags; successful/not_successful keep the
         return c.camps.create(c.a, { name: 'C', steps: [{ subject: 'Hi', body_html: '<p>x</p>' }], sender_ids: [c.sid], folder_id: f.id });
       });
     }).then(function () { return c.db.all('SELECT id, lead_id FROM campaign_leads ORDER BY id'); }).then(function (cls) {
-      var tags = ['interested', 'more_info', 'not_interested', 'neutral', null], i = 0;
+      var tags = ['interested', 'more_info', 'not_interested', 'neutral', null], i = 0; c.cls = cls;
       return cls.reduce(function (p, cl) {
         var tag = tags[i++];
         return p.then(function () {
@@ -219,13 +219,28 @@ h.test('Status filter matches the reply tags; successful/not_successful keep the
         });
       }, Promise.resolve()).then(function () {
         // the fifth person also opted out
-        return c.db.run("UPDATE campaign_leads SET status = 'unsubscribed' WHERE id = ?", [cls[4].id]);
+        return c.db.run("UPDATE campaign_leads SET status = 'unsubscribed' WHERE id = ?", [c.cls[4].id]);
       });
     }).then(function () {
       function n(status) { return inbox.list(c.a, { status: status }).then(function (r) { return r.total; }); }
       return Promise.all([n('interested'), n('more_info'), n('not_interested'), n('neutral'), n('successful'), n('not_successful'), n('interested,more_info'), n('')]).then(function (r) {
-        assert.deepStrictEqual(r, [1, 1, 1, 2, 1, 2, 2, 5]);
+        assert.deepStrictEqual(r, [1, 1, 1, 2, 0, 1, 2, 5], 'nothing is Successful until you mark it; Not successful = opted out / bounced only');
         return Promise.all(['active', 'paused', 'stopped', 'x;drop'].map(function (bad) { return h.expectReject(inbox.list(c.a, { status: bad })); }));
+      }).then(function () { return inbox.setOutcome(c.a, c.cls[0].id, 'successful'); }).then(function () {
+        return Promise.all([n('successful'), n('interested'), inbox.list(c.a, { sentiment: 'successful' }), inbox.list(c.a, {})]);
+      }).then(function (r) {
+        assert.strictEqual(r[0], 1); assert.strictEqual(r[1], 1, 'the reply tag is untouched');
+        assert.strictEqual(r[2].total, 1); assert.strictEqual(r[2].items[0].outcome, 'successful'); assert.strictEqual(r[3].counts.successful, 1);
+        return inbox.thread(c.a, c.cls[0].id);
+      }).then(function (t) {
+        assert.strictEqual(t.conversation.outcome, 'successful');
+        return inbox.setOutcome(c.a, c.cls[4].id, 'successful');
+      }).then(function () { return n('not_successful'); }).then(function (x) {
+        assert.strictEqual(x, 0, 'marked Successful wins over opted out');
+        return inbox.setOutcome(c.a, c.cls[0].id, null);
+      }).then(function () { return n('successful'); }).then(function (x) {
+        assert.strictEqual(x, 1);
+        return Promise.all([h.expectReject(inbox.setOutcome(c.a, c.cls[0].id, 'won')), h.mkUser(c.db, 'b@x.com').then(function (b) { return h.expectReject(inbox.setOutcome(b, c.cls[0].id, 'successful')); })]);
       });
     });
   });
@@ -258,6 +273,33 @@ h.test('a project row equals its only campaign; with several campaigns it is the
       }).then(function () { return proj.list(c.a, {}); }).then(function (r) {
         assert.strictEqual(r.items[0].row.campaign_count, 1, 'archived campaigns are left out of the aggregate, like in the expanded list');
       });
+  });
+});
+
+h.group('sync time-out diagnostics');
+h.test('time-out messages name the step and the mailbox; a repeating time-out runs a connectivity probe and the finding is kept', function () {
+  function err(source, host) { var e = new Error('Timed out'); e.source = source; e.imapHost = host; e.imapPort = 993; return e; }
+  assert.strictEqual(inboxSync.phaseOf(err('timeout')), 'connect'); assert.strictEqual(inboxSync.phaseOf(err('timeout-auth')), 'login'); assert.strictEqual(inboxSync.phaseOf(err('timeout-op')), 'read');
+  assert.ok(/open a connection.*imap\.x\.com:993/.test(inboxSync.friendlyError(err('timeout', 'imap.x.com'))));
+  assert.ok(/did not finish the sign-in.*not a wrong password/.test(inboxSync.friendlyError(err('timeout-auth', 'imap.x.com'))));
+  assert.ok(/handshake fails/.test(inboxSync.probeHint({ ok: false, step: 'tls', detail: 'ETIMEDOUT' }, 'imap.x.com', 993)));
+  assert.ok(/cannot be found/.test(inboxSync.probeHint({ ok: false, step: 'dns', detail: 'ENOTFOUND' }, 'imap.x.com', 993)));
+  return setup().then(function (c) {
+    var logs = [], probes = 0;
+    var mailbox = { baseline: function () { return Promise.reject(err('timeout', 'imap.gmail.com')); }, fetchSince: function () { return Promise.reject(err('timeout', 'imap.gmail.com')); },
+      probe: function () { probes++; return Promise.resolve({ ok: false, step: 'tcp', ms: 8000, detail: 'no answer within 8s' }); } };
+    var sync = new InboxSync(c.db, { key: c.key, mailbox: mailbox, now: function () { return c.clock.t; }, log: function (m) { logs.push(m); } });
+    function again() { c.clock.t += 6 * 60000; return sync.syncAll(); }
+    return c.db.run("UPDATE senders SET imap_host = 'imap.gmail.com', imap_port = 993").then(function () { return sync.syncAll(); }).then(again).then(function () { assert.strictEqual(probes, 0, 'no probe before the 3rd failure'); return again(); }).then(function () {
+      assert.strictEqual(probes, 1);
+      return c.db.get('SELECT sync_error, sync_failures FROM senders WHERE id = ?', [c.sid]);
+    }).then(function (r) {
+      assert.strictEqual(r.sync_failures, 3); assert.ok(/Connection test: imap\.gmail\.com:993 does not accept connections/.test(r.sync_error), r.sync_error);
+      assert.ok(logs.some(function (l) { return /s1@gmail\.com, imap\.gmail\.com:993/.test(l) && /Connection test/.test(l); }), 'the log names the account and the finding');
+      return again();
+    }).then(function () { return c.db.get('SELECT sync_error FROM senders WHERE id = ?', [c.sid]); }).then(function (r) {
+      assert.strictEqual(probes, 1, 'not probed again on the 4th'); assert.ok(/Connection test:/.test(r.sync_error), 'the finding stays visible');
+    });
   });
 });
 

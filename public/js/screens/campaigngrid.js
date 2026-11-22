@@ -87,7 +87,7 @@
       h('td', { class: 'num', tip: SB.S.perf.sent, text: fmt.num(c.sent) }),
       h('td', { class: 'num', tip: tracked ? SB.S.perf.opened : 'Open tracking is off for this campaign.' }, tracked ? h('span', null, fmt.num(m.opened || 0), h('span', { class: 'small faint', text: pctOf(m.opened || 0) })) : h('span', { class: 'faint', text: 'Off' })),
       h('td', { class: 'num', tip: SB.S.perf.replied }, fmt.num(m.replied || 0), h('span', { class: 'small faint', text: pctOf(m.replied || 0) })),
-      h('td', { class: 'num', tip: SB.S.perf.successful }, fmt.num(m.interested || 0), h('span', { class: 'small faint', text: pctOf(m.interested || 0) }))
+      h('td', { class: 'num', tip: SB.S.perf.successful }, fmt.num(m.successful || 0), h('span', { class: 'small faint', text: pctOf(m.successful || 0) }))
     ];
   }
 

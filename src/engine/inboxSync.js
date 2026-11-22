@@ -31,14 +31,41 @@ function isTransient(e) {
   return !!NET[code] || code === 'IMAP_PROTOCOL' || src === 'protocol' || /^timeout/.test(src) || /timed? ?out|socket hang up|ECONN|getaddrinfo/i.test(msg);
 }
 
+// Which step of the IMAP conversation went wrong: connect (TCP/TLS) | login | read (after login) | protocol | network | other
+function phaseOf(e) {
+  var src = e && e.source ? String(e.source) : '', code = e && e.code ? String(e.code) : '';
+  if (src === 'protocol' || code === 'IMAP_PROTOCOL') return 'protocol';
+  if (src === 'timeout') return 'connect';
+  if (src === 'timeout-auth') return 'login';
+  if (src === 'timeout-op') return 'read';
+  if (NET[code]) return 'network';
+  return 'other';
+}
+function where(e) { return e && e.imapHost ? ' (' + e.imapHost + (e.imapPort ? ':' + e.imapPort : '') + ')' : ''; }
+
 function friendlyError(e) {
   var msg = String((e && e.message) || ''), code = e && e.code ? String(e.code) : '';
   if (/need the .*packages/i.test(msg)) return msg.slice(0, 200);
+  var ph = phaseOf(e);
+  if (ph === 'protocol') return 'The mail server sent an unexpected response' + where(e) + '. SenderBolt will retry automatically.';
   // Time-outs first: "Timed out while authenticating with server" contains the word "authenticating" but is NOT a rejected login.
-  if (code === 'IMAP_PROTOCOL' || (e && e.source === 'protocol')) return 'The mail server sent an unexpected response. SenderBolt will retry automatically.';
+  if (ph === 'connect') return 'Could not open a connection to the mail server' + where(e) + ' in time. Check the IMAP server and port, and that nothing blocks this computer from reaching it. SenderBolt will retry automatically.';
+  if (ph === 'login') return 'The mail server' + where(e) + ' did not finish the sign-in in time (it is busy or slowing this account down). This is not a wrong password. SenderBolt will retry automatically.';
+  if (ph === 'read') return 'The mail server' + where(e) + ' stopped answering while the inbox was being read. SenderBolt will retry automatically.';
+  if (ph === 'network') return 'Could not reach the mail server' + where(e) + ' (' + code + '). SenderBolt will retry automatically.';
   if (isTransient(e)) return 'The mail server did not answer in time. SenderBolt will retry automatically.';
   if (/auth|login|credential|invalid|password/i.test(msg + ' ' + (e && e.textCode || ''))) return 'IMAP login failed. Check the App Password and that IMAP is enabled for this account.';
   return 'Could not read the mailbox' + (code ? ' (' + code + ')' : '') + '. Will retry.';
+}
+
+// What a connectivity probe found, in plain words (appended once failures repeat, so the owner sees WHY).
+function probeHint(r, host, port) {
+  if (!r) return '';
+  var at = host + ':' + (port || 993);
+  if (r.ok) return ' Connection test: ' + at + ' is reachable (' + r.ms + ' ms), so the server is slow to answer for this account.';
+  if (r.step === 'dns') return ' Connection test: the address ' + host + ' cannot be found. Check the IMAP server name.';
+  if (r.step === 'tcp') return ' Connection test: ' + at + ' does not accept connections (' + r.detail + '). Check the IMAP server and port, and any firewall or antivirus on this computer.';
+  return ' Connection test: ' + at + ' accepts connections but the secure handshake fails (' + r.detail + '). This port may not use SSL/TLS: check the IMAP port (usually 993).';
 }
 
 function retryDelay(failures, transient) {
@@ -87,11 +114,19 @@ S.syncSender = function (s) {
       }).then(function () { return counts; });
     });
   }).catch(function (e) {
-    var transient = isTransient(e), failures = (s.sync_failures || 0) + 1, t = self.now();
-    // Log the first failure and then only every 10th: a mailbox that is down must not flood the terminal every minute.
-    if (failures === 1 || failures % 10 === 0) self.log('sync sender ' + s.id + ': ' + friendlyError(e) + (failures > 1 ? ' (' + failures + ' failures in a row)' : ''));
-    return self.db.run('UPDATE senders SET sync_error = ?, sync_transient = ?, sync_failures = ?, sync_retry_at = ? WHERE id = ?',
-      [friendlyError(e), transient ? 1 : 0, failures, t + retryDelay(failures, transient), s.id]).then(function () { return { error: true, transient: transient }; });
+    var transient = isTransient(e), failures = (s.sync_failures || 0) + 1, t = self.now(), base = friendlyError(e);
+    var label = (s.email || ('sender ' + s.id)) + (s.imap_host ? ', ' + s.imap_host + ':' + (s.imap_port || 993) : '');
+    // From the 3rd failure in a row (and every 10th) run a quick DNS/TCP/TLS check so the message says WHY; in between keep the last finding.
+    var probeNow = transient && (failures === 3 || failures % 10 === 0) && typeof self.mailbox.probe === 'function';
+    var hintP = probeNow ? Promise.resolve().then(function () { return self.mailbox.probe(self._creds(s)); }).then(function (r) { return probeHint(r, s.imap_host, s.imap_port); }, function () { return ''; })
+      : Promise.resolve(failures > 3 && transient && /Connection test:/.test(s.sync_error || '') ? (' Connection test:' + String(s.sync_error).split(' Connection test:')[1]) : '');
+    return hintP.then(function (hint) {
+      var msg = base + hint;
+      // Log the first failure and then only every 10th: a mailbox that is down must not flood the terminal every minute.
+      if (failures === 1 || failures === 3 || failures % 10 === 0) self.log('sync sender ' + s.id + ' (' + label + '): ' + msg + (failures > 1 ? ' [' + failures + ' failures in a row, next try in ' + Math.round(retryDelay(failures, transient) / 60000) + ' min]' : ''));
+      return self.db.run('UPDATE senders SET sync_error = ?, sync_transient = ?, sync_failures = ?, sync_retry_at = ? WHERE id = ?',
+        [msg.slice(0, 500), transient ? 1 : 0, failures, t + retryDelay(failures, transient), s.id]).then(function () { return { error: true, transient: transient }; });
+    });
   });
 };
 
@@ -215,4 +250,4 @@ S._applyReply = function (tx, cl, stop, t, detect) {
     });
 };
 
-module.exports = { InboxSync: InboxSync, friendlyError: friendlyError, isTransient: isTransient, retryDelay: retryDelay, OOO_DELAY_MS: OOO_DELAY_MS };
+module.exports = { phaseOf: phaseOf, probeHint: probeHint, InboxSync: InboxSync, friendlyError: friendlyError, isTransient: isTransient, retryDelay: retryDelay, OOO_DELAY_MS: OOO_DELAY_MS };

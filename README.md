@@ -122,4 +122,9 @@ Set `SENDERBOLT_PUBLIC_ORIGIN=https://your-domain` to get one-click unsubscribe 
 **Housekeeping (v1.9.2)**
 - Unsubscriptions tabs: All, Added by you, Unsubscribed, Bounced, Complaints. A paused sending account is shown in red on Sending accounts and in Settings.
 - Sender Settings is a set of cards: summary (status, today, health, replies), Connection & credentials, Daily limit & warm-up, Sending pace, Protection & risk, Health healing, Identity & signature, Advanced. Force continue refreshes the whole panel; the pause between emails is checked (shortest <= longest).
+**Housekeeping (v1.9.3)**
+- **Successful** is a manual outcome: in an Inbox conversation click **Successful** next to the reply tags (click again to undo). The Inbox Status filter has a **Successful** tab; **Not successful** now means opted out or bounced and not marked Successful, so it no longer overlaps **Not interested**. The campaigns table's Successful column counts these marks.
+- **Queue → Next email** shows when each campaign's next email leaves (days/hours/minutes), and Status uses the same pills as Campaigns.
+- Mail-server time-outs now say which step was slow (connecting, signing in, reading), name the mailbox and host:port, and after the 3rd failure in a row SenderBolt runs a DNS/TCP/TLS check and shows the finding in the account's sync message and in **Test connection**.
+
 - A malformed answer from a mail server can no longer crash the server: that sync fails cleanly, the connection is closed and it is retried with back-off.

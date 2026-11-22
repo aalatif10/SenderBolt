@@ -23,7 +23,7 @@
     var campMs = SB.controls.multiSelect({ label: 'Campaigns', tip: 'Show replies from these campaigns only.', options: [], selected: [], emptyText: 'No campaigns yet.', onApply: function (v) { state.campaigns = v; reset(); } });
     var acctMs = SB.controls.multiSelect({ label: 'Email accounts', tip: 'Show replies received on these sending accounts only.', options: [], selected: [], emptyText: 'No sending accounts yet.', onApply: function (v) { state.senders = v; reset(); } });
     var teamMs = SB.controls.multiSelect({ label: 'Team members', tip: 'SenderBolt currently has one user, so every conversation is yours. Teammates will appear here when sharing is added.', options: [{ value: 'me', label: 'You', sub: 'Owner' }], selected: [], onApply: function () { reset(); } });
-    var statusMs = SB.controls.multiSelect({ label: 'Status', tip: 'Filter by how the reply is tagged: Interested, More info, Not interested or Neutral. Successful = tagged Interested. Not successful = tagged Not interested, or the person opted out or the address bounced.',
+    var statusMs = SB.controls.multiSelect({ label: 'Status', tip: 'Filter by the reply tag (Interested, More info, Not interested, Neutral), or by outcome: Successful = conversations you marked Successful in the thread. Not successful = closed without a win because the person opted out or the address bounced.',
       options: [{ value: 'successful', label: 'Successful' }, { value: 'not_successful', label: 'Not successful' }, { value: 'interested', label: I.sentiment.interested.label }, { value: 'more_info', label: I.sentiment.more_info.label },
         { value: 'not_interested', label: I.sentiment.not_interested.label }, { value: 'neutral', label: I.sentiment.neutral.label }],
       selected: [], onApply: function (v) { state.statuses = v; reset(); } });
@@ -40,7 +40,8 @@
       chipsEl.appendChild(chip('All', !state.sentiment && !state.unread && !state.read, all, 'Every conversation with a reply.', function () { state.sentiment = ''; state.unread = false; state.read = false; state.offset = 0; loadList(); }));
       chipsEl.appendChild(chip('Unread', state.unread, unread, 'Conversations with a reply you have not opened.', function () { state.unread = !state.unread; state.read = false; state.offset = 0; loadList(); }));
       chipsEl.appendChild(chip('Read', state.read, Math.max(0, all - unread), 'Conversations where you have opened every reply.', function () { state.read = !state.read; state.unread = false; state.offset = 0; loadList(); }));
-      ORDER.forEach(function (k) {
+      ORDER.concat(['successful']).forEach(function (k) {
+        if (k === 'successful') { chipsEl.appendChild(chip(I.successful.label, state.sentiment === 'successful', counts.successful || 0, I.successfulTab, function () { state.sentiment = state.sentiment === 'successful' ? '' : 'successful'; state.offset = 0; loadList(); }, 'chip-int')); return; }
         chipsEl.appendChild(chip(I.sentiment[k].label, state.sentiment === k, counts[k] || 0, I.sentiment[k].tip, function () { state.sentiment = state.sentiment === k ? '' : k; state.offset = 0; loadList(); }, 'chip-' + I.sentiment[k].cls));
       });
     }
@@ -60,7 +61,7 @@
         h('div', { class: 'ib-row-top' }, h('span', { class: 'ib-name', text: who(it) }), h('span', { class: 'ib-time faint small', tip: fmt.full(it.received_at), text: fmt.ago(it.received_at) })),
         h('div', { class: 'ib-subj', text: it.subject || '(no subject)' }),
         h('div', { class: 'ib-snip small muted', text: (it.snippet || '').replace(/\s+/g, ' ') }),
-        h('div', { class: 'ib-row-bot' }, senti(it.sentiment), ui.optBadge(it.opt_out), it.unread ? h('span', { class: 'ib-dot', tip: it.unread + ' unread', 'aria-label': 'Unread' }) : null,
+        h('div', { class: 'ib-row-bot' }, senti(it.sentiment), it.outcome === 'successful' ? h('span', { class: 'tag tag-int', tip: 'You marked this lead as Successful.' }, SB.icon('check'), 'Successful') : null, ui.optBadge(it.opt_out), it.unread ? h('span', { class: 'ib-dot', tip: it.unread + ' unread', 'aria-label': 'Unread' }) : null,
           h('span', { class: 'small faint ib-meta', text: [it.company, it.campaign_name].filter(Boolean).join(' · ') })));
       return b;
     }
@@ -140,7 +141,12 @@
         return h('button', { type: 'button', class: 'chip ib-chip chip-' + I.sentiment[k].cls + (lastIn.sentiment === k ? ' on' : ''), tip: I.sentiment[k].tip, on: { click: function () {
           SB.api.post('/api/inbox/messages/' + lastIn.id + '/sentiment', { sentiment: k }).then(function () { return Promise.all([openThread(c.id, true), loadList()]); }, function (e) { ui.toast(SB.api.friendly(e), true); });
         } } }, I.sentiment[k].label);
-      })) : null;
+      }).concat([h('span', { class: 'ib-tag-sep', 'aria-hidden': 'true' }), (function () {
+        var won = c.outcome === 'successful';
+        return h('button', { type: 'button', class: 'chip ib-chip chip-int' + (won ? ' on' : ''), 'aria-pressed': won ? 'true' : 'false', tip: I.successful.tip, on: { click: function () {
+          SB.api.post('/api/inbox/threads/' + c.id + '/outcome', { outcome: won ? null : 'successful' }).then(function () { ui.toast(won ? 'Successful mark removed' : 'Marked as Successful'); return Promise.all([openThread(c.id, true), loadList()]); }, function (e) { ui.toast(SB.api.friendly(e), true); });
+        } } }, SB.icon('check'), I.successful.label);
+      })()])) : null;
       var node = h('div', { class: 'ib-thread-in' },
         h('div', { class: 'ib-thread-head' },
           h('div', null, h('h2', { text: [lead.first_name, lead.last_name].filter(Boolean).join(' ') || lead.email }),

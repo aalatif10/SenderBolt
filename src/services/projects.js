@@ -33,7 +33,7 @@ function cleanDesc(d) {
 }
 function pct(n, d) { return d ? Math.round(n / d * 1000) / 10 : 0; }
 
-function emptyMetrics() { return { emailed: 0, opened: 0, replied: 0, interested: 0, more_info: 0, not_interested: 0, neutral: 0 }; }
+function emptyMetrics() { return { emailed: 0, opened: 0, replied: 0, interested: 0, more_info: 0, not_interested: 0, neutral: 0, successful: 0 }; }
 function addMetrics(a, b) { Object.keys(a).forEach(function (k) { a[k] += b[k] || 0; }); return a; }
 
 function ProjectsService(db, deps) {
@@ -67,6 +67,10 @@ P._metrics = function (userId) {
       m.replied += r.n;
       m[SENTIMENTS.indexOf(r.s) !== -1 ? r.s : 'neutral'] += r.n;
     });
+    // "Successful" = conversations the owner marked Successful in the Inbox (manual outcome)
+    return db.all("SELECT cl.campaign_id AS cid, COUNT(*) AS n FROM campaign_leads cl JOIN campaigns c ON c.id = cl.campaign_id WHERE c.user_id = ? AND cl.outcome = 'successful' GROUP BY cl.campaign_id", [userId]);
+  }).then(function (succ) {
+    succ.forEach(function (r) { (out[r.cid] || (out[r.cid] = emptyMetrics())).successful = r.n; });
     return out;
   });
 };
@@ -307,10 +311,10 @@ function buildRows(D, now, keep) {
 function aggregateRows(project, rows) {
   rows = rows.filter(function (c) { return !c.archived; });
   if (!rows.length) return null;
-  var a = { scheduled: 0, sent: 0, leads: 0, metrics: { emailed: 0, opened: 0, replied: 0, interested: 0 }, stats: { replied: 0, completed: 0, bounced: 0, unsubscribed: 0 }, step_progress: [], next_send_at: null, next_kind: null, start_at: null, track_opens: 0, campaign_count: rows.length };
+  var a = { scheduled: 0, sent: 0, leads: 0, metrics: { emailed: 0, opened: 0, replied: 0, interested: 0, successful: 0 }, stats: { replied: 0, completed: 0, bounced: 0, unsubscribed: 0 }, step_progress: [], next_send_at: null, next_kind: null, start_at: null, track_opens: 0, campaign_count: rows.length };
   rows.forEach(function (c) {
     a.scheduled += c.scheduled; a.sent += c.sent; a.leads += c.leads; if (c.track_opens) a.track_opens = 1;
-    ['emailed', 'opened', 'replied', 'interested'].forEach(function (k) { a.metrics[k] += (c.metrics && c.metrics[k]) || 0; });
+    ['emailed', 'opened', 'replied', 'interested', 'successful'].forEach(function (k) { a.metrics[k] += (c.metrics && c.metrics[k]) || 0; });
     ['replied', 'completed', 'bounced', 'unsubscribed'].forEach(function (k) { a.stats[k] += (c.stats && c.stats[k]) || 0; });
     (c.step_progress || []).forEach(function (st, k) {
       var o = a.step_progress[k] || (a.step_progress[k] = { step: k, subject: '', delay_days: st.delay_days, sent: 0, capacity: 0, pct: 0 });

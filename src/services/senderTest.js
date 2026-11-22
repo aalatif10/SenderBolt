@@ -4,7 +4,8 @@
 var vault = require('../lib/vault');
 var AppError = require('../lib/errors').AppError;
 var sendErrors = require('../lib/sendErrors');
-var friendlyError = require('../engine/inboxSync').friendlyError;
+var inboxSyncLib = require('../engine/inboxSync');
+var friendlyError = inboxSyncLib.friendlyError;
 
 function withTimeout(p, ms) {
   return new Promise(function (resolve, reject) {
@@ -33,7 +34,12 @@ SenderTest.prototype.run = function (userId, id) {
       if (!r.imap_host) return null;
       return withTimeout(self.mailbox.verify({ host: r.imap_host, port: r.imap_port || 993, user: r.username, pass: pass }), 30000).then(function () {
         out.imap = { ok: true, message: 'IMAP login works' };
-      }, function (e) { out.imap = { ok: false, message: friendlyError(e) }; });
+      }, function (e) {
+        out.imap = { ok: false, message: friendlyError(e) };
+        // A time-out says little by itself: check DNS / TCP / TLS so the owner sees what is actually wrong with this mailbox.
+        if (!inboxSyncLib.isTransient(e) || typeof self.mailbox.probe !== 'function') return null;
+        return withTimeout(self.mailbox.probe({ host: r.imap_host, port: r.imap_port || 993 }), 30000).then(function (pr) { out.imap.message += inboxSyncLib.probeHint(pr, r.imap_host, r.imap_port); }, function () { /* keep the plain message */ });
+      });
     });
   }).then(function () {
     if (out.imap.ok && (row.imap_last_uid === null || row.imap_last_uid === undefined) && self.inboxSync) {
