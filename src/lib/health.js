@@ -35,10 +35,11 @@ function isForced(sender, now) { return !!(sender && sender.force_until && sende
 function isBelowFloor(sender, now) { return !isForced(sender, now) && Number(sender.health_score) < floorFor(sender); }
 
 // ---- Health healing ----------------------------------------------------------------------------------------------
-// A completed UTC day earns points when nothing severe happened: +1 for a calm day, +1 per 25 clean sends (max +2),
-// +1 when at least one real reply came in. At most 4 per day, so a badly hurt account needs days, never minutes.
+// A completed UTC day earns points when nothing severe happened: +1 for a calm day, +1 per 10 clean sends,
+// +1 when at least one real reply came in. At most 10 per day (the sends part is limited by that same daily cap),
+// so a badly hurt account needs days, never minutes.
 // Any severe event that day (hard/policy bounce, refused recipient) earns nothing.
-var HEAL = { calm: 1, cleanPer: 25, cleanMax: 2, reply: 1, dayMax: 4, cap: 100 };
+var HEAL = { calm: 1, cleanPer: 10, cleanMax: 10, reply: 1, dayMax: 10, cap: 100 };
 function healPoints(day) {
   if (!day || Number(day.severe) > 0) return 0;
   var pts = HEAL.calm + Math.min(HEAL.cleanMax, Math.floor((Number(day.sent) || 0) / HEAL.cleanPer)) + (Number(day.replies) > 0 ? HEAL.reply : 0);

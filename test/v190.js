@@ -30,10 +30,13 @@ function setup() {
 }
 
 h.group('health healing (pure)');
-h.test('a calm day earns 1, clean sends and replies earn more, a severe day earns nothing, daily cap 4', function () {
+h.test('a calm day earns 1, clean sends and replies earn more, a severe day earns nothing, daily cap 10', function () {
   assert.strictEqual(health.healPoints({ severe: 0, sent: 0, replies: 0 }), 1);
-  assert.strictEqual(health.healPoints({ severe: 0, sent: 50, replies: 0 }), 3);
-  assert.strictEqual(health.healPoints({ severe: 0, sent: 400, replies: 5 }), 4);
+  assert.strictEqual(health.healPoints({ severe: 0, sent: 9, replies: 0 }), 1, 'fewer than 10 clean emails earn nothing extra');
+  assert.strictEqual(health.healPoints({ severe: 0, sent: 10, replies: 0 }), 2, '+1 for every 10 clean emails');
+  assert.strictEqual(health.healPoints({ severe: 0, sent: 50, replies: 1 }), 7);
+  assert.strictEqual(health.healPoints({ severe: 0, sent: 400, replies: 5 }), 10, 'never more than 10 a day');
+  assert.strictEqual(health.HEAL.dayMax, 10); assert.strictEqual(health.HEAL.cleanPer, 10);
   assert.strictEqual(health.healPoints({ severe: 1, sent: 400, replies: 5 }), 0);
   assert.strictEqual(health.clampHeal(50, 90), 10, 'never above the cap of 100');
   assert.strictEqual(health.effective(60, 15), 75); assert.strictEqual(health.effective(99, 15), 100);
@@ -84,7 +87,7 @@ h.test('a long calm stretch heals a damaged sender up to exactly 100 and no furt
 });
 h.test('the sender view explains healing', function () {
   return setup().then(function (c) { return c.senders.get(c.a, c.sid); }).then(function (s) {
-    assert.strictEqual(s.health_base, 100); assert.strictEqual(s.health_heal, 0); assert.strictEqual(s.heal_rules.day_max, 4); assert.strictEqual(s.connection_error, null);
+    assert.strictEqual(s.health_base, 100); assert.strictEqual(s.health_heal, 0); assert.strictEqual(s.heal_rules.day_max, 10); assert.strictEqual(s.connection_error, null);
   });
 });
 
@@ -192,7 +195,7 @@ h.test('sender view exposes risk factors and a healing outlook', function () {
   return setup().then(function (c) {
     return c.db.run('UPDATE senders SET health_score = 60, health_base = 55, health_heal = 5').then(function () { return c.senders.get(c.a, c.sid); }).then(function (s) {
       assert.strictEqual(s.risk.level, 'high'); assert.ok(s.risk.factors.length >= 1);
-      assert.strictEqual(s.heal_full_in_days, 10); assert.ok(s.heal_next_at > c.clock.t);
+      assert.strictEqual(s.heal_full_in_days, 4); assert.ok(s.heal_next_at > c.clock.t);
       return c.db.run("UPDATE senders SET health_score = 20, health_base = 20, health_heal = 0, connection_error = 'Login failed'");
     }).then(function () { return c.senders.get(c.a, c.sid); }).then(function (s) {
       assert.strictEqual(s.risk.level, 'critical'); assert.ok(/Connection problem/.test(s.risk.factors.join(' ')));

@@ -45,10 +45,12 @@
   function problems(s, rt) {
     var out = [];
     if (s.status === 'paused') out.push({ code: 'paused', text: s.last_error ? 'Paused: ' + s.last_error : 'Paused: nothing is sent from this account until you resume it.' });
-    if (s.status === 'active' && s.health_score < (s.health_floor || 50) && !isForced(s)) out.push({ code: 'health', text: 'Health score ' + s.health_score + ' is below the protection threshold (' + (s.health_floor || 50) + ').' });
+    // One item per ROOT CAUSE: an old "Auto-paused: health score fell…" note describes the same issue as a low health score, and a failing inbox is one issue however many places report it.
+    var lowHealth = s.status === 'active' && s.health_score < (s.health_floor || 50) && !isForced(s), healthNote = /health score/i.test(s.last_error || '');
+    if (lowHealth) out.push({ code: 'health', text: 'Health score ' + s.health_score + ' is below the protection threshold (' + (s.health_floor || 50) + ').' + (healthNote ? ' It was paused automatically for too many bounces.' : '') });
     if (s.status === 'active' && s.connection_error) out.push({ code: 'connection', text: 'Connection problem: ' + s.connection_error + ' The account keeps its place and SenderBolt retries automatically. Check the App Password in Settings, or run Test connection.' });
-    else if (s.status === 'active' && s.last_error) out.push({ code: 'error', text: 'Last problem: ' + s.last_error });
-    if (s.status === 'active' && rt === 'error') out.push({ code: 'imap', text: 'The inbox cannot be read, so replies and bounces are not being detected.' });
+    else if (s.status === 'active' && s.last_error && !(lowHealth && healthNote)) out.push({ code: 'error', text: 'Last problem: ' + s.last_error });
+    if (s.status === 'active' && rt === 'error' && !s.connection_error) out.push({ code: 'imap', text: 'The inbox cannot be read, so replies and bounces are not being detected.' });
     return out;
   }
   function pill(st) { return h('span', { class: 'pill pill-' + st.key, tip: st.tip }, st.label); }
@@ -186,14 +188,38 @@
       actions: [{ label: 'Done', kind: 'primary' }] });
   }
 
-  function runTest(s, btn, after) {
-    btn.disabled = true; var old = btn.textContent; btn.textContent = 'Testing…';
-    return SB.api.post('/api/senders/' + s.id + '/test', {}).then(function (r) { showTest(s, r); after(); }, function (e) { ui.toast(SB.api.friendly(e), true); })
-      .then(function () { btn.disabled = false; btn.textContent = old; });
+  // "Test connection" on an account card runs and reports INSIDE the button (no pop-up): Testing… -> "SMTP ✓ · IMAP ✓" (or ✕ on what failed).
+  // The result is remembered for a few seconds per account because the list repaints itself after a test.
+  var cardTests = {}, RESULT_MS = 12000;
+  function paintCardTest(s, btn, note, onDone) {
+    var t = cardTests[s.id];
+    btn.onclick = function () {
+      if (btn.disabled) return;
+      cardTests[s.id] = { running: true }; paintCardTest(s, btn, note, onDone);
+      SB.api.post('/api/senders/' + s.id + '/test', {}).then(function (r) { cardTests[s.id] = { result: r, at: Date.now() }; }, function (e) {
+        cardTests[s.id] = { result: { smtp: { ok: false, message: SB.api.friendly(e) }, imap: { ok: false, message: 'Not tested' } }, at: Date.now() };
+      }).then(function () { if (btn.isConnected) paintCardTest(s, btn, note, onDone); onDone(); });
+    };
+    btn.classList.remove('is-ok', 'is-fail'); btn.removeAttribute('aria-busy'); note.classList.add('hidden');
+    while (btn.firstChild) btn.removeChild(btn.firstChild);
+    if (t && t.running) {
+      btn.disabled = true; btn.setAttribute('aria-busy', 'true'); btn.appendChild(h('span', { class: 'spinner', 'aria-hidden': 'true' })); btn.appendChild(document.createTextNode('Testing\u2026')); return;
+    }
+    btn.disabled = false;
+    if (t && t.result && Date.now() - t.at < RESULT_MS) {
+      var r = t.result, sOk = !!(r.smtp && r.smtp.ok), iOk = !!(r.imap && r.imap.ok);
+      btn.classList.add(sOk && iOk ? 'is-ok' : 'is-fail');
+      btn.appendChild(document.createTextNode('SMTP ' + (sOk ? '\u2713' : '\u2715') + ' \u00b7 IMAP ' + (iOk ? '\u2713' : '\u2715')));
+      btn.setAttribute('data-tip', 'Sending (SMTP): ' + ((r.smtp && r.smtp.message) || (sOk ? 'works' : 'failed')) + '. Reading replies (IMAP): ' + ((r.imap && r.imap.message) || (iOk ? 'works' : 'failed')) + '. Click to test again.');
+      if (!(sOk && iOk)) { note.textContent = !sOk ? ((r.smtp && r.smtp.message) || 'Sending failed.') : ((r.imap && r.imap.message) || 'Reading replies failed.'); note.classList.remove('hidden'); }
+      setTimeout(function () { if (btn.isConnected && cardTests[s.id] === t) paintCardTest(s, btn, note, onDone); }, Math.max(200, RESULT_MS - (Date.now() - t.at)));
+      return;
+    }
+    btn.appendChild(document.createTextNode('Test connection'));
+    btn.setAttribute('data-tip', 'Logs in to this account right now to check that sending and reply detection work.');
   }
 
   // ---- settings slide-over -----------------------------------------------------------------
-  var openCards = {};   // which settings cards were open last time (kept while the page stays loaded)
   function settingsPanel(s, onDone, rt) {
     var p = ui.panel(s.email), err = h('div', { class: 'form-error hidden', role: 'alert' });
     var ph = p.body.parentNode && p.body.parentNode.querySelector('.panel-head h2');
@@ -309,8 +335,8 @@
     var where = [s.provider === 'gmail' ? 'Gmail' : 'Custom SMTP', s.smtp_host ? 'SMTP ' + s.smtp_host + (s.smtp_port ? ':' + s.smtp_port : '') : null, s.imap_host ? 'IMAP ' + s.imap_host : null].filter(Boolean).join(' · ');
 
     // Accordion card: header = title + one-line summary of the current state + an issue dot; the body opens on click.
-    // Open/closed state is kept between visits (this page view only); a card with a real problem always opens by itself.
-    var cards = [];
+    // Every card starts closed each time the drawer opens, except a card with a problem or warning, which opens by itself.
+    var cards = [], openCards = {};   // cards always start closed; only the ones with a problem or warning open by themselves
     function card(key, title, kids) {
       var dot = h('span', { class: 'sd-dot hidden', 'aria-hidden': 'true' }), sum = h('span', { class: 'sd-card-sum small muted' });
       var head = h('button', { class: 'sd-card-h', type: 'button', 'aria-expanded': 'false' }, h('span', { class: 'sd-card-t' }, h('b', { text: title }), dot), sum, SB.icon('chevron'));
@@ -345,7 +371,7 @@
       h('div', { class: 'small muted', text: s.health_score >= 100 ? 'Fully healed.' : 'If every day stays clean it can be back at 100 in about ' + s.heal_full_in_days + ' day' + (s.heal_full_in_days === 1 ? '' : 's') + '. Next healing day is credited ' + fmt.until(s.heal_next_at) + '.' }),
       h('ul', { class: 'risk-list' },
         h('li', { text: '+' + r.calm + ' for each calm day with no serious problem' }),
-        h('li', { text: '+' + r.clean_per + ' for every 25 clean emails sent (up to +' + r.clean_max + ' a day)' }),
+        h('li', { text: '+1 for every ' + r.clean_per + ' clean emails sent' }),
         h('li', { text: '+' + r.reply + ' when a real reply arrives' }),
         h('li', { text: 'At most +' + r.day_max + ' a day, never above 100. A serious problem pauses healing that day.' })));
 
@@ -375,6 +401,7 @@
       h('div', { class: 'set-row' }, h('div', { class: 'set-txt' }, h('label', { for: 'st-reply', text: 'Replies detected' }, ' ', ui.info('SenderBolt reads this account’s inbox to notice replies. Each reply stops follow-ups for THAT person only; everyone else in the campaign keeps going.')),
         h('div', { class: 'hint', text: 'Stop follow-ups for a person who replies. Turn off to keep following up regardless (replies still reach your Inbox). "Stop campaign" requests and bounces are always respected.' })), replyOn),
       field('Replace App Password', newPass, 'Use this if Google revoked the old one. The current one is never shown.', 'st-pass'),
+      field('Tracking domain (optional)', track, 'Only needed if you use a custom domain for tracking and unsubscribe links.', 'st-track'),
       h('div', { class: 'actions' }, testBtn), testOut));
     var cLimits = card('limits', 'Limits, pace & warm-up', h('div', null,
       field('Emails per day', limit, 'Maximum ' + CAP + '. Gmail allows about 500 per day, so ' + CAP + ' keeps a safe 100-email buffer and protects your account.', 'st-limit'), warm.node,
@@ -386,15 +413,14 @@
       h('div', { class: 'sd-sub' }, h('b', { text: 'Health healing' }), h('span', { class: 'small muted', text: 'A damaged score recovers gradually: calm days, clean sending and replies earn points back.' })), healBox));
     var cId = card('id', 'Identity & signature', h('div', null,
       field('Name shown to recipients', name, 'People see this as the sender name. Use a real person’s name for best results.', 'st-name'),
-      field('Added to the end of every email', sig, 'Plain text. Line breaks are kept.', 'st-sig'),
-      field('Tracking domain (advanced)', track, 'Only needed if you use a custom domain for unsubscribe links.', 'st-track')));
+      field('Added to the end of every email', sig, 'Plain text. Line breaks are kept.', 'st-sig')));
 
     // One line per card, kept live while the owner edits, plus the issue dot (problems found in ANY control of the card).
     function refresh() {
       var lim = num(limit), badLim = !isFinite(lim) || lim < 1 || lim > CAP, badWait = mode.value === 'random' && num(dmin) > num(dmax), noPw = !s.has_password && !newPass.value;
       var connIssue = noPw ? { level: 'bad', msg: 'No App Password yet: this account cannot send.' } : s.connection_error ? { level: 'bad', msg: 'Connection problem: ' + s.connection_error } :
         rt === 'error' ? { level: 'bad', msg: 'Replies cannot be read from this inbox. Run Test connection.' } : (rt === 'pending' || rt === 'not_configured') ? { level: 'warn', msg: rt === 'pending' ? 'Waiting for the first successful inbox check.' : 'No inbox (IMAP) settings: replies cannot be detected.' } : null;
-      cConn.set(where + ' · replies ' + (replyOn.checked ? 'on' : 'off'), connIssue);
+      cConn.set(where + ' · replies ' + (replyOn.checked ? 'on' : 'off') + (track.value.trim() ? ' · tracking domain set' : ''), connIssue);
       var pace = mode.value === 'random' ? num(dmin) + '–' + num(dmax) + ' s' : num(dfix) + ' s';
       cLimits.set((isFinite(lim) ? fmt.num(lim) : '?') + '/day · ' + (warm.box.checked ? (s.limit_today < s.daily_limit ? 'warm-up day ' + s.warmup_day : 'warm-up on') : 'no warm-up') + ' · pause ' + pace,
         badLim ? { level: 'bad', msg: 'Emails per day must be between 1 and ' + CAP + '.' } : badWait ? { level: 'bad', msg: 'The shortest wait is longer than the longest wait.' } : s.warmup_slowed ? { level: 'warn', msg: 'Warm-up is slowed because of recent problems.' } : null);
@@ -402,12 +428,12 @@
         rk.level === 'high' ? { level: 'bad', msg: 'High risk: ' + (rk.factors[0] || 'see the reasons inside.') } : rk.level === 'moderate' ? { level: 'warn', msg: 'Moderate risk: ' + (rk.factors[0] || 'see the reasons inside.') } :
         s.force_active ? { level: 'warn', msg: 'Force continue is on: automatic pauses are skipped.' } : null;
       cProt.set(LEVELS[level].label + ' protection · ' + rm[1].toLowerCase() + ' · health ' + s.health_score + '/100', protIssue);
-      cId.set((name.value.trim() || 'No name set') + ' · ' + (sig.value.trim() ? 'signature set' : 'no signature') + (track.value.trim() ? ' · custom tracking domain' : ''), null);
+      cId.set((name.value.trim() || 'No name set') + ' · ' + (sig.value.trim() ? 'signature set' : 'no signature'), null);
     }
     [limit, dmin, dmax, dfix, mode, name, sig, track, newPass, replyOn, warm.box, warm.pace].forEach(function (el) { el.addEventListener('input', refresh); el.addEventListener('change', refresh); });
     Object.keys(levelBtns).forEach(function (k) { levelBtns[k].addEventListener('click', refresh); });
     refresh();
-    cards.forEach(function (c) { c.open(!!openCards[c.key] || !!(c.issue && c.issue.level === 'bad')); });
+    cards.forEach(function (c) { c.open(!!c.issue); });
     var allBtn = h('button', { class: 'btn btn-ghost btn-sm', type: 'button', tip: 'Open or close every section at once.' }, 'Expand all');
     allBtn.addEventListener('click', function () { var every = cards.every(function (c) { return c.el.classList.contains('is-open'); }); cards.forEach(function (c) { c.open(!every); }); allBtn.textContent = every ? 'Expand all' : 'Collapse all'; });
     var save2 = h('button', { class: 'btn btn-primary', type: 'button', on: { click: function () { save.click(); } } }, 'Save changes');
@@ -446,8 +472,8 @@
   function card(s, rt, onDone) {
     var st = state(s), hi = healthInfo(s.health_score), probs = problems(s, rt);
     var pct = s.limit_today ? s.sent_today / s.limit_today * 100 : 0;
-    var testBtn = h('button', { class: 'btn btn-sm', type: 'button', tip: 'Logs in to this account right now to check that sending and reply detection work.' }, 'Test connection');
-    testBtn.addEventListener('click', function () { runTest(s, testBtn, onDone); });
+    var testBtn = h('button', { class: 'btn btn-sm btn-test', type: 'button', tip: 'Logs in to this account right now to check that sending and reply detection work.' }), testNote = h('div', { class: 'small sd-test-note hidden', role: 'status', 'aria-live': 'polite' });
+    paintCardTest(s, testBtn, testNote, onDone);
     var setBtn = h('button', { class: 'btn btn-sm', type: 'button' }, 'Settings');
     setBtn.addEventListener('click', function () { settingsPanel(s, onDone, rt); });
     // Pause / Resume in one click (no dialog: both are instantly reversible and change nothing about the people in campaigns).
@@ -477,7 +503,7 @@
         trackingChip(rt)),
       h('div', { class: 'small muted card-next', title: nextLine(s) }, nextLine(s)),
       quick.length ? h('div', { class: 'sender-quick' }, h('div', { class: 'actions' }, quick)) : null,
-      h('div', { class: 'actions' }, testBtn, setBtn));
+      h('div', { class: 'actions' }, testBtn, setBtn), testNote);
   }
 
   SB.screens.senders = function () {

@@ -69,7 +69,7 @@ Set `SENDERBOLT_PUBLIC_ORIGIN=https://your-domain` to get one-click unsubscribe 
 **Sending accounts (v1.9)**
 - Accounts under Force continue count as active. Cards show the real time of the next email (days/hours/minutes) computed from the campaign's days, hours and time zone; the same time is used on campaigns and projects.
 - Login or network problems never pause an account: it stays active, shows a connection alert and is retried automatically (15 min after a wrong password, 5 min after a network error). Inbox time-outs are retried with back-off (1, 2, 4, then 5 minutes) and do not stop sending.
-- **Health healing**: a damaged score recovers gradually (+1 per calm day, +1 per 25 clean emails up to +2, +1 per reply, at most +4 a day, never above 100; a serious problem pauses healing that day).
+- **Health healing**: a damaged score recovers gradually (+1 per calm day, +1 per 10 clean emails, +1 per reply, at most +10 a day, never above 100; a serious problem pauses healing that day).
 - **Settings** (button on a card) groups everything for one account: Connection & credentials, Daily limit & warm-up, Sending pace, Protection & risk (with a plain risk summary and Force continue), Health healing, Identity & signature, Advanced.
 
 **Projects, campaigns and drill-down**
@@ -122,6 +122,12 @@ Set `SENDERBOLT_PUBLIC_ORIGIN=https://your-domain` to get one-click unsubscribe 
 **Housekeeping (v1.9.2)**
 - Unsubscriptions tabs: All, Added by you, Unsubscribed, Bounced, Complaints. A paused sending account is shown in red on Sending accounts and in Settings.
 - Sender Settings is a set of cards: summary (status, today, health, replies), Connection & credentials, Daily limit & warm-up, Sending pace, Protection & risk, Health healing, Identity & signature, Advanced. Force continue refreshes the whole panel; the pause between emails is checked (shortest <= longest).
+**Housekeeping (v1.9.7)**
+- Sender drawer: the summary card scrolls with the page and is more compact, the side margins are smaller, **Tracking domain** now sits in the Connection card, and every card starts closed each time you open the drawer (only a card with a problem or warning opens by itself).
+- Health healing is now +1 for a calm day, **+1 for every 10 clean emails**, +1 for a reply, **at most +10 a day**, never above 100 (the text in the drawer and the calculation use the same numbers).
+- **Test connection** on the account cards runs inside the button: "Testing…", then "SMTP ✓ · IMAP ✓" (✕ for what failed, with the reason underneath); the result clears after about 12 seconds.
+- **Needs attention** lists each root cause once: a low health score and the "auto-paused for too many bounces" note are one item, and a failing inbox is not listed twice.
+
 **Housekeeping (v1.9.6)**
 - Sender settings drawer: **Pause / Resume sending** no longer closes it; the status, button, risk and summary update in place and anything you typed stays. **Test connection** now runs inline in the Connection card (button shows "Testing…" and cannot be clicked twice; the SMTP and IMAP result appears below it) instead of a pop-up. The sender cards on the Sending accounts page still open the pop-up result.
 

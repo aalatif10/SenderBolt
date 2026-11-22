@@ -725,7 +725,7 @@ td .email-trunc { max-width: 260px; } .panel-head h2 .email-trunc { max-width: 3
 .hx-bar .sel-bar { position: sticky; top: 8px; bottom: auto; margin: 0 0 var(--space-3); }
 
 /* Sender settings drawer: pinned summary, accordion cards with issue dots */
-.sd-wrap .sd-summary { position: sticky; top: calc(-1 * var(--space-5)); z-index: 5; box-shadow: var(--shadow); padding: var(--space-3) var(--space-4); gap: var(--space-2); }
+.sd-wrap .sd-summary { padding: var(--space-3); gap: var(--space-2); box-shadow: none; }
 .sd-sum-state { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; min-width: 0; }
 .sd-card { padding: 0; overflow: hidden; }
 .sd-card-h { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "t chev" "s chev"; align-items: center; column-gap: var(--space-3); row-gap: 2px; width: 100%; text-align: left; padding: var(--space-3) var(--space-4); background: none; border: 0; cursor: pointer; font: inherit; color: inherit; }
@@ -755,3 +755,15 @@ td .email-trunc { max-width: 260px; } .panel-head h2 .email-trunc { max-width: 3
 .sd-test { display: grid; gap: var(--space-2); }
 .sd-test .test-box { margin: 0; gap: var(--space-2); } .sd-test .test-row { padding: 8px 10px; } .sd-test p { margin: 0; }
 .sd-test-head { display: flex; align-items: center; gap: 8px; } .sd-test-head.ok { color: var(--good); } .sd-test-head.fail { color: var(--bad); } .sd-test-head .small { margin-left: auto; }
+
+/* v1.9.7: tighter drawer, inline test result on account cards */
+.sd-wrap.panel-pad { padding: 0; gap: var(--space-3); }
+.sd-wrap .sd-sum-top { gap: var(--space-2); } .sd-wrap .sd-sum-top .btn { padding: 6px 12px; }
+.sd-wrap .sd-stats { gap: var(--space-3); } .sd-wrap .sd-stats > div { gap: 3px; }
+.sd-wrap .sd-stats .progress { height: 6px; }
+.sd-wrap .sd-card-h { padding: var(--space-2) var(--space-3); } .sd-wrap .sd-card-b { padding: var(--space-3); }
+.sd-wrap .sd-foot { bottom: calc(-1 * var(--space-5)); }
+.btn-test.is-ok { color: var(--good); border-color: var(--good); background: var(--good-soft); }
+.btn-test.is-fail { color: var(--bad); border-color: var(--bad); background: var(--bad-soft); }
+.btn-test[aria-busy="true"] { opacity: .8; cursor: progress; }
+.sd-test-note { color: var(--bad); margin-top: var(--space-2); word-break: break-word; }
