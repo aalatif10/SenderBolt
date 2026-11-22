@@ -236,19 +236,39 @@ P.remove = function (userId, id, ip) {
   }).then(function () { return { ok: true }; });
 };
 
-// Batch: { action: 'archive' | 'restore' | 'delete', ids[] } -> { done: [ids], failed: [{id, message}] }
+// Pause or resume every running (or paused) campaign of a project. Campaigns in another state are left alone;
+// a project with nothing to change is reported as a conflict so the caller can say so.
+P.setRunning = function (userId, id, action, ip) {
+  var self = this, changed = 0;
+  return this._own(userId, id).then(function () {
+    return self.db.all('SELECT id FROM campaigns WHERE project_id = ? AND user_id = ? AND parent_id IS NULL AND archived = 0 ORDER BY id', [id, userId]);
+  }).then(function (mains) {
+    var p = Promise.resolve();
+    mains.forEach(function (m) {
+      p = p.then(function () {
+        return self.campaigns[action](userId, m.id, ip).then(function () { changed++; }, function (e) { if (!(e instanceof AppError) || e.status !== 409) throw e; });
+      });
+    });
+    return p;
+  }).then(function () {
+    if (!changed) throw new AppError('conflict', action === 'pause' ? 'Nothing is running in this project' : 'Nothing is paused in this project', 409);
+    return { ok: true, changed: changed };
+  });
+};
+
+// Batch: { action: 'archive' | 'restore' | 'delete' | 'pause' | 'resume', ids[] } -> { done: [ids], failed: [{id, message}] }
 P.batch = function (userId, input, ip) {
   var self = this;
   return Promise.resolve().then(function () {
     input = input || {};
-    if (['archive', 'restore', 'delete'].indexOf(input.action) === -1) throw bad('action', 'Choose archive, restore or delete');
+    if (['archive', 'restore', 'delete', 'pause', 'resume'].indexOf(input.action) === -1) throw bad('action', 'Choose archive, restore, delete, pause or resume');
     var ids = v.idArray(input.ids, 1, 200);
     if (!ids) throw bad('ids', 'Select between 1 and 200 projects');
     ids = ids.filter(function (x, i) { return ids.indexOf(x) === i; });
     var res = { action: input.action, done: [], failed: [] }, p = Promise.resolve();
     ids.forEach(function (id) {
       p = p.then(function () {
-        var op = input.action === 'delete' ? self.remove(userId, id, ip) : self.update(userId, id, { archived: input.action === 'archive' }, ip);
+        var op = input.action === 'delete' ? self.remove(userId, id, ip) : (input.action === 'pause' || input.action === 'resume') ? self.setRunning(userId, id, input.action, ip) : self.update(userId, id, { archived: input.action === 'archive' }, ip);
         return op.then(function () { res.done.push(id); }, function (e) { if (!(e instanceof AppError)) throw e; res.failed.push({ id: id, message: e.message }); });
       });
     });

@@ -722,3 +722,4 @@ td .email-trunc { max-width: 260px; } .panel-head h2 .email-trunc { max-width: 3
 /* inbox: manual Successful outcome next to the reply tags */
 .ib-tag-sep { width: 1px; align-self: stretch; background: var(--border); margin: 2px var(--space-1); }
 .ib-chip .icon { width: 13px; height: 13px; margin-right: 4px; } .ib-row-bot .tag .icon { width: 12px; height: 12px; margin-right: 3px; }
+.hx-bar .sel-bar { position: sticky; top: 8px; bottom: auto; margin: 0 0 var(--space-3); }

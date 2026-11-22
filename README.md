@@ -122,6 +122,9 @@ Set `SENDERBOLT_PUBLIC_ORIGIN=https://your-domain` to get one-click unsubscribe 
 **Housekeeping (v1.9.2)**
 - Unsubscriptions tabs: All, Added by you, Unsubscribed, Bounced, Complaints. A paused sending account is shown in red on Sending accounts and in Settings.
 - Sender Settings is a set of cards: summary (status, today, health, replies), Connection & credentials, Daily limit & warm-up, Sending pace, Protection & risk, Health healing, Identity & signature, Advanced. Force continue refreshes the whole panel; the pause between emails is checked (shortest <= longest).
+**Housekeeping (v1.9.4)**
+- Campaigns page: a project's ⋮ menu has **Pause** (or **Resume** when paused), which acts on every running (or paused) campaign in it; campaign rows already had the same. When you tick projects, the selection bar now appears **above** the table with **Pause** (and **Resume** if any selected project is paused) next to Archive, Delete and Clear. Projects with nothing to change are reported, not failed silently.
+
 **Housekeeping (v1.9.3)**
 - **Successful** is a manual outcome: in an Inbox conversation click **Successful** next to the reply tags (click again to undo). The Inbox Status filter has a **Successful** tab; **Not successful** now means opted out or bounced and not marked Successful, so it no longer overlaps **Not interested**. The campaigns table's Successful column counts these marks.
 - **Queue → Next email** shows when each campaign's next email leaves (days/hours/minutes), and Status uses the same pills as Campaigns.

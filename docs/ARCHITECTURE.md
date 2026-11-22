@@ -423,3 +423,5 @@ Browser check done for this release: the app shell and sign-in screen load in he
 | `public/js/screens/senders.js`, `public/css/app.css` | Card-based Settings panel (`.sd-*`), `pill-halted` (red paused sender). |
 | `public/js/screens/hub.js`, `settings.js` | Tab order (All first); red Paused badge. |
 | `test/mailbox.js`, `test/v190.js` | Parser-throw test; aggregate-vs-own-numbers test. |
+
+- `ProjectsService.setRunning(userId, id, 'pause'|'resume')` (`src/services/projects.js`): pauses/resumes every main campaign of a project via `CampaignService`; used by `POST /api/projects/batch` actions `pause`/`resume`.

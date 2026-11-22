@@ -41,6 +41,9 @@
       return [
         { label: 'Open project', icon: 'eye', tip: 'See the project page with its totals and campaigns.', onClick: function () { location.hash = '#/project/' + p.id; } },
         { label: 'New campaign', icon: 'plus', tip: 'Add a campaign to this project.', onClick: function () { location.hash = '#/campaign/new/' + p.id; } },
+        p.status === 'paused' ? { label: 'Resume', icon: 'play', tip: 'Continue sending for the paused campaigns in this project.', onClick: function () { ops.batch('resume', [p.id]); } }
+          : { label: 'Pause', icon: 'pause', disabled: p.status !== 'active' || st.archived, tip: p.status === 'active' ? 'Stop sending for every running campaign in this project until you resume. Nobody is lost.' : 'Only a project with a running campaign can be paused.',
+            onClick: function () { ops.batch('pause', [p.id]); } },
         { label: st.archived ? 'Restore' : 'Archive', icon: 'archive', tip: st.archived ? 'Show this project in the main list again.' : 'Hide this project from the main list. Results are kept.', onClick: function () { ops.batch(st.archived ? 'restore' : 'archive', [p.id]); } },
         { label: 'Delete', icon: 'trash', tip: 'Permanently delete the project, its campaigns and history.', onClick: function () {
           ui.confirm({ title: 'Delete "' + p.name + '"?', message: 'This permanently deletes the project, all its campaigns and sending history. A project with a running campaign is skipped: pause it first.', confirmLabel: 'Delete forever', danger: true, onConfirm: function () { return ops.batch('delete', [p.id]); } });
@@ -110,11 +113,11 @@
     var st = { q: '', status: 'all', sort: 'recent', archived: false, sel: {}, open: {}, detail: {}, refresh: function () { return load(); } }, data = null, built = false;
     var tb = SB.lists.toolbar({ placeholder: 'Search projects', label: 'Search projects', sorts: SORTS, sort: st.sort,
       onSearch: function (q) { st.q = q; paintList(); }, onSort: function (k) { st.sort = k; paintList(); } });
-    var chipsBox = h('div'), tagsBox = h('div'), barBox = h('div'), gridBox = h('div');
+    var chipsBox = h('div'), tagsBox = h('div'), barBox = h('div', { class: 'hx-bar' }), gridBox = h('div');
     root.appendChild(head); root.appendChild(topSlot);
     root.appendChild(listSlot);
     SB.mount(listSlot, h('div', null, h('div', { class: 'section-title' }, h('div', { class: 'actions' }, h('h2', { text: 'Projects and Campaigns' }), ui.info('Your projects, each holding its campaigns. Open a project with the arrow to see its campaigns, their progress and results.'))),
-      tb.el, chipsBox, tagsBox, gridBox, barBox));
+      tb.el, chipsBox, tagsBox, barBox, gridBox));
 
     function visible() {
       if (!data) return [];
@@ -132,7 +135,7 @@
     function reload() { st.sel = {}; return load(); }
     function batch(action, ids) {
       return SB.api.post('/api/projects/batch', { action: action, ids: ids }).then(function (r) {
-        SB.lists.report(r, { archive: 'archived', restore: 'restored', delete: 'deleted' }[action]);
+        SB.lists.report(r, { archive: 'archived', restore: 'restored', delete: 'deleted', pause: 'paused', resume: 'resumed' }[action]);
         st.sel = {}; return load();
       });
     }
@@ -169,12 +172,15 @@
             h('tbody', null, items.reduce(function (acc, p) { return acc.concat(projectRows(p, st, paintList, toggle, ops)); }, []))))));
       }
       var names = selIds.length;
-      var acts = [{ label: st.archived ? 'Restore' : 'Archive', tip: st.archived ? 'Show these projects in the main list again.' : 'Hide these projects from the main list. Results are kept.',
+      var anyPaused = selIds.some(function (id) { return data.items.some(function (p) { return p.id === id && p.status === 'paused'; }); });
+      var acts = [{ label: 'Pause', icon: 'pause', tip: 'Stop sending for every running campaign in the selected projects. Nobody is lost.', onClick: function () { batch('pause', selIds); } }]
+        .concat(anyPaused ? [{ label: 'Resume', icon: 'play', tip: 'Continue sending for the paused campaigns in the selected projects.', onClick: function () { batch('resume', selIds); } }] : [])
+        .concat([{ label: st.archived ? 'Restore' : 'Archive', tip: st.archived ? 'Show these projects in the main list again.' : 'Hide these projects from the main list. Results are kept.',
         onClick: function () { batch(st.archived ? 'restore' : 'archive', selIds); } },
         { label: 'Delete', kind: 'danger', icon: 'trash', onClick: function () {
           ui.confirm({ title: 'Delete ' + names + ' project' + (names === 1 ? '' : 's') + '?', message: 'This permanently deletes the selected projects, all their campaigns and sending history. Projects with a running campaign are skipped: pause them first.',
             confirmLabel: 'Delete forever', danger: true, onConfirm: function () { return batch('delete', selIds); } });
-        } }];
+        } }]);
       SB.mount(barBox, h('div', null, SB.lists.selectionBar(names, 'project', acts, function () { st.sel = {}; paintList(); }, items.length > names ? function () { items.forEach(function (p) { st.sel[p.id] = p.name; }); paintList(); } : null)));
     }
 

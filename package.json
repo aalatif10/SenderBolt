@@ -1,6 +1,6 @@
 {
   "name": "senderbolt",
-  "version": "1.9.3",
+  "version": "1.9.4",
   "private": true,
   "description": "SenderBolt - B2B email outreach and campaign management platform",
   "main": "src/server.js",

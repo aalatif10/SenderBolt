@@ -166,6 +166,20 @@ h.test('cannot archive or delete while sending; delete removes campaigns and bat
       .then(function (r) { assert.strictEqual(r[0].n, 0); assert.strictEqual(r[1].n, 0); assert.strictEqual(r[2].n, 0); });
   });
 });
+h.test('batch pause/resume: pauses every running campaign of the projects, reports idle ones, other users cannot touch them', function () {
+  return setup().then(function (c) {
+    return c.projects.create(c.a, { name: 'PR' }).then(function (pj) {
+      c.pj = pj.id; return mk(c, 'Px', 4, { project_id: pj.id, split: { batch_size: 2, seed: 3 } });
+    }).then(function (camp) { c.camp = camp; return c.camps.start(c.a, camp.id); })
+      .then(function () { return c.projects.batch(c.a, { action: 'pause', ids: [c.pj] }); })
+      .then(function (r) { assert.deepStrictEqual(r.done, [c.pj]); return c.db.all("SELECT DISTINCT status FROM campaigns WHERE project_id = ? OR parent_id = ?", [c.pj, c.camp.id]); })
+      .then(function (rows) { assert.deepStrictEqual(rows.map(function (x) { return x.status; }), ['paused']); return c.projects.batch(c.a, { action: 'pause', ids: [c.pj] }); })
+      .then(function (r) { assert.strictEqual(r.done.length, 0); assert.ok(/Nothing is running/.test(r.failed[0].message)); return c.projects.batch(c.a, { action: 'resume', ids: [c.pj] }); })
+      .then(function (r) { assert.deepStrictEqual(r.done, [c.pj]); return c.db.get("SELECT COUNT(*) AS n FROM campaigns WHERE status = 'paused'"); })
+      .then(function (r) { assert.strictEqual(r.n, 0); return c.projects.batch(c.b || 999, { action: 'pause', ids: [c.pj] }); })
+      .then(function (r) { assert.strictEqual(r.done.length, 0); assert.strictEqual(r.failed.length, 1); });
+  });
+});
 h.test('renaming and archiving an idle project works and archived projects leave the default list', function () {
   return setup().then(function (c) {
     return c.projects.create(c.a, { name: 'Old' }).then(function (p) {
