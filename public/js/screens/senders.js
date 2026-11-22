@@ -193,6 +193,7 @@
   }
 
   // ---- settings slide-over -----------------------------------------------------------------
+  var openCards = {};   // which settings cards were open last time (kept while the page stays loaded)
   function settingsPanel(s, onDone, rt) {
     var p = ui.panel(s.email), err = h('div', { class: 'form-error hidden', role: 'alert' });
     var ph = p.body.parentNode && p.body.parentNode.querySelector('.panel-head h2');
@@ -273,8 +274,22 @@
     var conn = s.connection_error ? h('div', { class: 'callout warn' }, SB.icon('alert'), ' ', 'Connection problem: ' + s.connection_error + ' The account stays active and SenderBolt retries automatically; nothing is paused for this.') : null;
     var where = [s.provider === 'gmail' ? 'Gmail' : 'Custom SMTP', s.smtp_host ? 'SMTP ' + s.smtp_host + (s.smtp_port ? ':' + s.smtp_port : '') : null, s.imap_host ? 'IMAP ' + s.imap_host : null].filter(Boolean).join(' · ');
 
-    function section(title, desc, kids) {
-      return h('section', { class: 'sd-sec card' }, h('div', { class: 'sd-sec-h' }, h('h3', { text: title }), desc ? h('p', { class: 'small muted', text: desc }) : null), kids);
+    // Accordion card: header = title + one-line summary of the current state + an issue dot; the body opens on click.
+    // Open/closed state is kept between visits (this page view only); a card with a real problem always opens by itself.
+    var cards = [];
+    function card(key, title, kids) {
+      var dot = h('span', { class: 'sd-dot hidden', 'aria-hidden': 'true' }), sum = h('span', { class: 'sd-card-sum small muted' });
+      var head = h('button', { class: 'sd-card-h', type: 'button', 'aria-expanded': 'false' }, h('span', { class: 'sd-card-t' }, h('b', { text: title }), dot), sum, SB.icon('chevron'));
+      var bodyEl = h('div', { class: 'sd-card-b hidden' }, kids), el = h('section', { class: 'sd-card card' }, head, bodyEl);
+      var c = { key: key, el: el, issue: null };
+      c.open = function (on) { head.setAttribute('aria-expanded', on ? 'true' : 'false'); bodyEl.classList.toggle('hidden', !on); el.classList.toggle('is-open', !!on); openCards[key] = !!on; };
+      head.addEventListener('click', function () { c.open(bodyEl.classList.contains('hidden')); });
+      c.set = function (text, issue) {   // issue: null | { level: 'bad' | 'warn', msg }
+        c.issue = issue; sum.textContent = issue ? issue.msg : text; sum.className = 'sd-card-sum small ' + (issue ? 'sd-sum-' + issue.level : 'muted');
+        dot.className = 'sd-dot' + (issue ? ' ' + issue.level : ' hidden'); dot.setAttribute('title', issue ? issue.msg : '');
+        head.setAttribute('aria-label', title + '. ' + (issue ? (issue.level === 'bad' ? 'Needs attention: ' : 'Warning: ') : '') + (issue ? issue.msg : text));
+      };
+      cards.push(c); return c;
     }
     // Risk: one plain verdict and the reasons behind it.
     var rk = s.risk || { level: 'low', factors: [] }, rm = RISK[rk.level] || RISK.low;
@@ -296,33 +311,62 @@
         h('li', { text: 'At most +' + r.day_max + ' a day, never above 100. A serious problem pauses healing that day.' })));
 
     var hi = healthInfo(s.health_score), st = state(s), pct = s.limit_today ? Math.min(100, s.sent_today / s.limit_today * 100) : 0;
+    var connChip = s.connection_error ? h('span', { class: 'chip chip-bad', tip: 'Problem: ' + s.connection_error }, 'Connection problem') : trackingChip(rt || 'pending');
     var summary = h('div', { class: 'sd-summary card' },
-      h('div', { class: 'sd-sum-top' }, pill(st), h('div', { class: 'small muted', text: nextLine(s) })),
+      h('div', { class: 'sd-sum-top' }, h('div', { class: 'sd-sum-state' }, pill(st), h('div', { class: 'small muted', text: nextLine(s) })), toggle),
       h('div', { class: 'sd-stats' },
         h('div', { tip: 'Emails sent today out of what this account may send today (warm-up limits included).' }, h('span', { class: 'small muted', text: 'Sent today' }), h('b', { text: fmt.num(s.sent_today) + ' / ' + fmt.num(s.limit_today) }), ui.progress(pct)),
         h('div', { tip: HEALTH_TIP }, h('span', { class: 'small muted', text: 'Health' }), h('b', { text: s.health_score + ' / 100' }), h('span', { class: 'chip chip-' + hi.cls, text: hi.label })),
-        h('div', { tip: 'Replies and bounces are read from this account\u2019s inbox.' }, h('span', { class: 'small muted', text: 'Replies' }), trackingChip(rt || 'pending'))),
-      h('div', { class: 'actions' }, toggle));
+        h('div', { tip: 'Whether SenderBolt can reach this account’s mailbox: replies and bounces are read from it.' }, h('span', { class: 'small muted', text: 'Connection' }), connChip)));
 
-    p.body.appendChild(h('div', { class: 'panel-pad sd-wrap' }, err, summary, conn,
-      section('Connection & credentials', where, h('div', null,
-        h('div', { class: 'set-row' }, h('div', { class: 'set-txt' }, h('label', { for: 'st-reply', text: 'Replies detected' }, ' ', ui.info('SenderBolt reads this account\u2019s inbox to notice replies. Each reply stops follow-ups for THAT person only; everyone else in the campaign keeps going.')),
-          h('div', { class: 'hint', text: 'Stop follow-ups for a person who replies. Turn off to keep following up regardless (replies still reach your Inbox). "Stop campaign" requests and bounces are always respected.' })), replyOn),
-        field('Replace App Password', newPass, 'Use this if Google revoked the old one. The current one is never shown.', 'st-pass'),
-        h('div', { class: 'actions' }, testBtn))),
-      section('Daily limit & warm-up', 'How many emails this account may send per day, and how fast it ramps up.', h('div', null,
-        field('Emails per day', limit, 'Maximum ' + CAP + '. Gmail allows about 500 per day, so ' + CAP + ' keeps a safe 100-email buffer and protects your account.', 'st-limit'), warm.node)),
-      section('Sending pace', 'The pause between two emails from this account.', h('div', null,
-        field('Pause between emails', mode, 'Random pauses look like a human. Very short pauses can trigger spam filters.', 'st-mode'), randBox, fixBox)),
-      section('Protection & risk', 'When SenderBolt stops this account on its own, and what it is watching.', h('div', null, riskBox,
-        field('Protection level', levelBox, 'How early SenderBolt pauses this account to protect its reputation. Based on the account\u2019s health score and failed sends.', 'st-level'),
-        forceBox)),
-      section('Health healing', 'A damaged score recovers gradually: calm days, clean sending and replies earn points back.', healBox),
-      section('Identity & signature', 'What recipients see.', h('div', null,
-        field('Name shown to recipients', name, 'People see this as the sender name. Use a real person\u2019s name for best results.', 'st-name'),
-        field('Added to the end of every email', sig, 'Plain text. Line breaks are kept.', 'st-sig'))),
-      section('Advanced', null, field('Tracking domain', track, 'Only needed if you use a custom domain for unsubscribe links.', 'st-track')),
-      h('div', { class: 'sd-foot' }, h('button', { class: 'btn btn-primary', type: 'button', on: { click: function () { save.click(); } } }, 'Save changes'), del)));
+    var cConn = card('conn', 'Connection & reply tracking', h('div', null,
+      h('div', { class: 'sd-where small muted', tip: 'The servers SenderBolt uses for this account. Gmail accounts use Google’s servers automatically.' }, where),
+      h('div', { class: 'set-row' }, h('div', { class: 'set-txt' }, h('label', { for: 'st-reply', text: 'Replies detected' }, ' ', ui.info('SenderBolt reads this account’s inbox to notice replies. Each reply stops follow-ups for THAT person only; everyone else in the campaign keeps going.')),
+        h('div', { class: 'hint', text: 'Stop follow-ups for a person who replies. Turn off to keep following up regardless (replies still reach your Inbox). "Stop campaign" requests and bounces are always respected.' })), replyOn),
+      field('Replace App Password', newPass, 'Use this if Google revoked the old one. The current one is never shown.', 'st-pass'),
+      h('div', { class: 'actions' }, testBtn)));
+    var cLimits = card('limits', 'Limits, pace & warm-up', h('div', null,
+      field('Emails per day', limit, 'Maximum ' + CAP + '. Gmail allows about 500 per day, so ' + CAP + ' keeps a safe 100-email buffer and protects your account.', 'st-limit'), warm.node,
+      h('div', { class: 'sd-sub' }, h('b', { text: 'Sending pace' }), h('span', { class: 'small muted', text: 'The pause between two emails from this account.' })),
+      field('Pause between emails', mode, 'Random pauses look like a human. Very short pauses can trigger spam filters.', 'st-mode'), randBox, fixBox));
+    var cProt = card('prot', 'Protection & health healing', h('div', null, riskBox,
+      field('Protection level', levelBox, 'How early SenderBolt pauses this account to protect its reputation. Based on the account’s health score and failed sends.', 'st-level'),
+      forceBox,
+      h('div', { class: 'sd-sub' }, h('b', { text: 'Health healing' }), h('span', { class: 'small muted', text: 'A damaged score recovers gradually: calm days, clean sending and replies earn points back.' })), healBox));
+    var cId = card('id', 'Identity & signature', h('div', null,
+      field('Name shown to recipients', name, 'People see this as the sender name. Use a real person’s name for best results.', 'st-name'),
+      field('Added to the end of every email', sig, 'Plain text. Line breaks are kept.', 'st-sig'),
+      field('Tracking domain (advanced)', track, 'Only needed if you use a custom domain for unsubscribe links.', 'st-track')));
+
+    // One line per card, kept live while the owner edits, plus the issue dot (problems found in ANY control of the card).
+    function refresh() {
+      var lim = num(limit), badLim = !isFinite(lim) || lim < 1 || lim > CAP, badWait = mode.value === 'random' && num(dmin) > num(dmax), noPw = !s.has_password && !newPass.value;
+      var connIssue = noPw ? { level: 'bad', msg: 'No App Password yet: this account cannot send.' } : s.connection_error ? { level: 'bad', msg: 'Connection problem: ' + s.connection_error } :
+        rt === 'error' ? { level: 'bad', msg: 'Replies cannot be read from this inbox. Run Test connection.' } : (rt === 'pending' || rt === 'not_configured') ? { level: 'warn', msg: rt === 'pending' ? 'Waiting for the first successful inbox check.' : 'No inbox (IMAP) settings: replies cannot be detected.' } : null;
+      cConn.set(where + ' · replies ' + (replyOn.checked ? 'on' : 'off'), connIssue);
+      var pace = mode.value === 'random' ? num(dmin) + '–' + num(dmax) + ' s' : num(dfix) + ' s';
+      cLimits.set((isFinite(lim) ? fmt.num(lim) : '?') + '/day · ' + (warm.box.checked ? (s.limit_today < s.daily_limit ? 'warm-up day ' + s.warmup_day : 'warm-up on') : 'no warm-up') + ' · pause ' + pace,
+        badLim ? { level: 'bad', msg: 'Emails per day must be between 1 and ' + CAP + '.' } : badWait ? { level: 'bad', msg: 'The shortest wait is longer than the longest wait.' } : s.warmup_slowed ? { level: 'warn', msg: 'Warm-up is slowed because of recent problems.' } : null);
+      var floor = s.health_floor || 50, protIssue = s.health_score < floor && !s.force_active ? { level: 'bad', msg: 'Health ' + s.health_score + ' is below the pause line (' + floor + ').' } :
+        rk.level === 'high' ? { level: 'bad', msg: 'High risk: ' + (rk.factors[0] || 'see the reasons inside.') } : rk.level === 'moderate' ? { level: 'warn', msg: 'Moderate risk: ' + (rk.factors[0] || 'see the reasons inside.') } :
+        s.force_active ? { level: 'warn', msg: 'Force continue is on: automatic pauses are skipped.' } : null;
+      cProt.set(LEVELS[level].label + ' protection · risk ' + rm[1] + ' · health ' + s.health_score + '/100', protIssue);
+      cId.set((name.value.trim() || 'No name set') + ' · ' + (sig.value.trim() ? 'signature set' : 'no signature') + (track.value.trim() ? ' · custom tracking domain' : ''), null);
+    }
+    [limit, dmin, dmax, dfix, mode, name, sig, track, newPass, replyOn, warm.box, warm.pace].forEach(function (el) { el.addEventListener('input', refresh); el.addEventListener('change', refresh); });
+    Object.keys(levelBtns).forEach(function (k) { levelBtns[k].addEventListener('click', refresh); });
+    refresh();
+    cards.forEach(function (c) { c.open(!!openCards[c.key] || !!(c.issue && c.issue.level === 'bad')); });
+    var allBtn = h('button', { class: 'btn btn-ghost btn-sm', type: 'button', tip: 'Open or close every section at once.' }, 'Expand all');
+    allBtn.addEventListener('click', function () { var every = cards.every(function (c) { return c.el.classList.contains('is-open'); }); cards.forEach(function (c) { c.open(!every); }); allBtn.textContent = every ? 'Expand all' : 'Collapse all'; });
+    var save2 = h('button', { class: 'btn btn-primary', type: 'button', on: { click: function () { save.click(); } } }, 'Save changes');
+    // a failed check on Save opens the card that holds the problem
+    var shown = err.classList; new MutationObserver(function () { if (!shown.contains('hidden')) cards.forEach(function (c) { if (c.issue && c.issue.level === 'bad') c.open(true); }); }).observe(err, { attributes: true, attributeFilter: ['class'] });
+
+    p.body.appendChild(h('div', { class: 'panel-pad sd-wrap' }, summary, err, conn,
+      h('div', { class: 'sd-cards-h' }, h('span', { class: 'small muted', text: 'Settings' }), allBtn),
+      cConn.el, cLimits.el, cProt.el, cId.el,
+      h('div', { class: 'sd-foot' }, save2, del)));
   }
 
   // ---- quick actions (one click, right on the card) -------------------------------------------------
