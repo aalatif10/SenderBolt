@@ -30,6 +30,14 @@ createApp(cfg).then(function (app) {
     console.log('SenderBolt listening on http://' + cfg.host + ':' + cfg.port + '  (db: ' + cfg.dbFile + ', driver: ' + app.db.driver + ')');
     console.log(cfg.sending === 'off' ? 'Sending engine: STOPPED (SENDERBOLT_SENDING=off)' : 'Sending engine: running - emails are sent for real');
     if (cfg.sending !== 'off' && !cfg.publicOrigin) console.warn('NOTE: SENDERBOLT_PUBLIC_ORIGIN is not set, so emails get a "reply to unsubscribe" footer instead of a one-click link.');
+    if (cfg.accessToken) {
+      console.log('Remote access: ON (tunnel / other hosts need the access token from ' + cfg.accessTokenSource + '). Local addresses are not affected.');
+      console.log('  Access token: ' + cfg.accessToken + '   (show again any time: npm run token)');
+      console.log('  Open once per device: https://YOUR-TUNNEL-ADDRESS/?token=<the token above>');
+      if (!cfg.trustProxy) console.warn('  Tip: set SENDERBOLT_TRUST_PROXY=1 when using a tunnel so rate limits see the real visitor address.');
+    } else {
+      console.log('Remote access: OFF (only local addresses). Run "npm run token" to create an access token and allow a tunnel.');
+    }
     app.scheduler.start();
     if (cfg.host !== '127.0.0.1' && !cfg.secureCookies) console.warn('WARNING: listening beyond localhost without SENDERBOLT_SECURE_COOKIES=1. Put HTTPS in front of it.');
   });

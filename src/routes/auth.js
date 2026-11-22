@@ -30,13 +30,13 @@ module.exports = function register(router, d) {
     return d.auth.login(str(ctx.body.email, 254), str(ctx.body.password, 200), { ip: ctx.ip, userAgent: ctx.req.headers['user-agent'] })
       .then(function (r) {
         return reply(200, { user: r.user, csrfToken: r.csrfToken },
-          { cookies: [cookies.serialize(cookieName, r.token, { secure: secure, maxAgeSec: r.maxAgeSec })] });
+          { cookies: [cookies.serialize(cookieName, r.token, { secure: ctx.secure || secure, maxAgeSec: r.maxAgeSec })] });
       });
   });
 
   router.post('/api/auth/logout', function (ctx) {
     return d.auth.logout(ctx.sessionToken, ctx.user.id, ctx.ip).then(function () {
-      return reply(200, { ok: true }, { cookies: [cookies.clear(cookieName, { secure: secure })] });
+      return reply(200, { ok: true }, { cookies: [cookies.clear(cookieName, { secure: ctx.secure || secure })] });
     });
   });
 

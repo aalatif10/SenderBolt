@@ -18,6 +18,8 @@ var lines = [
   'SENDERBOLT_SESSION_SECRET=' + crypto.randomBytes(32).toString('hex'),
   '# Optional: required when creating the first account (recommended if not on localhost).',
   'SENDERBOLT_SETUP_TOKEN=' + crypto.randomBytes(16).toString('hex'),
+  '# Remote / tunnel access token: devices opening SenderBolt through a tunnel address enter it once (npm run token shows it again).',
+  'SENDERBOLT_ACCESS_TOKEN=' + crypto.randomBytes(24).toString('hex'),
   '# Emails are always sent for real. Uncomment to STOP the sending engine (kill switch):',
   '# SENDERBOLT_SENDING=off',
   'HOST=127.0.0.1',

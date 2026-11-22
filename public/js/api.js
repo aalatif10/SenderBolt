@@ -44,6 +44,7 @@
           if (method === 'GET' && n < 1) return wait(800).then(function () { return attempt(n + 1); });
           setOffline(true);
         }
+        if (e.status === 401 && e.code === 'access_token_required') { location.reload(); throw e; }   // the remote access cookie expired: the page asks for the token again
         if (e.status === 401 && !opts.noAuthRedirect && onUnauthorized) onUnauthorized();
         throw e;
       });

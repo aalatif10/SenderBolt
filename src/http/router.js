@@ -9,6 +9,7 @@ var cookies = require('../lib/cookies');
 var tokens = require('../lib/tokens');
 var AppError = require('../lib/errors').AppError;
 var RateLimiter = require('../security/rateLimiter').RateLimiter;
+var accessGate = require('./accessGate');
 
 var UNSAFE = { POST: 1, PUT: 1, PATCH: 1, DELETE: 1 };
 
@@ -114,12 +115,15 @@ function send(res, r) {
 function createDispatcher(o) {
   var globalLimiter = o.globalLimiter || new RateLimiter({ windowMs: 60000, max: 600 });
   var cookieName = o.cookieName;
+  var gate = accessGate.create({ token: o.accessToken, secret: o.sessionSecret, localHosts: o.localHosts || o.allowedHosts, allowedHosts: o.allowedHosts });
 
   function handle(req, res) {
-    securityHeaders(res, o.secureCookies);
+    // Behind an HTTPS tunnel the browser talks https even though the tunnel reaches us over http: cookies then get the Secure flag.
+    var secure = !!o.secureCookies || (gate.enabled && String(req.headers['x-forwarded-proto'] || '').toLowerCase() === 'https');
+    securityHeaders(res, secure);
     var ip = clientIp(req, o);
     var host = String(req.headers.host || '').toLowerCase();
-    if (o.allowedHosts.indexOf(host) === -1) throw new AppError('bad_host', 'Host not allowed', 400);
+    if (o.allowedHosts.indexOf(host) === -1 && !(gate.enabled && gate.hostAllowed(host))) throw new AppError('bad_host', 'Host not allowed', 400);
     var u;
     try { u = new URL(req.url, 'http://placeholder'); } catch (e) { throw new AppError('bad_request', 'Bad URL', 400); }
     var g = globalLimiter.consume(ip);
@@ -138,6 +142,15 @@ function createDispatcher(o) {
         break;
       }
     }
+    // Remote (tunnel) hosts must present the access token first, except for the public recipient routes.
+    if (gate.enabled && gate.isRemote(host) && !(route && route.external)) {
+      if (req.method === 'POST' && u.pathname === '/__access') return gate.entry(req, res, ip, secure, host);
+      var g = gate.check(req, u, ip);
+      if (g.ok && g.redirect) {
+        res.statusCode = 302; res.setHeader('Set-Cookie', gate.cookie(secure)); res.setHeader('Location', g.redirect); res.setHeader('Cache-Control', 'no-store'); res.end(); return;
+      }
+      if (!g.ok && !gate.isOpenAsset(req, u)) return gate.deny(req, res, u);
+    }
     if (!route) {
       if (!pathMatched && o.staticHandler && (req.method === 'GET' || req.method === 'HEAD') && u.pathname.indexOf('/api/') !== 0) return o.staticHandler(req, res, u.pathname);
       if (pathMatched) { res.setHeader('Allow', allow.join(', ')); throw new AppError('method_not_allowed', 'Method not allowed', 405); }
@@ -148,11 +161,11 @@ function createDispatcher(o) {
     if (unsafe) {
       if (req.headers['x-sb-client'] !== '1') throw new AppError('csrf_header', 'Missing client header', 403);
       var origin = req.headers.origin;
-      if (origin && o.allowedOrigins.indexOf(origin) === -1) throw new AppError('csrf_origin', 'Origin not allowed', 403);
+      if (origin && o.allowedOrigins.indexOf(origin) === -1 && !(gate.enabled && gate.originAllowed(origin, host))) throw new AppError('csrf_origin', 'Origin not allowed', 403);
       if (req.headers['sec-fetch-site'] === 'cross-site') throw new AppError('csrf_origin', 'Cross-site request blocked', 403);
     }
 
-    var ctx = { req: req, res: res, params: params, query: {}, body: {}, ip: ip, user: null, session: null, sessionToken: null };
+    var ctx = { req: req, res: res, params: params, query: {}, body: {}, ip: ip, secure: secure, user: null, session: null, sessionToken: null };
     u.searchParams.forEach(function (v, key) { if (!Object.prototype.hasOwnProperty.call(ctx.query, key)) ctx.query[key] = v; });
 
     var p = Promise.resolve();

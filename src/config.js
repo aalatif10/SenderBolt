@@ -33,6 +33,16 @@ function build(env) {
     origins.push(o);
     hosts.push(o.replace(/^https?:\/\//, ''));
   }
+  // Remote / tunnel access (see http/accessGate.js): a token turns it on. SENDERBOLT_ACCESS_TOKEN is the clear name; a long SENDERBOLT_SETUP_TOKEN
+  // that is already in .env is accepted too. Short tokens are refused because anyone on the internet can guess at a tunnel address.
+  var accessToken = '', accessSource = '';
+  if (env.SENDERBOLT_ACCESS_TOKEN) {
+    if (env.SENDERBOLT_ACCESS_TOKEN.length < 16) throw new Error('SENDERBOLT_ACCESS_TOKEN must be at least 16 characters (run: npm run token -- --new)');
+    accessToken = env.SENDERBOLT_ACCESS_TOKEN; accessSource = 'SENDERBOLT_ACCESS_TOKEN';
+  } else if (env.SENDERBOLT_SETUP_TOKEN && env.SENDERBOLT_SETUP_TOKEN.length >= 16) {
+    accessToken = env.SENDERBOLT_SETUP_TOKEN; accessSource = 'SENDERBOLT_SETUP_TOKEN';
+  }
+  var localHosts = [host + ':' + port, 'localhost:' + port, '127.0.0.1:' + port];
   // Real sending is the only mode. SENDERBOLT_SENDING=off is a kill switch that stops the engine (nothing is simulated).
   var sending = (env.SENDERBOLT_SENDING || 'live').toLowerCase();
   if (sending === 'dry-run') throw new Error('SENDERBOLT_SENDING=dry-run no longer exists: SenderBolt always sends for real. Remove the line from .env (or use "off" to stop the engine).');
@@ -54,6 +64,7 @@ function build(env) {
     dbFile: env.SENDERBOLT_DB_FILE || path.join(process.cwd(), 'data', 'senderbolt.db'),
     secureCookies: env.SENDERBOLT_SECURE_COOKIES === '1',
     trustProxy: env.SENDERBOLT_TRUST_PROXY === '1',
+    accessToken: accessToken, accessTokenSource: accessSource, localHosts: localHosts,
     allowedHosts: hosts, allowedOrigins: origins
   };
 }

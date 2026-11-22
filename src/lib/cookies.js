@@ -18,7 +18,7 @@ function serialize(name, value, opts) {
   opts = opts || {};
   if (!/^[A-Za-z0-9_\-]+$/.test(name)) throw new Error('Invalid cookie name');
   if (!/^[A-Za-z0-9_\-.~]*$/.test(value)) throw new Error('Invalid cookie value');
-  var s = name + '=' + value + '; Path=/; HttpOnly; SameSite=Strict';
+  var s = name + '=' + value + '; Path=/; HttpOnly; SameSite=' + (opts.sameSite === 'Lax' ? 'Lax' : 'Strict');
   if (opts.secure) s += '; Secure';
   if (opts.maxAgeSec !== undefined) s += '; Max-Age=' + Math.max(0, Math.floor(opts.maxAgeSec));
   return s;

@@ -122,6 +122,12 @@ Set `SENDERBOLT_PUBLIC_ORIGIN=https://your-domain` to get one-click unsubscribe 
 **Housekeeping (v1.9.2)**
 - Unsubscriptions tabs: All, Added by you, Unsubscribed, Bounced, Complaints. A paused sending account is shown in red on Sending accounts and in Settings.
 - Sender Settings is a set of cards: summary (status, today, health, replies), Connection & credentials, Daily limit & warm-up, Sending pace, Protection & risk, Health healing, Identity & signature, Advanced. Force continue refreshes the whole panel; the pause between emails is checked (shortest <= longest).
+**Using SenderBolt through a tunnel (v1.9.9)**
+1. Run `npm run token`. It shows the access token from `.env` (`SENDERBOLT_ACCESS_TOKEN`, or a long `SENDERBOLT_SETUP_TOKEN` that is already there) and creates one if there is none. `npm run token -- --new` replaces it (devices must enter the new one). SenderBolt also prints the token when it starts.
+2. Start SenderBolt, then your tunnel pointing at `http://127.0.0.1:3000` (for example `cloudflared tunnel --url http://127.0.0.1:3000`). Add `SENDERBOLT_TRUST_PROXY=1` to `.env` so limits see the real visitor.
+3. On the phone open `https://YOUR-TUNNEL-ADDRESS/?token=THE_TOKEN` once (or open the address and type the token). The address bar is cleaned and the device keeps a cookie for 30 days, then you sign in as usual. Nothing is tied to an IP address, Wi-Fi or device: switching to mobile data keeps working, and every new device just needs the token once.
+4. Without the token (or with a wrong one) the tunnel only shows the token page / a clean 401; repeated wrong guesses are rate limited. `localhost` is never affected, and recipients' unsubscribe links and open pixels keep working without a token. A new token logs every device out of the tunnel.
+
 **Housekeeping (v1.9.8)**
 - **Sending priority** (follow-ups first, balanced, new emails first) now lives in **Settings → System preferences → Campaign defaults** and applies to all your campaigns. It is no longer chosen per campaign (the campaign wizard has no Priority step).
 - Campaigns are never blocked by protection. If a sending account falls below its health line (too many bounces) only that **account** is paused; the campaign keeps its status and its people wait. Older "blocked" campaigns are set back to active automatically, and the "a campaign is blocked" alert is gone.

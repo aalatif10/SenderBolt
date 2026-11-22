@@ -81,7 +81,8 @@ function createApp(config) {
       var dispatch = createDispatcher({
         routes: buildRoutes(deps), staticHandler: staticFiles.create(path.join(__dirname, '..', 'public')), sessions: sessions, cookieName: cookieName,
         allowedHosts: config.allowedHosts, allowedOrigins: config.allowedOrigins,
-        secureCookies: config.secureCookies, trustProxy: config.trustProxy
+        secureCookies: config.secureCookies, trustProxy: config.trustProxy,
+        accessToken: config.accessToken, localHosts: config.localHosts, sessionSecret: config.sessionSecret
       });
       var purge = setInterval(function () { sessions.purgeExpired().catch(function () {}); }, 15 * 60 * 1000);
       if (purge.unref) purge.unref();
