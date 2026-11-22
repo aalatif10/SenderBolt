@@ -747,3 +747,11 @@ td .email-trunc { max-width: 260px; } .panel-head h2 .email-trunc { max-width: 3
 .sd-cards-h { display: flex; justify-content: space-between; align-items: center; margin-bottom: calc(-1 * var(--space-2)); }
 .sd-wrap .sd-foot { position: sticky; bottom: calc(-1 * var(--space-5)); background: var(--surface); padding: var(--space-3) 0; border-top: 1px solid var(--border); z-index: 4; }
 @media (prefers-reduced-motion: reduce) { .sd-card-h > .icon { transition: none; } }
+
+.spinner { display: inline-block; width: 12px; height: 12px; margin-right: 8px; vertical-align: -2px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: sd-spin .7s linear infinite; }
+@keyframes sd-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2s; } }
+.sd-test:empty { display: none; }
+.sd-test { display: grid; gap: var(--space-2); }
+.sd-test .test-box { margin: 0; gap: var(--space-2); } .sd-test .test-row { padding: 8px 10px; } .sd-test p { margin: 0; }
+.sd-test-head { display: flex; align-items: center; gap: 8px; } .sd-test-head.ok { color: var(--good); } .sd-test-head.fail { color: var(--bad); } .sd-test-head .small { margin-left: auto; }

@@ -258,10 +258,21 @@
       SB.api.patch('/api/senders/' + s.id, body).then(function () { p.close(); ui.toast('Saved'); onDone(); }, function (e) { fieldErrors(err, e); save.disabled = false; });
     });
 
-    var isPaused = s.status !== 'active';
-    var toggle = h('button', { class: 'btn', type: 'button' }, SB.icon(isPaused ? 'play' : 'pause'), isPaused ? 'Resume sending' : 'Pause sending');
+    // Pause / Resume keeps the drawer open: the sender is reloaded and the summary, risk and Force button are repainted in place (unsaved edits stay).
+    var toggle = h('button', { class: 'btn', type: 'button' });
+    function paintToggle() {
+      var paused = s.status !== 'active';
+      while (toggle.firstChild) toggle.removeChild(toggle.firstChild);
+      toggle.appendChild(SB.icon(paused ? 'play' : 'pause')); toggle.appendChild(document.createTextNode(paused ? 'Resume sending' : 'Pause sending'));
+    }
+    paintToggle();
     toggle.addEventListener('click', function () {
-      SB.api.post('/api/senders/' + s.id + '/status', { status: isPaused ? 'active' : 'paused' }).then(function () { p.close(); ui.toast(isPaused ? 'Resumed' : 'Paused'); onDone(); }, function (e) { ui.toast(SB.api.friendly(e), true); });
+      if (toggle.disabled) return;
+      var wasPaused = s.status !== 'active'; toggle.disabled = true;
+      SB.api.post('/api/senders/' + s.id + '/status', { status: wasPaused ? 'active' : 'paused' }).then(function () {
+        ui.toast(wasPaused ? 'Resumed' : 'Paused'); onDone();
+        return reloadSender();
+      }, function (e) { ui.toast(SB.api.friendly(e), true); }).then(function () { toggle.disabled = false; });
     });
     var del = h('button', { class: 'btn btn-danger', type: 'button' }, 'Remove sender');
     del.addEventListener('click', function () {
@@ -270,7 +281,30 @@
     });
 
     var testBtn = h('button', { class: 'btn btn-sm', type: 'button', tip: 'Logs in to this account right now to check that sending and reply detection work.' }, 'Test connection');
-    testBtn.addEventListener('click', function () { runTest(s, testBtn, onDone); });
+    var testOut = h('div', { class: 'sd-test', role: 'status', 'aria-live': 'polite' });
+    testBtn.addEventListener('click', function () {
+      if (testBtn.disabled) return;
+      testBtn.disabled = true; testBtn.setAttribute('aria-busy', 'true');
+      while (testBtn.firstChild) testBtn.removeChild(testBtn.firstChild);
+      testBtn.appendChild(h('span', { class: 'spinner', 'aria-hidden': 'true' })); testBtn.appendChild(document.createTextNode('Testing\u2026'));
+      while (testOut.firstChild) testOut.removeChild(testOut.firstChild);
+      testOut.appendChild(h('div', { class: 'small muted', text: 'Logging in to the mail servers\u2026' }));
+      SB.api.post('/api/senders/' + s.id + '/test', {}).then(function (r) {
+        while (testOut.firstChild) testOut.removeChild(testOut.firstChild);
+        var ok = !!(r.smtp && r.smtp.ok), allOk = ok && !!(r.imap && r.imap.ok);
+        testOut.appendChild(h('div', { class: 'sd-test-head ' + (allOk ? 'ok' : 'fail') }, SB.icon(allOk ? 'check' : 'alert'), h('b', { text: allOk ? 'Connection works' : ok ? 'Sending works, replies do not' : 'Connection problem' }), h('span', { class: 'small muted', text: 'just now' })));
+        testOut.appendChild(testResult(r));
+        if (!ok) testOut.appendChild(h('p', { class: 'small muted', text: 'Check the App Password and that 2-Step Verification is on, then test again.' }));
+        onDone(); return reloadSender();
+      }, function (e) {
+        while (testOut.firstChild) testOut.removeChild(testOut.firstChild);
+        testOut.appendChild(h('div', { class: 'sd-test-head fail' }, SB.icon('alert'), h('b', { text: 'The test could not run' })));
+        testOut.appendChild(h('p', { class: 'small', text: SB.api.friendly(e) }));
+      }).then(function () {
+        testBtn.disabled = false; testBtn.removeAttribute('aria-busy');
+        while (testBtn.firstChild) testBtn.removeChild(testBtn.firstChild); testBtn.appendChild(document.createTextNode('Test connection'));
+      });
+    });
     var conn = s.connection_error ? h('div', { class: 'callout warn' }, SB.icon('alert'), ' ', 'Connection problem: ' + s.connection_error + ' The account stays active and SenderBolt retries automatically; nothing is paused for this.') : null;
     var where = [s.provider === 'gmail' ? 'Gmail' : 'Custom SMTP', s.smtp_host ? 'SMTP ' + s.smtp_host + (s.smtp_port ? ':' + s.smtp_port : '') : null, s.imap_host ? 'IMAP ' + s.imap_host : null].filter(Boolean).join(' · ');
 
@@ -292,11 +326,16 @@
       cards.push(c); return c;
     }
     // Risk: one plain verdict and the reasons behind it.
-    var rk = s.risk || { level: 'low', factors: [] }, rm = RISK[rk.level] || RISK.low;
-    var riskBox = h('div', { class: 'risk-box risk-' + rk.level },
-      h('div', { class: 'risk-head' }, h('span', { class: 'chip chip-' + rm[0], tip: 'A plain summary of how likely this account is to run into trouble, based on its health, warm-up, protection and connection state.' }, rm[1]),
-        h('span', { class: 'small muted', text: 'Health ' + s.health_score + ' · pauses below ' + (s.health_floor || 50) })),
-      rk.factors.length ? h('ul', { class: 'risk-list' }, rk.factors.map(function (f) { return h('li', { text: f }); })) : h('div', { class: 'small muted', text: 'No warning signs. Keep lists clean and this account stays in good shape.' }));
+    var rk, rm, riskBox = h('div');
+    function paintRisk() {
+      rk = s.risk || { level: 'low', factors: [] }; rm = RISK[rk.level] || RISK.low;
+      riskBox.className = 'risk-box risk-' + rk.level;
+      while (riskBox.firstChild) riskBox.removeChild(riskBox.firstChild);
+      riskBox.appendChild(h('div', { class: 'risk-head' }, h('span', { class: 'chip chip-' + rm[0], tip: 'A plain summary of how likely this account is to run into trouble, based on its health, warm-up, protection and connection state.' }, rm[1]),
+        h('span', { class: 'small muted', text: 'Health ' + s.health_score + ' \u00b7 pauses below ' + (s.health_floor || 50) })));
+      riskBox.appendChild(rk.factors.length ? h('ul', { class: 'risk-list' }, rk.factors.map(function (f) { return h('li', { text: f }); })) : h('div', { class: 'small muted', text: 'No warning signs. Keep lists clean and this account stays in good shape.' }));
+    }
+    paintRisk();
     // Health Healing: how the score recovers, step by step.
     var r = s.heal_rules || {}, base = s.health_base, heal = s.health_heal || 0;
     var healBar = ui.progress(s.health_score);
@@ -310,21 +349,33 @@
         h('li', { text: '+' + r.reply + ' when a real reply arrives' }),
         h('li', { text: 'At most +' + r.day_max + ' a day, never above 100. A serious problem pauses healing that day.' })));
 
-    var hi = healthInfo(s.health_score), st = state(s), pct = s.limit_today ? Math.min(100, s.sent_today / s.limit_today * 100) : 0;
-    var connChip = s.connection_error ? h('span', { class: 'chip chip-bad', tip: 'Problem: ' + s.connection_error }, 'Connection problem') : trackingChip(rt || 'pending');
-    var summary = h('div', { class: 'sd-summary card' },
-      h('div', { class: 'sd-sum-top' }, h('div', { class: 'sd-sum-state' }, pill(st), h('div', { class: 'small muted', text: nextLine(s) })), toggle),
-      h('div', { class: 'sd-stats' },
+    var summary = h('div', { class: 'sd-summary card' });
+    function paintSummary() {
+      var hi = healthInfo(s.health_score), st = state(s), pct = s.limit_today ? Math.min(100, s.sent_today / s.limit_today * 100) : 0;
+      var connChip = s.connection_error ? h('span', { class: 'chip chip-bad', tip: 'Problem: ' + s.connection_error }, 'Connection problem') : trackingChip(rt || 'pending');
+      paintToggle();
+      while (summary.firstChild) summary.removeChild(summary.firstChild);
+      summary.appendChild(h('div', { class: 'sd-sum-top' }, h('div', { class: 'sd-sum-state' }, pill(st), h('div', { class: 'small muted', text: nextLine(s) })), toggle));
+      summary.appendChild(h('div', { class: 'sd-stats' },
         h('div', { tip: 'Emails sent today out of what this account may send today (warm-up limits included).' }, h('span', { class: 'small muted', text: 'Sent today' }), h('b', { text: fmt.num(s.sent_today) + ' / ' + fmt.num(s.limit_today) }), ui.progress(pct)),
         h('div', { tip: HEALTH_TIP }, h('span', { class: 'small muted', text: 'Health' }), h('b', { text: s.health_score + ' / 100' }), h('span', { class: 'chip chip-' + hi.cls, text: hi.label })),
-        h('div', { tip: 'Whether SenderBolt can reach this account’s mailbox: replies and bounces are read from it.' }, h('span', { class: 'small muted', text: 'Connection' }), connChip)));
+        h('div', { tip: 'Whether SenderBolt can reach this account\u2019s mailbox: replies and bounces are read from it.' }, h('span', { class: 'small muted', text: 'Connection' }), connChip)));
+    }
+    paintSummary();
+    // Fetch the account again after Pause/Resume or a connection test and repaint what depends on it. Form fields are left untouched.
+    function reloadSender() {
+      return SB.api.get('/api/senders/' + s.id).then(function (r) {
+        Object.keys(r.sender).forEach(function (k) { s[k] = r.sender[k]; });
+        paintSummary(); paintRisk(); paintForce(!!s.force_active, s.force_until); refresh();
+      }, function () { /* the list behind refreshes on its own; keep what is shown */ });
+    }
 
     var cConn = card('conn', 'Connection & reply tracking', h('div', null,
       h('div', { class: 'sd-where small muted', tip: 'The servers SenderBolt uses for this account. Gmail accounts use Google’s servers automatically.' }, where),
       h('div', { class: 'set-row' }, h('div', { class: 'set-txt' }, h('label', { for: 'st-reply', text: 'Replies detected' }, ' ', ui.info('SenderBolt reads this account’s inbox to notice replies. Each reply stops follow-ups for THAT person only; everyone else in the campaign keeps going.')),
         h('div', { class: 'hint', text: 'Stop follow-ups for a person who replies. Turn off to keep following up regardless (replies still reach your Inbox). "Stop campaign" requests and bounces are always respected.' })), replyOn),
       field('Replace App Password', newPass, 'Use this if Google revoked the old one. The current one is never shown.', 'st-pass'),
-      h('div', { class: 'actions' }, testBtn)));
+      h('div', { class: 'actions' }, testBtn), testOut));
     var cLimits = card('limits', 'Limits, pace & warm-up', h('div', null,
       field('Emails per day', limit, 'Maximum ' + CAP + '. Gmail allows about 500 per day, so ' + CAP + ' keeps a safe 100-email buffer and protects your account.', 'st-limit'), warm.node,
       h('div', { class: 'sd-sub' }, h('b', { text: 'Sending pace' }), h('span', { class: 'small muted', text: 'The pause between two emails from this account.' })),
