@@ -425,3 +425,4 @@ Browser check done for this release: the app shell and sign-in screen load in he
 | `test/mailbox.js`, `test/v190.js` | Parser-throw test; aggregate-vs-own-numbers test. |
 
 - `ProjectsService.setRunning(userId, id, 'pause'|'resume')` (`src/services/projects.js`): pauses/resumes every main campaign of a project via `CampaignService`; used by `POST /api/projects/batch` actions `pause`/`resume`.
+- `public/js/screens/senders.js` `settingsPanel`: the sender drawer is a pinned summary + four accordion cards built by `card()`; `refresh()` recomputes each card's one-line summary and issue dot from the live inputs. Styles: end of `public/css/app.css` (`.sd-card*`, `.sd-dot`). No API or validation changes.

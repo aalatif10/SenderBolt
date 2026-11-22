@@ -350,7 +350,7 @@
       var floor = s.health_floor || 50, protIssue = s.health_score < floor && !s.force_active ? { level: 'bad', msg: 'Health ' + s.health_score + ' is below the pause line (' + floor + ').' } :
         rk.level === 'high' ? { level: 'bad', msg: 'High risk: ' + (rk.factors[0] || 'see the reasons inside.') } : rk.level === 'moderate' ? { level: 'warn', msg: 'Moderate risk: ' + (rk.factors[0] || 'see the reasons inside.') } :
         s.force_active ? { level: 'warn', msg: 'Force continue is on: automatic pauses are skipped.' } : null;
-      cProt.set(LEVELS[level].label + ' protection · risk ' + rm[1] + ' · health ' + s.health_score + '/100', protIssue);
+      cProt.set(LEVELS[level].label + ' protection · ' + rm[1].toLowerCase() + ' · health ' + s.health_score + '/100', protIssue);
       cId.set((name.value.trim() || 'No name set') + ' · ' + (sig.value.trim() ? 'signature set' : 'no signature') + (track.value.trim() ? ' · custom tracking domain' : ''), null);
     }
     [limit, dmin, dmax, dfix, mode, name, sig, track, newPass, replyOn, warm.box, warm.pace].forEach(function (el) { el.addEventListener('input', refresh); el.addEventListener('change', refresh); });

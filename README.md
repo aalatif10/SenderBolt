@@ -122,6 +122,9 @@ Set `SENDERBOLT_PUBLIC_ORIGIN=https://your-domain` to get one-click unsubscribe 
 **Housekeeping (v1.9.2)**
 - Unsubscriptions tabs: All, Added by you, Unsubscribed, Bounced, Complaints. A paused sending account is shown in red on Sending accounts and in Settings.
 - Sender Settings is a set of cards: summary (status, today, health, replies), Connection & credentials, Daily limit & warm-up, Sending pace, Protection & risk, Health healing, Identity & signature, Advanced. Force continue refreshes the whole panel; the pause between emails is checked (shortest <= longest).
+**Housekeeping (v1.9.5)**
+- Sender settings drawer: a pinned summary (status, Pause/Resume, sent today, health, connection) stays on top and **Save changes / Remove sender** stay at the bottom. The settings are four collapsible cards: **Connection & reply tracking**, **Limits, pace & warm-up**, **Protection & health healing**, **Identity & signature** (with the tracking domain). Each card shows a one-line summary of its current state, even when closed. A red dot marks a problem inside the card (no App Password, connection problem, invalid limit or pause range, health below the pause line, high risk); an amber dot is a warning (waiting for the first inbox check, moderate risk, Force continue on). Cards with a problem open by themselves; **Expand all** opens everything. Nothing else about saving or the settings' behaviour changed.
+
 **Housekeeping (v1.9.4)**
 - Campaigns page: a project's ⋮ menu has **Pause** (or **Resume** when paused), which acts on every running (or paused) campaign in it; campaign rows already had the same. When you tick projects, the selection bar now appears **above** the table with **Pause** (and **Resume** if any selected project is paused) next to Archive, Delete and Clear. Projects with nothing to change are reported, not failed silently.
 
