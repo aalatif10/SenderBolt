@@ -41,8 +41,24 @@ function create(o) {
   };
   // With the gate on, a tunnel's host name is accepted (the token, not the name, is what protects the app).
   gate.hostAllowed = function (host) { return gate.isLocal(host) || extra.indexOf(host) !== -1 || (host.length <= 255 && HOST_SYNTAX.test(host)); };
-  gate.originAllowed = function (origin, host) {
-    try { return new URL(origin).host.toLowerCase() === host; } catch (e) { return false; }
+  function hostOf(origin) { try { return new URL(origin).host.toLowerCase(); } catch (e) { return ''; } }
+  // Is the browser's Origin acceptable for this request? Tunnel clients (localtunnel...) often REWRITE the Host header to "localhost", so the
+  // Origin (https://name.loca.lt) can no longer be compared with Host. Accepted when: it equals Host, or X-Forwarded-Host, or the browser itself
+  // says "Sec-Fetch-Site: same-origin" (a header page scripts cannot set or forge). This runs only for requests that already passed the token gate,
+  // and the custom X-SB-Client header + per-session CSRF token still apply on top, so a foreign site cannot ride along.
+  gate.originOk = function (req, host) {
+    var origin = req.headers.origin;
+    if (!origin) return true;
+    var oh = hostOf(origin);
+    if (oh && oh === host) return true;
+    var xfh = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim().toLowerCase();
+    if (oh && xfh && oh === xfh) return true;
+    return String(req.headers['sec-fetch-site'] || '').toLowerCase() === 'same-origin';
+  };
+  gate.originAllowed = function (origin, host) { return hostOf(origin) === host; };
+  // One console line when an origin is refused, so a tunnel problem can be diagnosed (no cookies, tokens or bodies are printed).
+  gate.logReject = function (req, host) {
+    console.warn('[origin] refused: Origin=' + String(req.headers.origin || '').slice(0, 120) + ' Host=' + host.slice(0, 120) + ' X-Forwarded-Host=' + String(req.headers['x-forwarded-host'] || '').slice(0, 120) + ' Sec-Fetch-Site=' + String(req.headers['sec-fetch-site'] || ''));
   };
   gate.cookie = function (secure) { return cookies.serialize(COOKIE, cookieValue, { secure: secure, maxAgeSec: COOKIE_DAYS * 86400, sameSite: 'Lax' }); };
 
@@ -83,8 +99,7 @@ function create(o) {
   // The form posts here. Bounded body, same-host Origin only.
   gate.entry = function (req, res, ip, secure, host) {
     return new Promise(function (resolve, reject) {
-      var origin = req.headers.origin;
-      if (origin && !gate.originAllowed(origin, host)) return reject(new AppError('csrf_origin', 'Origin not allowed', 403));
+      if (!gate.originOk(req, host)) { gate.logReject(req, host); return reject(new AppError('csrf_origin', 'Origin not allowed', 403)); }
       var size = 0, chunks = [], failed = false;
       req.on('data', function (c) { if (failed) return; size += c.length; if (size > 2048) { failed = true; reject(new AppError('payload_too_large', 'Request body too large', 413)); } else chunks.push(c); });
       req.on('end', function () {

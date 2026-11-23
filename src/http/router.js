@@ -161,7 +161,8 @@ function createDispatcher(o) {
     if (unsafe) {
       if (req.headers['x-sb-client'] !== '1') throw new AppError('csrf_header', 'Missing client header', 403);
       var origin = req.headers.origin;
-      if (origin && o.allowedOrigins.indexOf(origin) === -1 && !(gate.enabled && gate.originAllowed(origin, host))) throw new AppError('csrf_origin', 'Origin not allowed', 403);
+      var viaTunnel = gate.enabled && gate.isRemote(host, req);
+      if (origin && o.allowedOrigins.indexOf(origin) === -1 && !(viaTunnel && gate.originOk(req, host))) { if (viaTunnel) gate.logReject(req, host); throw new AppError('csrf_origin', 'Origin not allowed', 403); }
       if (req.headers['sec-fetch-site'] === 'cross-site') throw new AppError('csrf_origin', 'Cross-site request blocked', 403);
     }
 

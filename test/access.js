@@ -130,6 +130,23 @@ h.test('a *.loca.lt address works with the token; a tunnel that rewrites Host to
     .then(function (r) { assert.strictEqual(r.status, 401, 'Host=localhost but proxied: needs the token'); return req(S1, 'GET', '/api/auth/status', { headers: { 'X-Forwarded-For': '203.0.113.5', Cookie: cookie } }); })
     .then(function (r) { assert.strictEqual(r.status, 200); });
 });
+h.test('localtunnel rewrites Host to "localhost": the browser Origin is the tunnel name, and sign-in still works (Sec-Fetch-Site same-origin), foreign sites do not', function () {
+  var base = { Cookie: cookie, Origin: 'https://brave-lions-12.loca.lt', 'Sec-Fetch-Site': 'same-origin' };
+  function login(h2) { return req(S1, 'POST', '/api/auth/login', { host: 'localhost', headers: h2, json: { email: 'me@example.com', password: STRONG } }); }
+  return login(base).then(function (r) {
+    assert.strictEqual(r.status, 200, r.text);
+    return login(Object.assign({}, base, { 'Sec-Fetch-Site': 'cross-site' }));
+  }).then(function (r) {
+    assert.strictEqual(r.status, 403);
+    var noHint = Object.assign({}, base); delete noHint['Sec-Fetch-Site'];
+    return login(noHint);
+  }).then(function (r) {
+    assert.strictEqual(r.status, 403, 'an unexplained foreign Origin is refused');
+    return login({ Origin: 'https://brave-lions-12.loca.lt', 'Sec-Fetch-Site': 'same-origin' });
+  }).then(function (r) { assert.strictEqual(r.status, 401, 'no access cookie: still gated'); assert.strictEqual(r.body.error, 'access_token_required');
+    return req(S1, 'POST', '/__access', { host: 'localhost', form: 'token=' + TOKEN, headers: { Origin: 'https://brave-lions-12.loca.lt', 'Sec-Fetch-Site': 'same-origin' } });
+  }).then(function (r) { assert.strictEqual(r.status, 303, 'the token form also works behind a Host-rewriting tunnel'); });
+});
 h.test('guessing is rate limited', function () {
   var p = Promise.resolve(), last;
   for (var i = 0; i < 25; i++) p = p.then(function () { return req(S1, 'GET', '/?token=guess-guess-guess-guess', { host: 'guesser.example.net', headers: HTML }); }).then(function (r) { last = r; });
