@@ -375,7 +375,7 @@
       SB.mount(box, h('div', { class: 'skeleton' }));
       function paint(hi) {
         var l = hi.lead, st = LEAD_STATUS[l.status] || LEAD_STATUS.pending;
-        var opt = l.status === 'bounced' ? 'bounce' : (l.status === 'unsubscribed' ? (/stop campaign/i.test(l.status_note || '') ? 'stop_campaign' : null) : null);
+        var opt = l.status === 'bounced' ? 'bounce' : l.status === 'completed' && l.status_note === 'Stopped manually' ? 'manual_stop' : (l.status === 'unsubscribed' ? (/stop campaign/i.test(l.status_note || '') ? 'stop_campaign' : null) : null);
         var f = { first_name: h('input', { class: 'input', maxlength: 200, value: l.first_name || '', 'aria-label': 'First name' }), last_name: h('input', { class: 'input', maxlength: 200, value: l.last_name || '', 'aria-label': 'Last name' }),
           company: h('input', { class: 'input', maxlength: 200, value: l.company || '', 'aria-label': 'Company' }) };
         var customRows = h('div', { class: 'cf-rows' }), err = h('div', { class: 'form-error hidden', role: 'alert' });

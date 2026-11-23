@@ -13,13 +13,16 @@ var htmlLib = require('../lib/html');
 var sanitize = require('../lib/sanitize');
 var emailLib = require('../lib/email');
 var audit = require('./audit');
+var state = require('./campaignState');
 var withSignature = require('./settings').withSignature;
 var images = require('./images');
 var replyParse = require('../lib/replyParse');
 
 // 'stop_campaign' | 'unsubscribe_link' | 'bounce' | null  (same rule the Studio uses for its badges)
+var MANUAL_STOP = 'Stopped manually';
 function optOutKind(status, note, reason) {
   if (status === 'bounced') return 'bounce';
+  if (status === 'completed' && note === MANUAL_STOP) return 'manual_stop';
   if (status !== 'unsubscribed') return null;
   return reason === 'replied_stop' || /stop campaign/i.test(note || '') ? 'stop_campaign' : 'unsubscribe_link';
 }
@@ -191,6 +194,23 @@ I.setOutcome = function (userId, clId, outcome, ip) {
     return self.db.run('UPDATE campaign_leads SET outcome = ?, outcome_at = ? WHERE id = ?', [outcome, outcome ? self.now() : null, clId]);
   }).then(function () { return audit.log(self.db, { userId: userId, action: 'inbox.outcome', entity: 'campaign_lead', entityId: clId, ip: ip, meta: { outcome: outcome } }, self.now); })
     .then(function () { return { ok: true, outcome: outcome }; });
+};
+
+// Manual "Stop campaign": ends the sequence for this one person in this one campaign (the thread's campaign_leads row).
+// Same effect as the automatic stop on that row (no more steps, nothing queued), but deliberately NOT global: the address is
+// not put on the do-not-email list and the person's rows in other campaigns are never touched.
+I.stopLead = function (userId, clId, ip) {
+  var self = this, t = this.now();
+  return this._conversation(userId, clId).then(function (conv) {
+    if (['pending', 'active', 'paused', 'error'].indexOf(conv.status) === -1) {
+      return { ok: true, changed: false, status: conv.status, opt_out: optOutKind(conv.status, conv.status_note, null) };
+    }
+    return self.db.transaction(function (tx) {
+      return tx.run("UPDATE campaign_leads SET status = 'completed', next_send_at = NULL, status_note = ? WHERE id = ? AND status IN ('pending','active','paused','error')", [MANUAL_STOP, clId])
+        .then(function () { return state.completeIfDone(tx, conv.campaign_id, t); })
+        .then(function () { return audit.log(tx, { userId: userId, action: 'inbox.stop', entity: 'campaign_lead', entityId: clId, ip: ip, meta: { campaign_id: conv.campaign_id } }, self.now); });
+    }).then(function () { return { ok: true, changed: true, status: 'completed', opt_out: 'manual_stop' }; });
+  });
 };
 
 I.setSentiment = function (userId, messageId, sentiment, ip) {

@@ -478,6 +478,7 @@ C.listLeads = function (userId, id, q) {
 // 'unsubscribe_link', 'bounce', or null. Derived from the lead status plus the note / suppression reason the engine wrote.
 function optOutKind(it) {
   if (it.status === 'bounced') return 'bounce';
+  if (it.status === 'completed' && it.status_note === 'Stopped manually') return 'manual_stop';
   if (it.status !== 'unsubscribed') return null;
   if (it.suppression_reason === 'replied_stop' || /stop campaign/i.test(it.status_note || '')) return 'stop_campaign';
   return 'unsubscribe_link';

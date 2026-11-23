@@ -186,6 +186,7 @@ DOMPurify is needed only when the Inbox screen renders reply HTML (planned: sani
 | GET `/inbox?sentiment=&unread=1&campaign_id=&sender_id=&q=&limit=&offset=` | conversations, counts per sentiment, unread |
 | GET `/inbox/threads/:id`, POST `/inbox/threads/:id/read`, POST `/inbox/threads/:id/reply` | thread (text only), read state, manual reply |
 | POST `/inbox/messages/:id/sentiment`, POST `/inbox/sync` | manual sentiment, check replies now |
+| POST `/inbox/threads/:id/stop` | manual "Stop campaign": `InboxService.stopLead` sets only that `campaign_leads` row to `completed` + note `Stopped manually` (shown as kind `manual_stop`), clears `next_send_at`, runs `completeIfDone`, audits `inbox.stop`; no suppression entry, other campaigns untouched, idempotent; re-queue allowed |
 | POST `/senders/:id/test`, GET `/engine/status` | test SMTP/IMAP login; engine mode, last tick, per-sender reply-tracking state |
 | GET/POST `/u/:token` (public, no session) | unsubscribe confirm page / action |
 

@@ -137,6 +137,11 @@
           send.disabled = false; err.textContent = SB.api.friendly(e); err.classList.remove('hidden');
         });
       });
+      var stopBtn = ['pending', 'active', 'paused', 'error'].indexOf(c.status) !== -1 ? h('button', { type: 'button', class: 'btn btn-sm ib-stop', tip: I.stopBtn.tip, on: { click: function () {
+        ui.confirm({ title: I.stopBtn.label, message: I.stopBtn.confirm, confirmLabel: I.stopBtn.label, danger: true, onConfirm: function () {
+          return SB.api.post('/api/inbox/threads/' + c.id + '/stop', {}).then(function () { ui.toast(I.stopBtn.done); return Promise.all([openThread(c.id, true), loadList()]); });
+        } });
+      } } }, SB.icon('ban'), I.stopBtn.label) : null;
       var tags = lastIn ? h('div', { class: 'ib-tags' }, h('span', { class: 'small muted' }, 'Tag: ', ui.info(I.sentimentTip)), ORDER.map(function (k) {
         return h('button', { type: 'button', class: 'chip ib-chip chip-' + I.sentiment[k].cls + (lastIn.sentiment === k ? ' on' : ''), tip: I.sentiment[k].tip, on: { click: function () {
           SB.api.post('/api/inbox/messages/' + lastIn.id + '/sentiment', { sentiment: k }).then(function () { return Promise.all([openThread(c.id, true), loadList()]); }, function (e) { ui.toast(SB.api.friendly(e), true); });
@@ -146,7 +151,7 @@
         return h('button', { type: 'button', class: 'chip ib-chip chip-int' + (won ? ' on' : ''), 'aria-pressed': won ? 'true' : 'false', tip: I.successful.tip, on: { click: function () {
           SB.api.post('/api/inbox/threads/' + c.id + '/outcome', { outcome: won ? null : 'successful' }).then(function () { ui.toast(won ? 'Successful mark removed' : 'Marked as Successful'); return Promise.all([openThread(c.id, true), loadList()]); }, function (e) { ui.toast(SB.api.friendly(e), true); });
         } } }, SB.icon('check'), I.successful.label);
-      })()])) : null;
+      })(), stopBtn])) : (stopBtn ? h('div', { class: 'ib-tags' }, stopBtn) : null);
       var node = h('div', { class: 'ib-thread-in' },
         h('div', { class: 'ib-thread-head' },
           h('div', null, h('h2', { text: [lead.first_name, lead.last_name].filter(Boolean).join(' ') || lead.email }),

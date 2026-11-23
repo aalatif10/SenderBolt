@@ -325,4 +325,35 @@ h.test('lookup never changes anything; apply suppresses the address and ends the
   });
 });
 
+h.group('manual Stop campaign (campaign-scoped)');
+h.test('stopping from the inbox ends only that campaign for that person; other campaigns and the do-not-email list are untouched', function () {
+  return setup().then(function (c) {
+    var first, second;
+    return launch(c, 2).then(function () { first = c.camp.id; return launch(c, 2); }).then(function () {
+      second = c.camp.id;
+      return c.db.all("SELECT cl.id, cl.campaign_id, cl.status FROM campaign_leads cl JOIN leads l ON l.id = cl.lead_id WHERE l.email = 'p0@co0.com' ORDER BY cl.campaign_id");
+    }).then(function (rows) {
+      assert.strictEqual(rows.length, 2); var a = rows[0], b = rows[1];
+      return h.mkUser(c.db, 'z@x.com').then(function (z) { return h.expectReject(c.inbox.stopLead(z, a.id)); }).then(function () {
+        return c.inbox.stopLead(c.a, a.id, '1.2.3.4');
+      }).then(function (r) {
+        assert.strictEqual(r.changed, true); assert.strictEqual(r.opt_out, 'manual_stop');
+        return Promise.all([c.db.get('SELECT status, next_send_at, status_note FROM campaign_leads WHERE id = ?', [a.id]), c.db.get('SELECT status, next_send_at FROM campaign_leads WHERE id = ?', [b.id]),
+          c.db.get("SELECT COUNT(*) AS n FROM suppression"), c.db.get("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'inbox.stop'")]);
+      }).then(function (r) {
+        assert.strictEqual(r[0].status, 'completed'); assert.strictEqual(r[0].next_send_at, null); assert.strictEqual(r[0].status_note, 'Stopped manually');
+        assert.strictEqual(r[1].status, b.status, 'the other campaign keeps the person'); assert.ok(r[1].next_send_at !== null || b.status === 'pending');
+        assert.strictEqual(r[2].n, 0, 'no do-not-email entry'); assert.strictEqual(r[3].n, 1);
+        return c.inbox.stopLead(c.a, a.id);
+      }).then(function (r2) { assert.strictEqual(r2.changed, false, 'idempotent'); return sendAll(c, 6); }).then(function () {
+        return c.db.all("SELECT cl.campaign_id, COUNT(m.id) AS n FROM campaign_leads cl LEFT JOIN messages m ON m.campaign_lead_id = cl.id AND m.direction = 'out' WHERE cl.id IN (?, ?) GROUP BY cl.campaign_id", [a.id, b.id]);
+      }).then(function (m) {
+        var byC = {}; m.forEach(function (x) { byC[x.campaign_id] = x.n; });
+        assert.strictEqual(byC[first] || 0, 0, 'nothing is sent from the stopped campaign'); assert.ok(byC[second] > 0, 'the other campaign still sends');
+        return c.inbox.thread(c.a, a.id);
+      }).then(function (th) { assert.strictEqual(th.conversation.opt_out, 'manual_stop'); assert.strictEqual(th.conversation.suppressed, null); });
+    });
+  });
+});
+
 h.run();

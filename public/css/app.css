@@ -314,11 +314,13 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; }
 .optbadge .icon { width: 13px; height: 13px; }
 .optbadge.ob-stop_campaign { background: var(--warn-soft); color: var(--warn); box-shadow: inset 0 0 0 1px var(--warn); }
 .optbadge.ob-unsubscribe_link { background: var(--surface-2); color: var(--text-2); box-shadow: inset 0 0 0 1px var(--border-strong); }
+.optbadge.ob-manual_stop { background: var(--surface-2); color: var(--text-2); box-shadow: inset 0 0 0 1px var(--border-strong); }
 .optbadge.ob-bounce { background: var(--bad-soft); color: var(--bad); }
 .optbadge.big { height: 30px; padding: 0 14px; font-size: var(--fs-sm); }
 .row-optout td { background: var(--warn-soft); } .row-optout.ro-bounce td { background: var(--bad-soft); } .row-optout.ro-unsubscribe_link td { background: var(--surface-2); }
 .optbanner { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; padding: 10px 14px; border-radius: var(--radius-sm); background: var(--warn-soft); margin-bottom: var(--space-3); }
-.optbanner.ob-bounce { background: var(--bad-soft); } .optbanner.ob-unsubscribe_link { background: var(--surface-2); }
+.optbanner.ob-bounce { background: var(--bad-soft); } .optbanner.ob-unsubscribe_link, .optbanner.ob-manual_stop { background: var(--surface-2); }
+.ib-stop { margin-left: auto; }
 .chip-sm { height: 22px; font-size: 12px; gap: 4px; cursor: default; padding: 0 8px; display: inline-flex; align-items: center; } .chip-sm .icon { width: 12px; height: 12px; }
 .studio-tabs, .settings-tabs { max-width: 640px; flex-wrap: wrap; }
 .sd-grid { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: var(--space-4); align-items: start; }

@@ -123,6 +123,7 @@ SB.S = {
       neutral: { label: 'Neutral', cls: 'neu', tip: 'Not clear yet. Read it and choose a tag yourself.' }
     },
     successful: { label: 'Successful', cls: 'int', tip: 'Click to mark this lead as Successful (a deal or result you won). Click again to undo. It is separate from the reply tag, and it lets you filter and group your wins.' },
+    stopBtn: { label: 'Stop campaign', tip: 'Stops this campaign for this person only: no more emails from this campaign. Other campaigns, and the do-not-email list, are not affected.', confirm: 'Stop this campaign for this person? Other campaigns will keep emailing them. You can re-queue them later from the campaign.', done: 'Campaign stopped for this person' },
     successfulTab: 'Conversations you marked Successful.',
     kinds: { auto_reply: 'Automatic reply (out of office)', bounce: 'Delivery failure notice' },
     syncTip: 'Checks every connected mailbox for new replies right now. It also happens automatically in the background.',
@@ -136,6 +137,7 @@ SB.S = {
     optNote: {
       stop_campaign: 'They replied "stop campaign". Their sequence is stopped and they are on your do-not-email list. Replying is turned off.',
       unsubscribe_link: 'They used the unsubscribe link. Their sequence is stopped and they are on your do-not-email list. Replying is turned off.',
+      manual_stop: 'You stopped this campaign for this person. Nothing more will be sent from it. Other campaigns are not affected, and you can still reply.',
       bounce: 'Their address bounced. Their sequence is stopped. Replying is turned off.'
     }
   },
@@ -152,6 +154,7 @@ SB.S = {
   optout: {
     stop_campaign: { label: 'Stopped: replied "stop campaign"', tip: 'This person replied "stop campaign". They were removed from the sequence and added to your do-not-email list, so they will never be emailed again.' },
     unsubscribe_link: { label: 'Unsubscribed', tip: 'This person clicked the unsubscribe link. They were removed from the sequence and added to your do-not-email list.' },
+    manual_stop: { label: 'Stopped: you stopped this campaign', tip: 'You stopped this person in this campaign only. No more emails from this campaign. They are not on your do-not-email list and other campaigns are not affected.' },
     bounce: { label: 'Bounced', tip: 'The address does not exist or refused the email. It was removed from the sequence and will not be tried again.' }
   },
   images: {

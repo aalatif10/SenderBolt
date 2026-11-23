@@ -176,7 +176,7 @@ E._nextCandidate = function (senderId, t, openIds) {
 
 E._nextCandidateBy = function (senderId, t, openIds, mode) {
   // mode comes from a whitelist (readPrefs), never from user text, so it is safe to pick the ORDER BY expression from it
-  var order = mode === 'new_first' ? '(cl.current_step > 0)' : mode === 'balanced' ? '0' : '(cl.current_step = 0)';
+  var order = mode === 'new_first' ? '(cl.current_step > 0)' : mode === 'balanced' ? 'cl.next_send_at' : '(cl.current_step = 0)';
   return this.db.get(
     'SELECT cl.id AS cl_id, cl.campaign_id, cl.lead_id, cl.current_step, c.user_id, c.track_opens, l.email, l.domain, l.first_name, l.last_name, l.company, l.custom ' +
     "FROM campaign_leads cl JOIN leads l ON l.id = cl.lead_id JOIN campaigns c ON c.id = cl.campaign_id " +

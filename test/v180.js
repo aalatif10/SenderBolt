@@ -178,8 +178,6 @@ h.test('priority is a system preference: validated, defaults to follow-ups first
       }).then(function (camp) { assert.strictEqual(camp.settings.priority_mode, undefined, 'a campaign has no priority of its own'); });
   });
 });
-  });
-});
 
 h.group('v1.8 scheduled start');
 h.test('start date: validated in the campaign time zone, first email waits for the first sending hour of that day', function () {

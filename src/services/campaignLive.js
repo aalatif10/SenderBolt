@@ -134,7 +134,8 @@ function install(C, h) {
   function requeueInfo(row, stepCount) {
     if (row.status === 'bounced') return { ok: false, why: 'The address bounced. Sending again would hurt your sender reputation.' };
     if (row.status === 'unsubscribed' && row.suppression_reason && row.suppression_reason !== 'replied_stop') return { ok: false, why: 'This person used the unsubscribe link or complained. They must not be emailed again.' };
-    if (['replied', 'unsubscribed', 'error', 'paused'].indexOf(row.status) === -1) return { ok: false, why: '' };
+    var manual = row.status === 'completed' && row.status_note === 'Stopped manually';
+    if (!manual && ['replied', 'unsubscribed', 'error', 'paused'].indexOf(row.status) === -1) return { ok: false, why: '' };
     if (row.current_step >= stepCount) return { ok: false, why: 'This person already received every email in the sequence.' };
     return { ok: true, why: '' };
   }
@@ -220,7 +221,7 @@ function install(C, h) {
       }).then(function (sc) {
         stepCount = sc.length;
         sc.forEach(function (x) { delays[x.step_no] = x.delay_days; });
-        return self.db.all('SELECT cl.id, cl.campaign_id, cl.status, cl.current_step, cl.next_send_at, cl.last_sent_at, cl.sender_id, l.email, sp.reason AS suppression_reason, ' +
+        return self.db.all('SELECT cl.id, cl.campaign_id, cl.status, cl.current_step, cl.next_send_at, cl.last_sent_at, cl.sender_id, cl.status_note, l.email, sp.reason AS suppression_reason, ' +
           '(SELECT COUNT(*) FROM messages m WHERE m.campaign_lead_id = cl.id AND m.direction = \'out\' AND m.status IN (\'sent\',\'sending\')) AS mails ' +
           'FROM campaign_leads cl JOIN leads l ON l.id = cl.lead_id LEFT JOIN suppression sp ON sp.user_id = ? AND sp.email = l.email ' +
           'WHERE cl.id IN (' + v.placeholders(list.length) + ') AND cl.campaign_id IN (' + v.placeholders(fam.leaves.length) + ')', [userId].concat(list, ids(fam.leaves)));
