@@ -29,7 +29,16 @@ function create(o) {
 
   gate.cookieName = COOKIE;
   gate.isLocal = function (host) { return local.indexOf(host) !== -1; };
-  gate.isRemote = function (host) { return !gate.isLocal(host); };
+  // A request is "remote" when its Host is not a local address, OR when it carries proxy/tunnel headers. The second rule matters because a tunnel
+  // client can REWRITE the Host header to localhost (localtunnel --local-host ...): without it such traffic would look local and skip the token.
+  // Opening the app directly in a browser on this computer never sends these headers.
+  var FORWARD = ['x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto', 'x-real-ip', 'forwarded', 'cf-connecting-ip', 'cf-ray', 'x-original-host'];
+  gate.isRemote = function (host, req) {
+    if (!gate.isLocal(host)) return true;
+    var hd = (req && req.headers) || {};
+    for (var i = 0; i < FORWARD.length; i++) if (hd[FORWARD[i]] !== undefined) return true;
+    return false;
+  };
   // With the gate on, a tunnel's host name is accepted (the token, not the name, is what protects the app).
   gate.hostAllowed = function (host) { return gate.isLocal(host) || extra.indexOf(host) !== -1 || (host.length <= 255 && HOST_SYNTAX.test(host)); };
   gate.originAllowed = function (origin, host) {

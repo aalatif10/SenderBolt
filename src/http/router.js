@@ -123,7 +123,7 @@ function createDispatcher(o) {
     securityHeaders(res, secure);
     var ip = clientIp(req, o);
     var host = String(req.headers.host || '').toLowerCase();
-    if (o.allowedHosts.indexOf(host) === -1 && !(gate.enabled && gate.hostAllowed(host))) throw new AppError('bad_host', 'Host not allowed', 400);
+    if (o.allowedHosts.indexOf(host) === -1 && !(gate.enabled && gate.hostAllowed(host))) throw new AppError('bad_host', gate.enabled ? 'Host not allowed' : 'Host not allowed. To open SenderBolt through a tunnel, run "npm run token" and restart it.', 400);
     var u;
     try { u = new URL(req.url, 'http://placeholder'); } catch (e) { throw new AppError('bad_request', 'Bad URL', 400); }
     var g = globalLimiter.consume(ip);
@@ -143,7 +143,7 @@ function createDispatcher(o) {
       }
     }
     // Remote (tunnel) hosts must present the access token first, except for the public recipient routes.
-    if (gate.enabled && gate.isRemote(host) && !(route && route.external)) {
+    if (gate.enabled && gate.isRemote(host, req) && !(route && route.external)) {
       if (req.method === 'POST' && u.pathname === '/__access') return gate.entry(req, res, ip, secure, host);
       var g = gate.check(req, u, ip);
       if (g.ok && g.redirect) {

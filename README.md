@@ -128,6 +128,12 @@ Set `SENDERBOLT_PUBLIC_ORIGIN=https://your-domain` to get one-click unsubscribe 
 3. On the phone open `https://YOUR-TUNNEL-ADDRESS/?token=THE_TOKEN` once (or open the address and type the token). The address bar is cleaned and the device keeps a cookie for 30 days, then you sign in as usual. Nothing is tied to an IP address, Wi-Fi or device: switching to mobile data keeps working, and every new device just needs the token once.
 4. Without the token (or with a wrong one) the tunnel only shows the token page / a clean 401; repeated wrong guesses are rate limited. `localhost` is never affected, and recipients' unsubscribe links and open pixels keep working without a token. A new token logs every device out of the tunnel.
 
+**Localtunnel on your phone (v1.9.10)**
+1. One time: `npm install -g localtunnel` (a global install; `npx localtunnel` downloads it on every run, which is the slow part) and `npm run token`.
+2. Window 1: `npm start`. It must say "Remote access: ON". Window 2: `npm run tunnel`. It checks SenderBolt answers, starts `lt` (3 tries of 25 s, never stuck silently) and prints `https://NAME.loca.lt/?token=...`.
+3. On the phone open that link. The first time loca.lt asks for a "tunnel password": it is the public IP of this computer (the script prints it, or open https://loca.lt/mytunnelpassword on this computer). Do not use `lt --local-host`: it rewrites the Host header (SenderBolt still asks for the token because proxied requests count as remote).
+4. `Host not allowed` = no token in `.env` or SenderBolt was not restarted after `npm run token`. `502 Bad Gateway` = SenderBolt is not running on the tunnel's port. A tunnel that never prints a URL is the free localtunnel service being slow or down; try again later or use cloudflared/ngrok.
+
 **Housekeeping (v1.9.8)**
 - **Sending priority** (follow-ups first, balanced, new emails first) now lives in **Settings → System preferences → Campaign defaults** and applies to all your campaigns. It is no longer chosen per campaign (the campaign wizard has no Priority step).
 - Campaigns are never blocked by protection. If a sending account falls below its health line (too many bounces) only that **account** is paused; the campaign keeps its status and its people wait. Older "blocked" campaigns are set back to active automatically, and the "a campaign is blocked" alert is gone.

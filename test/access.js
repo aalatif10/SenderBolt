@@ -53,7 +53,7 @@ h.test('the token comes from SENDERBOLT_ACCESS_TOKEN or a long SENDERBOLT_SETUP_
 h.group('gate off (no token)');
 h.test('without a token an unknown host is still rejected', function () {
   return boot({}).then(function (S) {
-    return req(S, 'GET', '/api/auth/status', { host: TUNNEL }).then(function (r) { assert.strictEqual(r.status, 400); assert.strictEqual(r.body.error, 'bad_host'); return stop(S); });
+    return req(S, 'GET', '/api/auth/status', { host: TUNNEL }).then(function (r) { assert.strictEqual(r.status, 400); assert.strictEqual(r.body.error, 'bad_host'); assert.ok(/npm run token/.test(r.body.message), 'the message says how to fix it'); return stop(S); });
   });
 });
 
@@ -122,6 +122,13 @@ h.test('public recipient routes (unsubscribe link, open pixel) stay reachable on
     assert.strictEqual(r.status, 200); assert.ok(/image\/gif/.test(r.headers['content-type']));
     return req(S1, 'GET', '/u/forged-token-forged-token', { host: TUNNEL });
   }).then(function (r) { assert.notStrictEqual(r.status, 401, 'the unsubscribe page is not behind the gate'); });
+});
+h.test('a *.loca.lt address works with the token; a tunnel that rewrites Host to localhost is still gated (forwarding headers)', function () {
+  var LT = 'brave-lions-12.loca.lt';
+  return req(S1, 'GET', '/api/auth/status', { host: LT }).then(function (r) { assert.strictEqual(r.status, 401); return req(S1, 'GET', '/api/auth/status', { host: LT, headers: { 'X-SB-Access-Token': TOKEN } }); })
+    .then(function (r) { assert.strictEqual(r.status, 200); return req(S1, 'GET', '/api/auth/status', { headers: { 'X-Forwarded-For': '203.0.113.5' } }); })
+    .then(function (r) { assert.strictEqual(r.status, 401, 'Host=localhost but proxied: needs the token'); return req(S1, 'GET', '/api/auth/status', { headers: { 'X-Forwarded-For': '203.0.113.5', Cookie: cookie } }); })
+    .then(function (r) { assert.strictEqual(r.status, 200); });
 });
 h.test('guessing is rate limited', function () {
   var p = Promise.resolve(), last;
