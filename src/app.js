@@ -14,6 +14,7 @@ var ProjectsService = require('./services/projects').ProjectsService;
 var TestSendService = require('./services/testSend').TestSendService;
 var TrackingService = require('./services/tracking').TrackingService;
 var SettingsService = require('./services/settings').SettingsService;
+var SenderBackup = require('./services/senderBackup').SenderBackup;
 var DraftsService = require('./services/drafts').DraftsService;
 var ImagesService = require('./services/images').ImagesService;
 var ReportsService = require('./services/reports').ReportsService;
@@ -62,6 +63,7 @@ function createApp(config) {
       deps.testSend = new TestSendService(db, { engine: engine, mailer: mailer, now: config.now });
       deps.tracking = new TrackingService(db, { secret: config.unsubSecret, now: config.now });
       deps.settings = new SettingsService(db, { now: config.now });
+      deps.senderBackup = new SenderBackup(db, { senders: deps.senders, key: config.masterKey, now: config.now });
       deps.drafts = new DraftsService(db, { now: config.now });
       deps.images = new ImagesService(db, { now: config.now });
       deps.reports = new ReportsService(db, { now: config.now });

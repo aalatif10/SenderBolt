@@ -14,6 +14,7 @@ var AppError = require('../lib/errors').AppError;
 var audit = require('./audit');
 var health = require('../lib/health');
 var nextSend = require('../lib/nextSend');
+var settingsLib = require('./settings');
 
 var SMTP_PORTS = [25, 465, 587, 2525];
 var IMAP_PORTS = [143, 993];
@@ -211,6 +212,9 @@ function riskOf(row, v, nowMs) {
 function addNextEmail(db, userId, rows, nowMs) {
   var ids = rows.filter(function (r) { return r.status === 'active'; }).map(function (r) { return r.id; });
   if (!ids.length) return Promise.resolve(rows);
+  return settingsLib.loadGuard(db, userId).then(function (guard) { return addNextEmailG(db, userId, rows, nowMs, ids, guard); });
+}
+function addNextEmailG(db, userId, rows, nowMs, ids, guard) {
   return db.all('SELECT cl.sender_id AS sid, c.window_start_hour, c.window_end_hour, c.utc_offset_min, c.weekdays_only, c.active_days, c.start_at, ' +
     'MIN(MAX(cl.next_send_at, COALESCE(s.next_send_at, 0))) AS due FROM campaign_leads cl JOIN campaigns c ON c.id = cl.campaign_id JOIN senders s ON s.id = cl.sender_id ' +
     "WHERE s.user_id = ? AND cl.status = 'active' AND c.status = 'active' AND cl.removed_at IS NULL GROUP BY cl.sender_id, c.id", [userId]).then(function (groups) {
@@ -220,7 +224,7 @@ function addNextEmail(db, userId, rows, nowMs) {
       var r = byId[g.sid]; if (!r || g.due === null) return;
       var due = Number(g.due);
       if (r.remaining_today <= 0) due = Math.max(due, midnight);
-      var t = nextSend.effective(g, due, nowMs);
+      var t = nextSend.effective(g, due, nowMs, guard);
       if (t !== null && (best[g.sid] === undefined || t < best[g.sid])) best[g.sid] = t;
     });
     rows.forEach(function (r) { r.next_email_at = best[r.id] === undefined ? null : best[r.id]; });

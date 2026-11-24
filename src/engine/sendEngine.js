@@ -134,9 +134,15 @@ E.tick = function () {
   this._steps = {};
   function finish(v) { self.running = false; self.lastTickAt = t; return v; }
   return this._reconcile(t).then(function () {
-    return self.db.all("SELECT id, window_start_hour, window_end_hour, utc_offset_min, weekdays_only, active_days, start_at FROM campaigns WHERE status = 'active'");
-  }).then(function (camps) {
-    var open = camps.filter(function (c) { return (!c.start_at || c.start_at <= t) && inWindow(c, t); }).map(function (c) { return c.id; }).slice(0, 800);
+    return Promise.all([
+      self.db.all("SELECT id, user_id, window_start_hour, window_end_hour, utc_offset_min, weekdays_only, active_days, start_at FROM campaigns WHERE status = 'active'"),
+      self.db.all('SELECT user_id, prefs FROM user_settings')
+    ]);
+  }).then(function (rs) {
+    var camps = rs[0], guards = {};
+    rs[1].forEach(function (u) { guards[u.user_id] = settingsLib.guardOf(settingsLib.readPrefs(u.prefs)); });
+    // A campaign is open only when its own window AND the owner's system guardrail (if on) are open at the same moment.
+    var open = camps.filter(function (c) { return (!c.start_at || c.start_at <= t) && inWindow(c, t) && (!guards[c.user_id] || inWindow(guards[c.user_id], t)); }).map(function (c) { return c.id; }).slice(0, 800);
     if (!open.length) return stats;
     return self.db.all("SELECT * FROM senders WHERE status = 'active' AND (next_send_at IS NULL OR next_send_at <= ?)", [t]).then(function (senders) {
       // Protection level decides the health floor; a "force continue" override lifts it for a while.
@@ -399,11 +405,25 @@ E._onFailure = function (sender, c, steps, claim, err) {
 // ---------- campaigns are never blocked ----------
 // Protection works on SENDER accounts only: a sender that falls below its health line is paused (see senderHealth), and its people simply
 // wait. The campaign itself keeps its own status. Older versions marked such campaigns 'error'; this puts any of those back to 'active'.
+// Single source of truth for "sent today": the messages table. A sender's stored counter (the one the daily limit uses) is only
+// ever raised to match it, never lowered, because a provider quota error deliberately marks the counter as full.
+// This heals a counter that fell behind (crash between send and update, restored data) so cards, limits and Home agree.
+E._healSentToday = function (t) {
+  var self = this, today = utcDate(t), start = Date.parse(today + 'T00:00:00Z');
+  return this.db.all("SELECT m.sender_id AS id, COUNT(*) AS n FROM messages m WHERE m.direction = 'out' AND m.status = 'sent' AND m.sent_at >= ? AND m.sent_at < ? AND m.sender_id IS NOT NULL GROUP BY m.sender_id", [start, start + DAY]).then(function (rows) {
+    return rows.reduce(function (p, r) {
+      return p.then(function () {
+        return self.db.run('UPDATE senders SET sent_today = ?, sent_today_date = ? WHERE id = ? AND ((sent_today_date = ? AND sent_today < ?) OR sent_today_date IS NULL OR sent_today_date != ?)', [r.n, today, r.id, today, r.n, today]);
+      });
+    }, Promise.resolve());
+  });
+};
+
 E._reconcile = function (t) {
   var self = this;
   if (t - this._reconciledAt < RECONCILE_EVERY_MS) return Promise.resolve();
   this._reconciledAt = t;
-  return this.db.all("SELECT id, parent_id FROM campaigns WHERE status = 'error'").then(function (camps) {
+  return this._healSentToday(t).then(function () { return self.db.all("SELECT id, parent_id FROM campaigns WHERE status = 'error'"); }).then(function (camps) {
     return camps.reduce(function (p, c) {
       return p.then(function () {
         return self.db.run("UPDATE campaigns SET status = 'active', last_error = NULL, updated_at = ? WHERE id = ?", [t, c.id])

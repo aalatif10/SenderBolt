@@ -145,7 +145,18 @@ SB.S = {
     accountTip: 'The address you sign in with.',
     passwordHint: 'At least 12 characters. Changing it signs you out everywhere else.',
     sigTip: 'Added to the end of every email from an account that has no signature of its own.',
-    prefs: { intro: 'New campaigns start with these choices. You can still change them for each campaign; running campaigns are never affected.', tzTip: 'The sending window follows this time zone, usually your recipients\' or your own.' }
+    backup: {
+      backupBtn: 'Back up', backupTip: 'Download all your sending accounts, with their settings and app passwords, as one encrypted file.',
+      restoreBtn: 'Restore', restoreTip: 'Add sending accounts from a backup file. Accounts you already have are skipped, never overwritten.',
+      backupTitle: 'Back up sending accounts', backupIntro: 'The file contains every account, its settings and its app password. It is encrypted with the backup password below, so keep that password safe: without it the file cannot be opened.',
+      loginPw: 'Your sign-in password', loginPwTip: 'Asked again because the file holds your app passwords.', bkPw: 'Backup password', bkPwHint: 'At least 10 characters. Needed to restore.', bkPw2: 'Repeat backup password', mismatch: 'The two backup passwords are different.',
+      download: 'Download backup', done: 'Backup downloaded',
+      restoreTitle: 'Restore sending accounts', restoreIntro: 'Choose a SenderBolt backup file and enter its backup password. Nothing changes until you confirm the list.', pickFile: 'Backup file', readBtn: 'Read backup',
+      summary: function (n, e) { return n + ' new, ' + e + ' already in SenderBolt'; }, existsTag: 'Already exists', newTag: 'New', existsTip: 'This address is already one of your sending accounts. It is left exactly as it is.',
+      restoreSel: function (n) { return 'Restore ' + n + ' selected'; }, nothing: 'Nothing to restore: every account in this backup already exists.', selectAll: 'Select all new accounts',
+      result: function (r) { return r.added.length + ' restored' + (r.skipped_existing.length ? ', ' + r.skipped_existing.length + ' already existed (skipped)' : '') + (r.failed.length ? ', ' + r.failed.length + ' could not be restored' : ''); }
+    },
+    prefs: { guard: { title: 'Sending guardrail', on: 'Never send outside these hours', onHint: 'A safety boundary for ALL campaigns, on top of each campaign\'s own sending window. An email is held until both are open, and follow-up waiting times are never shortened.', from: 'Guardrail from', to: 'Guardrail until', tz: 'Guardrail time zone', wk: 'Guardrail skips weekends' }, intro: 'New campaigns start with these choices. You can still change them for each campaign; running campaigns are never affected.', tzTip: 'The sending window follows this time zone, usually your recipients\' or your own.' }
   },
   steps: {
     first: 'First email', follow: function (n) { return 'Follow-up ' + n; }, short: 'Email 1', shortFollow: function (n) { return 'Follow-up ' + n; },

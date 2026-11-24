@@ -18,6 +18,7 @@ var AppError = require('../lib/errors').AppError;
 var audit = require('./audit');
 var nextSend = require('../lib/nextSend');
 var state = require('./campaignState');
+var settingsLib = require('./settings');
 var stepProgress = require('./stepProgress');
 
 var MAX_LEADS = 50000, MAX_PARTS = 500, MAX_STEPS = 6, MAX_SENDERS = 20;
@@ -317,6 +318,10 @@ var deriveStatus = state.deriveStatus;
 
 // Per-campaign stats for the user. (Single-user scale; add pagination before SaaS scale.)
 C._statsByCampaign = function (userId, onlyIds) {
+  var self = this;
+  return settingsLib.loadGuard(this.db, userId).then(function (guard) { return self._statsByCampaignG(userId, onlyIds, guard); });
+};
+C._statsByCampaignG = function (userId, onlyIds, guard) {
   var self = this, out = {};
   var filter = onlyIds ? ' AND cl.campaign_id IN (' + v.placeholders(onlyIds.length) + ')' : '';
   var params = onlyIds ? [userId].concat(onlyIds) : [userId];
@@ -329,7 +334,7 @@ C._statsByCampaign = function (userId, onlyIds) {
       var s = emptyStats();
       CL_STATUSES.forEach(function (k) { s[k] = Number(r[k]); });
       // The time an email is DUE is not when it goes out: apply the campaign's sending hours, days and start date, so the countdown is real.
-      s.total = Number(r.total); s.next_send_at = r.next_send_at === null ? null : nextSend.effective(r, Number(r.next_send_at), now);
+      s.total = Number(r.total); s.next_send_at = r.next_send_at === null ? null : nextSend.effective(r, Number(r.next_send_at), now, guard);
       out[r.cid] = s;
     });
     return self.db.all("SELECT cl.campaign_id AS cid, COUNT(*) AS n FROM messages m JOIN campaign_leads cl ON cl.id = m.campaign_lead_id WHERE m.user_id = ? AND m.direction = 'out' AND m.status = 'sent'" + filter + ' GROUP BY cl.campaign_id', params);
@@ -720,13 +725,13 @@ C.update = function (userId, id, input, ip) {
   }).then(function () { return self.get(userId, id); });
 };
 
-// After the senders of a running campaign changed: people who have not been emailed yet are spread over the new set,
-// and so is anybody whose sender was removed. People already mid-sequence keep their sender so their follow-ups stay in the same thread.
+// After the senders of a running campaign changed: only people who have not been emailed yet are spread over the new set.
+// Dedicated sender ownership: once a person got Email 1 their sender owns the whole thread (follow-ups and replies), even if that
+// sender is no longer in the campaign's list. The only exception is an owner that no longer exists at all (sender_id IS NULL).
 function rebalanceLeads(tx, leaves, senderIds) {
   var n = senderIds.length, cases = senderIds.map(function (s, k) { return 'WHEN ' + k + ' THEN ?'; }).join(' ');
   return seq(leaves, function (leaf) {
-    return tx.run("UPDATE campaign_leads SET sender_id = CASE (position % " + n + ') ' + cases + " END WHERE campaign_id = ? AND status IN ('pending','active','paused') AND (current_step = 0 OR sender_id IS NULL OR sender_id NOT IN (" + v.placeholders(n) + '))',
-      senderIds.concat([leaf.id], senderIds));
+    return tx.run("UPDATE campaign_leads SET sender_id = CASE (position % " + n + ') ' + cases + " END WHERE campaign_id = ? AND status IN ('pending','active','paused') AND (current_step = 0 OR sender_id IS NULL)", [].concat(senderIds, [leaf.id]));
   });
 }
 

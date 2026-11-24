@@ -386,7 +386,8 @@ function install(C, h) {
   C.homeOverview = function (userId, q) {
     var self = this, off = v.intIn(q && q.tz, -720, 840); if (off === null) off = 0;
     var DAY = 86400000, t = self.now();
-    var dayStart = Math.floor((t + off * 60000) / DAY) * DAY - off * 60000;
+    // "Today" is the UTC day, the same day every sender's daily limit and "sent today" card use, so Home and Senders always agree.
+    var dayStart = Math.floor(t / DAY) * DAY;
     return Promise.all([
       self.db.get("SELECT COUNT(*) AS n FROM campaigns WHERE user_id = ? AND parent_id IS NULL AND status = 'active'", [userId]),
       self.db.get("SELECT COUNT(DISTINCT m.campaign_lead_id) AS n FROM messages m WHERE m.user_id = ? AND m.direction = 'in' AND m.kind = 'email' AND m.campaign_lead_id IS NOT NULL", [userId]),

@@ -775,3 +775,4 @@ td .email-trunc { max-width: 260px; } .panel-head h2 .email-trunc { max-width: 3
 .health-x { width: 24px; height: 24px; display: inline-grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--text-3); cursor: pointer; }
 .health-x:hover { background: var(--surface-2); color: var(--text); } .health-x:focus-visible { outline: 2px solid var(--accent); }
 .health-x .icon { width: 14px; height: 14px; }
+.bk-row { display: flex; align-items: center; gap: var(--space-3); cursor: pointer; } .bk-row > div { flex: 1; min-width: 0; } .bk-row.dim { opacity: .65; cursor: default; }

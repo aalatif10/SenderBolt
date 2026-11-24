@@ -13,7 +13,9 @@ var S = SettingsService.prototype;
 
 // System preferences: defaults the campaign wizard starts from. Whitelisted keys only, each range-checked.
 var v = require('../lib/validate');
-var PREF_DEFAULTS = { window_start_hour: 9, window_end_hour: 17, utc_offset_min: 0, weekdays_only: 1, stop_on_reply: 1, track_opens: 0, default_delay_days: 3, priority_mode: 'followups_first' };
+var PREF_DEFAULTS = { window_start_hour: 9, window_end_hour: 17, utc_offset_min: 0, weekdays_only: 1, stop_on_reply: 1, track_opens: 0, default_delay_days: 3, priority_mode: 'followups_first',
+  // System guardrail: when on, NO campaign sends outside these hours/days, whatever its own window says.
+  guard_enabled: 0, guard_start_hour: 8, guard_end_hour: 20, guard_utc_offset_min: 0, guard_weekdays_only: 0 };
 var PRIORITY_MODES = ['followups_first', 'balanced', 'new_first'];
 function cleanPrefs(input) {
   var o = Object.assign({}, PREF_DEFAULTS);
@@ -29,13 +31,23 @@ function cleanPrefs(input) {
     o[k] = input[k] ? 1 : 0;
   }
   num('window_start_hour', 0, 23); num('window_end_hour', 1, 24); num('utc_offset_min', -720, 840); num('default_delay_days', 1, 60);
-  flag('weekdays_only'); flag('stop_on_reply'); flag('track_opens');
+  num('guard_start_hour', 0, 23); num('guard_end_hour', 1, 24); num('guard_utc_offset_min', -720, 840);
+  flag('weekdays_only'); flag('stop_on_reply'); flag('track_opens'); flag('guard_enabled'); flag('guard_weekdays_only');
   if (input.priority_mode !== undefined) {
     if (PRIORITY_MODES.indexOf(input.priority_mode) === -1) throw new AppError('validation', 'Priority must be one of: ' + PRIORITY_MODES.join(', '), 400, { prefs: 'priority_mode' });
     o.priority_mode = input.priority_mode;
   }
   if (o.window_end_hour <= o.window_start_hour) throw new AppError('validation', 'The sending window must end after it starts', 400, { prefs: 'window_end_hour' });
+  if (o.guard_end_hour <= o.guard_start_hour) throw new AppError('validation', 'The guardrail window must end after it starts', 400, { prefs: 'guard_end_hour' });
   return o;
+}
+// The guardrail as a window object (same shape as a campaign window), or null when it is switched off.
+function guardOf(prefs) {
+  if (!prefs || !prefs.guard_enabled) return null;
+  return { window_start_hour: prefs.guard_start_hour, window_end_hour: prefs.guard_end_hour, utc_offset_min: prefs.guard_utc_offset_min, weekdays_only: prefs.guard_weekdays_only, active_days: 0 };
+}
+function loadGuard(db, userId) {
+  return db.get('SELECT prefs FROM user_settings WHERE user_id = ?', [userId]).then(function (r) { return guardOf(readPrefs(r && r.prefs)); });
 }
 function readPrefs(raw) {
   var o = null;
@@ -110,4 +122,4 @@ function withSignature(db, userId, sender) {
   });
 }
 
-module.exports = { SettingsService: SettingsService, withSignature: withSignature, readPrefs: readPrefs, PRIORITY_MODES: PRIORITY_MODES };
+module.exports = { SettingsService: SettingsService, withSignature: withSignature, readPrefs: readPrefs, guardOf: guardOf, loadGuard: loadGuard, PRIORITY_MODES: PRIORITY_MODES };

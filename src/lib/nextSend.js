@@ -24,7 +24,27 @@ function nextWindowOpen(c, t) {
   return null;
 }
 
-// due: the time the work is ready (ms) -> the time it can really be sent.
-function effective(c, due, now) { return nextWindowOpen(c, Math.max(due, now)); }
+// System guardrail (Settings -> System preferences): an optional window every campaign must stay inside, on top of its own
+// sending window. `guard` is null (off) or a window object in the same shape as a campaign
+// { window_start_hour, window_end_hour, utc_offset_min, weekdays_only }.
+// Earliest time >= t that is inside BOTH the campaign window and the guardrail. The two windows are periodic, so the loop
+// converges within a few steps; null means they never overlap (for example 9-12 vs 14-18), so nothing could ever be sent.
+function nextAllowed(c, t, guard) {
+  if (!guard) return nextWindowOpen(c, t);
+  var cur = t;
+  for (var i = 0; i < 24; i++) {
+    var a = nextWindowOpen(c, cur);
+    if (a === null) return null;
+    var g = nextWindowOpen(guard, a);
+    if (g === null) return null;
+    if (g === a) return a;
+    cur = g;
+  }
+  return null;
+}
 
-module.exports = { nextWindowOpen: nextWindowOpen, effective: effective };
+// due: the time the work is ready (ms) -> the time it can really be sent. The step interval is never shortened: the result is
+// always >= due, it only moves later when a window (campaign or guardrail) is closed.
+function effective(c, due, now, guard) { return nextAllowed(c, Math.max(due, now), guard); }
+
+module.exports = { nextWindowOpen: nextWindowOpen, nextAllowed: nextAllowed, effective: effective };
