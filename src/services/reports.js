@@ -113,12 +113,13 @@ ReportsService.prototype.overview = function (userId, q) {
         weekday[new Date(m.t + R.off * 60000).getUTCDay()]++;
       });
       // Funnel
-      var cohort = r[4], f = { contacted: cohort.length, followed_up: 0, replied: 0, interested: 0, bounced: 0, opted_out: 0, still_running: 0 };
+      var cohort = r[4], f = { contacted: cohort.length, followed_up: 0, replied: 0, interested: 0, bounced: 0, opted_out: 0, stopped: 0, still_running: 0 };
       cohort.forEach(function (c) {
         if (c.cur > 1) f.followed_up++;
         if (c.status === 'replied') f.replied++;
         else if (c.status === 'bounced') f.bounced++;
         else if (c.status === 'unsubscribed') f.opted_out++;
+        else if (c.status === 'stopped') f.stopped++;
         else if (c.status === 'pending' || c.status === 'active' || c.status === 'paused') f.still_running++;
       });
       var cohortIds = cohort.map(function (c) { return c.id; });

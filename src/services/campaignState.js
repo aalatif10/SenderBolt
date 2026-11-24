@@ -49,4 +49,24 @@ function stopQueued(tx, userId, addr, reason, note, t) {
   });
 }
 
-module.exports = { deriveStatus: deriveStatus, syncMain: syncMain, completeIfDone: completeIfDone, stopQueued: stopQueued };
+// ---- Stopping ONE person in ONE campaign ----------------------------------------------------------------------------
+// The single place that ends a person's sequence for a campaign-scoped reason. Used by the Inbox "Stop campaign" button, by reply
+// detection ("not interested" replies) and by the "stop campaign" phrase, so the three can never drift apart.
+// It only touches the given campaign_leads row: no do-not-email entry, no other campaign, no other person. The row gets status
+// 'stopped' (its own state, never 'completed') and the reason in status_note, which the UI turns into a badge.
+var STOP_NOTES = { manual: 'Stopped manually', not_interested: 'Not interested', stop_phrase: 'Replied "stop campaign"' };
+var STOPPABLE_FROM = ['pending', 'active', 'paused', 'error', 'replied', 'completed'];
+// Badge kind of a stopped row, from its note: 'not_interested' | 'stop_campaign' | 'manual_stop'.
+function stopKind(note) { return note === STOP_NOTES.not_interested ? 'not_interested' : note === STOP_NOTES.stop_phrase ? 'stop_campaign' : 'manual_stop'; }
+// Returns true when the row was changed. tx may be a Database or a transaction.
+function stopLead(tx, clId, campaignId, reason, t) {
+  var note = STOP_NOTES[reason];
+  if (!note) return Promise.reject(new Error('Unknown stop reason'));
+  return tx.run("UPDATE campaign_leads SET status = 'stopped', next_send_at = NULL, status_note = ? WHERE id = ? AND status IN (" + STOPPABLE_FROM.map(function () { return '?'; }).join(',') + ')',
+    [note, clId].concat(STOPPABLE_FROM)).then(function (r) {
+    var changed = (r && r.changes) > 0;
+    return completeIfDone(tx, campaignId, t).then(function () { return changed; });
+  });
+}
+
+module.exports = { deriveStatus: deriveStatus, syncMain: syncMain, completeIfDone: completeIfDone, stopQueued: stopQueued, stopLead: stopLead, stopKind: stopKind, STOP_NOTES: STOP_NOTES };

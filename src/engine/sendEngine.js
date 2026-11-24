@@ -39,7 +39,9 @@ var STREAK_LIMIT = 5;               // default (medium protection); each sender'
 var STREAK_PAUSE_MS = 30 * 60000;
 var SEND_TIMEOUT_MS = 45000;
 var CANDIDATES_PER_TICK = 25;
-var SYNC_FRESH_MS = 15 * 60000;
+var gate = require('../lib/senderGate');
+var trackingOk = gate.trackingOk;
+var SYNC_FRESH_MS = gate.SYNC_FRESH_MS;
 var RECONCILE_EVERY_MS = 30000;
 
 function utcDate(t) { return new Date(t).toISOString().slice(0, 10); }
@@ -67,11 +69,6 @@ function mapLimit(items, limit, fn) {
   function worker() { if (i >= items.length) return Promise.resolve(); var it = items[i++]; return fn(it).then(worker); }
   for (var k = 0; k < Math.min(limit, items.length); k++) active.push(worker());
   return Promise.all(active);
-}
-
-function trackingOk(s, t, required) {
-  if (!required || !s.imap_host || s.reply_detection === 0) return true;     // reply detection switched off by the owner: nothing to wait for
-  return s.imap_last_uid !== null && s.imap_last_uid !== undefined && (!s.sync_error || s.sync_transient === 1) && s.last_sync_at !== null && s.last_sync_at !== undefined && t - s.last_sync_at <= SYNC_FRESH_MS;
 }
 
 function SendEngine(db, deps) {
@@ -221,8 +218,8 @@ E._compose = function (sender, c, step, history) {
 
   var link = !c.test && this.publicOrigin && this.secret ? unsub.url(this.publicOrigin, unsub.make(this.secret, c.cl_id)) : null;
   var footer = link
-    ? '<p style="font-size:12px;color:#777">If you would rather not receive these emails, <a href="' + link + '">unsubscribe</a> or reply with the words stop campaign.</p>'
-    : '<p style="font-size:12px;color:#777">If you would rather not receive these emails, reply with the words stop campaign and I will not contact you again.</p>';
+    ? '<p style="font-size:12px;color:#777">If you would rather not receive these emails, <a href="' + link + '">unsubscribe</a> (all my emails), or reply with the words stop campaign to stop this email series.</p>'
+    : '<p style="font-size:12px;color:#777">If you would rather not receive these emails, reply with the words stop campaign and I will stop this email series.</p>';
   var pixel = c.track_opens && !c.test && this.publicOrigin && this.secret
     ? '<img src="' + track.url(this.publicOrigin, track.make(this.secret, c.cl_id, c.current_step)) + '" width="1" height="1" alt="" style="border:0;width:1px;height:1px">' : '';
   var bodyHtml = b.text + (sender.signature_html ? '<br>' + sanitize.clean(sender.signature_html) : '') + footer + pixel;

@@ -134,8 +134,7 @@ function install(C, h) {
   function requeueInfo(row, stepCount) {
     if (row.status === 'bounced') return { ok: false, why: 'The address bounced. Sending again would hurt your sender reputation.' };
     if (row.status === 'unsubscribed' && row.suppression_reason && row.suppression_reason !== 'replied_stop') return { ok: false, why: 'This person used the unsubscribe link or complained. They must not be emailed again.' };
-    var manual = row.status === 'completed' && row.status_note === 'Stopped manually';
-    if (!manual && ['replied', 'unsubscribed', 'error', 'paused'].indexOf(row.status) === -1) return { ok: false, why: '' };
+    if (['replied', 'unsubscribed', 'error', 'paused', 'stopped'].indexOf(row.status) === -1) return { ok: false, why: '' };
     if (row.current_step >= stepCount) return { ok: false, why: 'This person already received every email in the sequence.' };
     return { ok: true, why: '' };
   }
@@ -245,7 +244,7 @@ function install(C, h) {
           if (action === 'remove') {
             // Bounced / unsubscribed / finished people keep their row (status, messages, analytics) and are only hidden from the list,
             // so removing problem addresses never rewrites the campaign's history.
-            if (['bounced', 'unsubscribed', 'completed'].indexOf(r.status) !== -1) return tx.run('UPDATE campaign_leads SET removed_at = ? WHERE id = ?', [t, r.id]).then(ok);
+            if (['bounced', 'unsubscribed', 'completed', 'stopped'].indexOf(r.status) !== -1) return tx.run('UPDATE campaign_leads SET removed_at = ? WHERE id = ?', [t, r.id]).then(ok);
             if (r.mails) return tx.run("UPDATE campaign_leads SET status = 'completed', next_send_at = NULL, status_note = 'Removed from the campaign' WHERE id = ? AND status IN ('pending','active','paused','error','replied')", [r.id]).then(ok);
             return tx.run('DELETE FROM campaign_leads WHERE id = ?', [r.id]).then(ok);
           }
@@ -319,6 +318,7 @@ function install(C, h) {
           function skip(why) { res.skipped.push({ id: r.id, email: r.email, message: why }); return null; }
           if (r.status === 'bounced') return skip('The address bounced');
           if (r.status === 'replied') return skip('This person replied. Move them only after you decide to email them again.');
+          if (r.status === 'stopped') return skip('This person was stopped in their campaign. Move them only after you decide to email them again (use Queue next email there).');
           if (r.suppression_reason && r.suppression_reason !== 'replied_stop') return skip('This person must not be emailed (unsubscribed, complained or blocked)');
           if (inTarget[r.lead_id]) return skip('Already in "' + tfam.camp.name + '"');
           inTarget[r.lead_id] = true; pos++;
@@ -356,17 +356,17 @@ function install(C, h) {
         self.db.all('SELECT step_no, subject FROM campaign_steps WHERE campaign_id = ? ORDER BY step_no', [id]),
         self.db.all("SELECT m.step_no AS step, COUNT(*) AS sent, SUM(CASE WHEN m.open_count > 0 THEN 1 ELSE 0 END) AS opened " + base + " AND m.direction = 'out' AND m.status = 'sent' AND m.step_no IS NOT NULL GROUP BY m.step_no", P),
         self.db.all("SELECT " + attributed + " AS step, COUNT(DISTINCT m.campaign_lead_id) AS n, SUM(CASE WHEN m.sentiment = 'interested' THEN 1 ELSE 0 END) AS good " + base + " AND m.direction = 'in' AND m.kind = 'email' GROUP BY step", P),
-        self.db.all("SELECT MAX(0, cl.current_step - 1) AS step, cl.status AS st, COUNT(*) AS n FROM campaign_leads cl WHERE cl.campaign_id IN (" + ph + ") AND cl.status IN ('bounced','unsubscribed') GROUP BY step, st", L),
+        self.db.all("SELECT MAX(0, cl.current_step - 1) AS step, cl.status AS st, COUNT(*) AS n FROM campaign_leads cl WHERE cl.campaign_id IN (" + ph + ") AND cl.status IN ('bounced','unsubscribed','stopped') GROUP BY step, st", L),
         self.db.all("SELECT cl.current_step AS cur, COUNT(*) AS n FROM campaign_leads cl WHERE cl.campaign_id IN (" + ph + ") AND cl.status IN ('pending','active','paused') GROUP BY cl.current_step", L),
         self.db.get("SELECT COUNT(DISTINCT CASE WHEN m.open_count > 0 THEN m.campaign_lead_id END) AS opened, COUNT(DISTINCT CASE WHEN m.direction = 'in' AND m.kind = 'email' THEN m.campaign_lead_id END) AS replied, " +
           "COUNT(DISTINCT CASE WHEN m.direction = 'in' AND m.kind = 'email' AND m.sentiment = 'interested' THEN m.campaign_lead_id END) AS good " + base, P),
-        self.db.get("SELECT SUM(CASE WHEN cl.status = 'bounced' THEN 1 ELSE 0 END) AS bounced, SUM(CASE WHEN cl.status = 'unsubscribed' THEN 1 ELSE 0 END) AS unsub FROM campaign_leads cl WHERE cl.campaign_id IN (" + ph + ')', L)
+        self.db.get("SELECT SUM(CASE WHEN cl.status = 'bounced' THEN 1 ELSE 0 END) AS bounced, SUM(CASE WHEN cl.status = 'unsubscribed' THEN 1 ELSE 0 END) AS unsub, SUM(CASE WHEN cl.status = 'stopped' THEN 1 ELSE 0 END) AS stopped FROM campaign_leads cl WHERE cl.campaign_id IN (" + ph + ')', L)
       ]).then(function (r) {
         var meta = r[0], n = meta.length, rows = [];
-        var by = function () { var o = []; for (var k = 0; k < n; k++) o.push({ scheduled: 0, sent: 0, delivered: 0, opened: 0, replied: 0, successful: 0, bounced: 0, unsubscribed: 0 }); return o; }();
+        var by = function () { var o = []; for (var k = 0; k < n; k++) o.push({ scheduled: 0, sent: 0, delivered: 0, opened: 0, replied: 0, successful: 0, bounced: 0, unsubscribed: 0, stopped: 0 }); return o; }();
         r[1].forEach(function (x) { if (by[x.step]) { by[x.step].sent = Number(x.sent); by[x.step].opened = Number(x.opened) || 0; } });
         r[2].forEach(function (x) { if (x.step !== null && by[x.step]) { by[x.step].replied += Number(x.n); by[x.step].successful += Number(x.good) || 0; } });
-        r[3].forEach(function (x) { var s = Math.min(x.step, n - 1); if (by[s]) { if (x.st === 'bounced') by[s].bounced += Number(x.n); else by[s].unsubscribed += Number(x.n); } });
+        r[3].forEach(function (x) { var s = Math.min(x.step, n - 1); if (by[s]) { if (x.st === 'bounced') by[s].bounced += Number(x.n); else if (x.st === 'stopped') by[s].stopped += Number(x.n); else by[s].unsubscribed += Number(x.n); } });
         // People still waiting with current_step c are scheduled for step c and every step after it.
         r[4].forEach(function (x) { for (var k = x.cur; k < n; k++) by[k].scheduled += Number(x.n); });
         by.forEach(function (b) { b.delivered = Math.max(0, b.sent - b.bounced); });
@@ -374,7 +374,7 @@ function install(C, h) {
         by.forEach(function (b) { total.scheduled += b.scheduled; total.sent += b.sent; total.delivered += b.delivered; });
         // The whole-sequence row counts PEOPLE once, not once per email, so it is not the sum of the rows below it.
         var seqRow = { key: 'sequence', label: 'Sequence', scheduled: total.scheduled, sent: total.sent, delivered: total.delivered, opened: Number(r[5].opened) || 0, replied: Number(r[5].replied) || 0,
-          successful: Number(r[5].good) || 0, bounced: Number(r[6].bounced) || 0, unsubscribed: Number(r[6].unsub) || 0 };
+          successful: Number(r[5].good) || 0, bounced: Number(r[6].bounced) || 0, unsubscribed: Number(r[6].unsub) || 0, stopped: Number(r[6].stopped) || 0 };
         rows.push(seqRow);
         meta.forEach(function (m, k) { rows.push(Object.assign({ key: 'step' + m.step_no, step_no: m.step_no, label: m.step_no === 0 ? 'First email' : 'Follow-up ' + m.step_no, subject: m.subject || '' }, by[k])); });
         return { rows: rows, track_opens: !!f.camp.track_opens, people: { total: null } };

@@ -18,6 +18,7 @@
     pending: ['Waiting', 'draft', 'Added to the campaign. Nothing sent yet.'], active: ['In sequence', 'active', 'Receiving the sequence.'],
     replied: ['Replied', 'completed', 'Wrote back. The sequence stopped for this person.'], completed: ['Finished', 'completed', 'Got every email in the sequence.'],
     bounced: ['Bounced', 'error', 'The address does not exist or refused the email.'], unsubscribed: ['Opted out', 'paused', 'Asked to stop. Never emailed again.'],
+    stopped: ['Stopped', 'paused', 'Stopped in this campaign only: by you, a "not interested" reply or "stop campaign". Other campaigns are not affected.'],
     paused: ['Paused', 'paused', 'Held back with the campaign.'], error: ['Problem', 'error', 'Could not be emailed, for example a missing personalisation field.']
   };
   function name(m) { return [m.first_name, m.last_name].filter(Boolean).join(' '); }
@@ -217,7 +218,8 @@
             cell('Successful', fmt.num(seqRow.successful), fmt.pct(pctOf(seqRow.successful, seqRow.delivered)) + ' of delivered', 'Replies tagged "Interested" in your Inbox.')));
         var cols = [['Scheduled', 'scheduled', 'Emails still to go out for this step.'], ['Sent', 'sent', 'Emails of this step that went out.'], ['Delivered', 'delivered', 'Sent minus bounced.'],
           ['Opened', 'opened', M.opens], ['Replied', 'replied', 'People who wrote back, counted under the email they answered.'], ['Successful', 'successful', 'Replies tagged "Interested".'],
-          ['Bounced', 'bounced', M.bounced], ['Unsubscribed', 'unsubscribed', 'People who asked to stop (unsubscribe link or replying "stop campaign"), under the last email they got.']];
+          ['Bounced', 'bounced', M.bounced], ['Unsubscribed', 'unsubscribed', 'People who used the unsubscribe link (blocked everywhere), under the last email they got.'],
+          ['Stopped', 'stopped', 'People stopped in this campaign only (by you, a "not interested" reply or "stop campaign"), under the last email they got.']];
         function val(r, k) {
           if (k === 'scheduled' || k === 'sent' || k === 'delivered') return fmt.num(r[k]);
           if (k === 'opened') return pc(r.opened, r.delivered, tr);
@@ -315,9 +317,9 @@
       var table = h('div', null, h('div', { class: 'skeleton' })), barBox = h('div');
       // Counts come from the list itself (people you removed are not counted); before the first answer, the campaign totals are used.
       var cnt = pst.counts || { all: camp.stats.total, risky: 0 };
-      var chips = SB.lists.chips([['all', 'All'], ['active', 'In sequence'], ['paused', 'Paused'], ['replied', 'Replied'], ['unsubscribed', 'Opted out'], ['bounced', 'Bounced'], ['risky', 'Risky'], ['error', 'Problem'], ['completed', 'Finished'], ['pending', 'Waiting']].map(function (c) {
+      var chips = SB.lists.chips([['all', 'All'], ['active', 'In sequence'], ['paused', 'Paused'], ['replied', 'Replied'], ['stopped', 'Stopped'], ['unsubscribed', 'Opted out'], ['bounced', 'Bounced'], ['risky', 'Risky'], ['error', 'Problem'], ['completed', 'Finished'], ['pending', 'Waiting']].map(function (c) {
         return { key: c[0], label: c[1], n: cnt[c[0]] !== undefined ? cnt[c[0]] : (pst.counts ? 0 : (camp.stats[c[0]] || 0)),
-          tip: c[0] === 'unsubscribed' ? 'People who asked to stop, by replying "stop campaign" or with the unsubscribe link.' : c[0] === 'risky' ? 'Addresses the email checker flagged as risky or catch-all: they may bounce. Select them to review or remove.' : c[0] === 'bounced' ? 'The address does not exist or rejected the email. Select and remove them to clean the list; their history is kept.' : undefined };
+          tip: c[0] === 'stopped' ? 'People stopped in this campaign only: by you, a "not interested" reply or "stop campaign". Other campaigns are not affected.' : c[0] === 'unsubscribed' ? 'People who used the unsubscribe link (or older "stop campaign" replies): they are on your do-not-email list.' : c[0] === 'risky' ? 'Addresses the email checker flagged as risky or catch-all: they may bounce. Select them to review or remove.' : c[0] === 'bounced' ? 'The address does not exist or rejected the email. Select and remove them to clean the list; their history is kept.' : undefined };
       }).filter(function (c) { return c.key === 'all' || c.n > 0 || c.key === pst.status; }), pst.status, function (k) { pst.status = k; pst.page = 1; pst.sel = {}; paintPeople(); });
       SB.mount(body, h('div', null, chips, barBox, h('div', { class: 'pad-t' }), table));
       function paintBar() {
@@ -375,7 +377,7 @@
       SB.mount(box, h('div', { class: 'skeleton' }));
       function paint(hi) {
         var l = hi.lead, st = LEAD_STATUS[l.status] || LEAD_STATUS.pending;
-        var opt = l.status === 'bounced' ? 'bounce' : l.status === 'completed' && l.status_note === 'Stopped manually' ? 'manual_stop' : (l.status === 'unsubscribed' ? (/stop campaign/i.test(l.status_note || '') ? 'stop_campaign' : null) : null);
+        var opt = l.status === 'bounced' ? 'bounce' : l.status === 'stopped' ? (l.status_note === 'Not interested' ? 'not_interested' : /stop campaign/i.test(l.status_note || '') ? 'stop_campaign' : 'manual_stop') : (l.status === 'unsubscribed' ? (/stop campaign/i.test(l.status_note || '') ? 'stop_campaign' : null) : null);
         var f = { first_name: h('input', { class: 'input', maxlength: 200, value: l.first_name || '', 'aria-label': 'First name' }), last_name: h('input', { class: 'input', maxlength: 200, value: l.last_name || '', 'aria-label': 'Last name' }),
           company: h('input', { class: 'input', maxlength: 200, value: l.company || '', 'aria-label': 'Company' }) };
         var customRows = h('div', { class: 'cf-rows' }), err = h('div', { class: 'form-error hidden', role: 'alert' });

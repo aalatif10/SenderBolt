@@ -191,21 +191,14 @@
       Object.keys(st.open).forEach(function (k) { if (!data.items.some(function (p) { return String(p.id) === k; })) { delete st.open[k]; delete st.detail[k]; } });
       var sent = 0, cap = 0;
       senders.forEach(function (s) { sent += s.sent_today; if (s.status === 'active') cap += s.limit_today; });
-      var badSenders = senders.filter(function (s) { return s.status !== 'active' || s.last_error; });
-      var attnNote = badSenders.length ? badSenders[0].label + ': ' + (badSenders[0].last_error || (badSenders[0].status === 'paused' ? 'paused' : badSenders[0].status)) : 'Everything looks healthy';
+      var attnNote = r[7].counts.dismissed ? 'No active alerts (' + r[7].counts.dismissed + ' dismissed, they return if the problem comes back)' : 'Everything looks healthy';
       // At-a-glance row: replies waiting, people waiting for an email, today's sending, and a health list of anything that needs action.
       var waiting = 0; projects.forEach(function (p) { waiting += p.totals.active || 0; });
-      var alerts = [], seen = (r[6] && r[6].settings && r[6].settings.health_seen) || [], dismissed = (r[6] && r[6].settings && r[6].settings.health_dismissed) || [];
-      projects.forEach(function (p) {
-        var t = p.totals;
-        if (t.emailed >= 20 && t.bounce_rate >= 5) alerts.push({ key: 'p:' + p.id + ':bounce', lvl: 'critical', t: p.name + ': high bounce rate (' + t.bounce_rate + '%)', d: 'Pause the campaign and verify your lead list to protect your sending accounts.', href: '#/project/' + p.id, l: 'Review' });
-      });
-      badSenders.forEach(function (s) { alerts.push({ key: 's:' + s.id + ':' + (s.last_error ? 'err' : 'down'), lvl: s.status === 'active' ? 'warning' : 'critical', t: (s.label || s.email) + ': ' + (s.last_error ? 'reporting an error' : s.status), d: s.last_error || 'This account is not sending right now.', href: '#/senders', l: 'Open' }); });
-      var allKeys = alerts.map(function (x) { return x.key; });
-      alerts = alerts.filter(function (x) { return dismissed.indexOf(x.key) === -1; });   // dismissed with the small x: hidden until the problem goes away and returns
-      alerts.forEach(function (x) { x.isNew = seen.indexOf(x.key) === -1; });
-      alerts.sort(function (x, y) { return (x.lvl === y.lvl ? 0 : x.lvl === 'critical' ? -1 : 1) || (y.isNew - x.isNew); });
-      var critical = alerts.filter(function (x) { return x.lvl === 'critical'; }).length, unseen = alerts.filter(function (x) { return x.isNew; }).length;
+      // Every alert comes from the server (GET /api/alerts: senders, campaigns, people, bounces, limits); nothing is filtered or cut here.
+      var al = r[7], seen = (r[6] && r[6].settings && r[6].settings.health_seen) || [], dismissed = (r[6] && r[6].settings && r[6].settings.health_dismissed) || [];
+      var allKeys = al.all_keys;
+      var alerts = al.items.map(function (x) { return { key: x.key, lvl: x.level, t: x.title, d: x.detail, href: x.href, l: x.action, isNew: x.is_new }; });
+      var critical = al.counts.critical, unseen = al.counts.unreviewed;
       // Reviewed state lives on the server (nothing is stored in the browser); only alerts still showing are kept, so a problem that returns counts as new.
       function markSeen(keys) { return SB.api.put('/api/settings/health-seen', { keys: keys }).then(function () { return load(); }, function (e) { ui.toast(SB.api.friendly(e), true); }); }
       function dismiss(key) { return SB.api.put('/api/settings/health-dismissed', { keys: dismissed.concat([key]).filter(function (k) { return allKeys.indexOf(k) !== -1; }) }).then(function () { return load(); }, function (e) { ui.toast(SB.api.friendly(e), true); }); }
@@ -220,11 +213,11 @@
         alerts.length > critical ? h('span', { class: 'pill pill-paused', tip: 'Problems worth a look that are not urgent.', text: fmt.num(alerts.length - critical) + (alerts.length - critical === 1 ? ' warning' : ' warnings') }) : null,
         ui.info('Problems found in your campaigns and sending accounts, most urgent first. The badge counts alerts you have not reviewed yet. Nothing here means all is well.'),
         unseen ? h('button', { class: 'btn btn-ghost btn-sm', type: 'button', tip: 'Mark everything here as reviewed. A problem that comes back will show as new again.', on: { click: function () { markSeen(alerts.map(function (x) { return x.key; })); } } }, 'Mark all reviewed') : null),
-        alerts.length ? h('div', { class: 'health-list' }, alerts.slice(0, 6).map(function (x) {
+        alerts.length ? h('div', { class: 'health-list' }, alerts.map(function (x) {
           return h('div', { class: 'health-item ' + x.lvl }, h('div', null, h('b', { text: x.t }), x.isNew ? h('span', { class: 'tag tag-new', text: 'New' }) : null, h('div', { class: 'small muted', text: x.d })), h('div', { class: 'health-side' }, h('div', { class: 'health-top' }, h('span', { class: 'small faint', text: x.lvl === 'critical' ? 'Critical' : 'Warning' }),
             h('button', { class: 'health-x', type: 'button', 'aria-label': 'Dismiss: ' + x.t, tip: 'Hide this alert. It comes back only if the problem goes away and returns.', on: { click: function () { dismiss(x.key); } } }, SB.icon('x'))),
             h('a', { class: 'btn btn-sm', href: x.href, on: { click: function () { if (x.isNew) SB.api.put('/api/settings/health-seen', { keys: seen.concat([x.key]).filter(function (k) { return alerts.some(function (a) { return a.key === k; }); }) }).catch(function () {}); } } }, x.l)));
-        })) : h('p', { class: 'muted', text: attnNote + '.' }));
+        })) : h('p', { class: 'muted', text: attnNote.replace(/\.$/, '') + '.' }));
       var ov = r[5];
       function stat(icon, label, value, note, href, tipText) {
         return h('a', { class: 'card stat-card', href: href, tip: tipText }, h('div', { class: 'stat-h' }, SB.icon(icon), h('span', { text: label })),
@@ -245,7 +238,7 @@
     }
 
     function load() {
-      return Promise.all([SB.api.get('/api/projects' + (st.archived ? '?archived=1' : '')), SB.api.get('/api/senders'), SB.api.get('/api/stats'), SB.api.get('/api/inbox?limit=1'), SB.api.get('/api/drafts'), SB.api.get('/api/overview?tz=' + (-new Date().getTimezoneOffset())), SB.api.get('/api/settings')]).then(render, function (e) {
+      return Promise.all([SB.api.get('/api/projects' + (st.archived ? '?archived=1' : '')), SB.api.get('/api/senders'), SB.api.get('/api/stats'), SB.api.get('/api/inbox?limit=1'), SB.api.get('/api/drafts'), SB.api.get('/api/overview?tz=' + (-new Date().getTimezoneOffset())), SB.api.get('/api/settings'), SB.api.get('/api/alerts')]).then(render, function (e) {
         if (e.code !== 'offline' && !built) SB.mount(topSlot, h('div', { class: 'form-error', text: SB.api.friendly(e) }));
       });
     }

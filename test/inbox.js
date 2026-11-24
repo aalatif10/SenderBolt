@@ -137,7 +137,7 @@ h.test('stop_on_reply = off keeps the sequence running', function () {
     }).then(function () { return clOf(c, 'p0@co0.com'); }).then(function (cl) { assert.strictEqual(cl.status, 'active'); });
   });
 });
-h.test('"stop campaign" unsubscribes ONLY that person (suppression + unsubscribed); the rest of the campaign keeps running', function () {
+h.test('"stop campaign" stops ONLY that person in THIS campaign (no do-not-email entry); the rest of the campaign keeps running', function () {
   return setup().then(function (c) {
     return launch(c, 2).then(function () { return armed(c); }).then(function () { return sendAll(c, 6); }).then(function () {
       var mine = c.sent.filter(function (x) { return x.to === 'p0@co0.com'; })[0];
@@ -147,7 +147,7 @@ h.test('"stop campaign" unsubscribes ONLY that person (suppression + unsubscribe
       var mine = c.sent.filter(function (x) { return x.to === 'p1@co1.com'; })[0];
       incoming(c, { from: 'p1@co1.com', inReplyTo: mine.messageId, text: 'STOP CAMPAIGN' }); return sync(c);
     }).then(function () { return Promise.all([c.db.get("SELECT reason FROM suppression WHERE email = 'p1@co1.com'"), clOf(c, 'p1@co1.com'), clOf(c, 'p0@co0.com'), c.db.get("SELECT sentiment FROM messages WHERE from_addr = 'p1@co1.com'")]); }).then(function (r) {
-      assert.strictEqual(r[0].reason, 'replied_stop'); assert.strictEqual(r[1].status, 'unsubscribed'); assert.strictEqual(r[1].next_send_at, null);
+      assert.strictEqual(r[0], undefined, 'no global do-not-email entry'); assert.strictEqual(r[1].status, 'stopped'); assert.strictEqual(r[1].status_note, 'Replied "stop campaign"'); assert.strictEqual(r[1].next_send_at, null);
       assert.strictEqual(r[2].status, 'replied', 'the other person is untouched'); assert.strictEqual(r[3].sentiment, 'not_interested');
     });
   });
@@ -158,7 +158,7 @@ h.test('"stop campaign" keeps the rest of the campaign active', function () {
       var mine = c.sent.filter(function (x) { return x.to === 'p0@co0.com'; })[0];
       incoming(c, { from: 'p0@co0.com', inReplyTo: mine.messageId, text: 'stop campaign' }); return sync(c);
     }).then(function () { return c.db.all("SELECT status FROM campaign_leads ORDER BY id"); }).then(function (rows) {
-      assert.strictEqual(rows.filter(function (x) { return x.status === 'unsubscribed'; }).length, 1); assert.strictEqual(rows.filter(function (x) { return x.status === 'active'; }).length, 2);
+      assert.strictEqual(rows.filter(function (x) { return x.status === 'stopped'; }).length, 1); assert.strictEqual(rows.filter(function (x) { return x.status === 'active'; }).length, 2);
       return c.camps.get(c.a, c.camp.id);
     }).then(function (camp) { assert.notStrictEqual(camp.status, 'completed'); });
   });
@@ -341,7 +341,7 @@ h.test('stopping from the inbox ends only that campaign for that person; other c
         return Promise.all([c.db.get('SELECT status, next_send_at, status_note FROM campaign_leads WHERE id = ?', [a.id]), c.db.get('SELECT status, next_send_at FROM campaign_leads WHERE id = ?', [b.id]),
           c.db.get("SELECT COUNT(*) AS n FROM suppression"), c.db.get("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'inbox.stop'")]);
       }).then(function (r) {
-        assert.strictEqual(r[0].status, 'completed'); assert.strictEqual(r[0].next_send_at, null); assert.strictEqual(r[0].status_note, 'Stopped manually');
+        assert.strictEqual(r[0].status, 'stopped'); assert.strictEqual(r[0].next_send_at, null); assert.strictEqual(r[0].status_note, 'Stopped manually');
         assert.strictEqual(r[1].status, b.status, 'the other campaign keeps the person'); assert.ok(r[1].next_send_at !== null || b.status === 'pending');
         assert.strictEqual(r[2].n, 0, 'no do-not-email entry'); assert.strictEqual(r[3].n, 1);
         return c.inbox.stopLead(c.a, a.id);
@@ -352,6 +352,58 @@ h.test('stopping from the inbox ends only that campaign for that person; other c
         assert.strictEqual(byC[first] || 0, 0, 'nothing is sent from the stopped campaign'); assert.ok(byC[second] > 0, 'the other campaign still sends');
         return c.inbox.thread(c.a, a.id);
       }).then(function (th) { assert.strictEqual(th.conversation.opt_out, 'manual_stop'); assert.strictEqual(th.conversation.suppressed, null); });
+    });
+  });
+});
+
+h.group('campaign-scoped stop: reply detection, counters');
+h.test('a "not interested" reply or the "stop campaign" phrase stops the person in THAT campaign only; counted as stopped, never completed', function () {
+  return setup().then(function (c) {
+    var first, second;
+    function replyTo(campaignId, text) {
+      return c.db.get("SELECT m.message_id_hdr AS id FROM messages m JOIN campaign_leads cl ON cl.id = m.campaign_lead_id WHERE cl.campaign_id = ? AND m.direction = 'out' AND m.to_addr = 'p0@co0.com' ORDER BY m.id LIMIT 1", [campaignId]).then(function (m) {
+        incoming(c, { from: 'p0@co0.com', inReplyTo: m.id, text: text }); return sync(c);
+      });
+    }
+    return launch(c, 2, { stop_on_reply: false }).then(function () { first = c.camp.id; return launch(c, 2, { stop_on_reply: false }); }).then(function () {
+      second = c.camp.id; return armed(c);
+    }).then(function () { return sendAll(c, 8); }).then(function () { return replyTo(first, 'No thanks, not interested.'); }).then(function () {
+      return c.db.all("SELECT cl.campaign_id AS cid, cl.status, cl.status_note, cl.next_send_at FROM campaign_leads cl JOIN leads l ON l.id = cl.lead_id WHERE l.email = 'p0@co0.com' ORDER BY cl.campaign_id");
+    }).then(function (rows) {
+      assert.strictEqual(rows[0].status, 'stopped', 'stopped even though stop_on_reply is off'); assert.strictEqual(rows[0].status_note, 'Not interested'); assert.strictEqual(rows[0].next_send_at, null);
+      assert.notStrictEqual(rows[1].status, 'stopped', 'the same address keeps going in the other campaign'); assert.ok(['active', 'completed'].indexOf(rows[1].status) !== -1);
+      return Promise.all([c.db.get('SELECT COUNT(*) AS n FROM suppression'), c.camps.get(c.a, first), c.db.get("SELECT sentiment FROM messages WHERE direction = 'in' ORDER BY id DESC LIMIT 1")]);
+    }).then(function (r) {
+      assert.strictEqual(r[0].n, 0, 'nothing global'); assert.strictEqual(r[1].stats.stopped, 1); assert.strictEqual(r[1].stats.completed, 0, 'not counted as completed');
+      assert.ok(r[1].stats.done >= 1, 'finished work counts towards progress'); assert.strictEqual(r[2].sentiment, 'not_interested');
+      return c.inbox.list(c.a, { status: 'not_successful' });
+    }).then(function (l) { assert.ok(l.items.some(function (x) { return x.lead_email === 'p0@co0.com' && x.opt_out === 'not_interested'; }), 'Inbox shows it as stopped: not interested'); });
+  });
+});
+h.test('with reply detection off a "not interested" reply is only tagged, an explicit "stop campaign" still stops; Queue next email revives a stopped person', function () {
+  return setup().then(function (c) {
+    return c.db.run('UPDATE senders SET reply_detection = 0').then(function () { return launch(c, 2); }).then(function () { return armed(c); }).then(function () { return sendAll(c, 6); }).then(function () {
+      var m0 = c.sent.filter(function (x) { return x.to === 'p0@co0.com'; })[0], m1 = c.sent.filter(function (x) { return x.to === 'p1@co1.com'; })[0];
+      incoming(c, { from: 'p0@co0.com', inReplyTo: m0.messageId, text: 'Not interested, thanks.' }); incoming(c, { from: 'p1@co1.com', inReplyTo: m1.messageId, text: 'stop campaign' }); return sync(c);
+    }).then(function () { return Promise.all([clOf(c, 'p0@co0.com'), clOf(c, 'p1@co1.com')]); }).then(function (r) {
+      assert.ok(r[0].status !== 'stopped', 'only tagged'); assert.strictEqual(r[1].status, 'stopped');
+      return c.camps.bulkLeads(c.a, c.camp.id, { action: 'requeue', ids: [r[1].id] });
+    }).then(function (res) {
+      assert.deepStrictEqual(res.done.length, 1, JSON.stringify(res.skipped)); return clOf(c, 'p1@co1.com');
+    }).then(function (cl) { assert.strictEqual(cl.status, 'active'); assert.strictEqual(cl.status_note, null); });
+  });
+});
+h.test('manual Stop campaign tags the latest reply Not interested and works from the replied state; idempotent', function () {
+  return setup().then(function (c) {
+    return launch(c, 1).then(function () { return armed(c); }).then(function () { return sendAll(c, 2); }).then(function () {
+      incoming(c, { from: 'p0@co0.com', inReplyTo: c.sent[0].messageId, text: 'Tell me more about the price?' }); return sync(c);
+    }).then(function () { return clOf(c, 'p0@co0.com'); }).then(function (cl) {
+      assert.strictEqual(cl.status, 'replied'); c.clId = cl.id;
+      return c.inbox.stopLead(c.a, cl.id);
+    }).then(function (r) {
+      assert.strictEqual(r.changed, true); return Promise.all([clOf(c, 'p0@co0.com'), c.db.get("SELECT sentiment FROM messages WHERE direction = 'in'"), c.inbox.stopLead(c.a, c.clId)]);
+    }).then(function (r) {
+      assert.strictEqual(r[0].status, 'stopped'); assert.strictEqual(r[1].sentiment, 'not_interested'); assert.strictEqual(r[2].changed, false);
     });
   });
 });

@@ -1,6 +1,9 @@
 /* All user-facing wording lives here (one place to edit or translate). */
 window.SB = window.SB || {};
 SB.S = {
+  // Why no countdown is shown: the sender(s) that own the waiting people cannot send right now.
+  nextBlock: { paused: 'Not sending: the sender is paused', health: 'Not sending: health is below the protection threshold', tracking: 'Not sending: waiting for reply tracking' },
+  nextBlockTip: 'People are waiting, but the sender that owns them cannot send right now. The countdown returns when it can.',
   status: {
     active: { label: 'Running', tip: 'Emails are going out on schedule.' },
     paused: { label: 'Paused', tip: 'Nothing is sent until you resume.' },
@@ -39,7 +42,7 @@ SB.S = {
     replyRate: 'Replies divided by people emailed.',
     bounceRate: 'Bounces divided by people emailed. Keep this under 3% to protect your Gmail accounts.',
     opens: 'People whose email loaded its tiny tracking image. Approximate: some mail apps load images automatically (inflates) and others block them (undercounts). Replies are the reliable signal.',
-    progress: 'How many people have finished: replied, completed the sequence, bounced or unsubscribed.',
+    progress: 'How many people have finished: replied, completed the sequence, bounced, unsubscribed or were stopped.',
     next: 'When the next email in this campaign is due.'
   },
   leads: {
@@ -119,11 +122,11 @@ SB.S = {
     sentiment: {
       interested: { label: 'Interested', cls: 'int', tip: 'They want to talk, buy or sell. Answer these first.' },
       more_info: { label: 'More info', cls: 'more', tip: 'They asked a question or want details before deciding.' },
-      not_interested: { label: 'Not interested', cls: 'not', tip: 'They said no. They are removed from the sequence automatically.' },
+      not_interested: { label: 'Not interested', cls: 'not', tip: 'They said no. Their sequence in this campaign is stopped automatically; other campaigns are not affected.' },
       neutral: { label: 'Neutral', cls: 'neu', tip: 'Not clear yet. Read it and choose a tag yourself.' }
     },
     successful: { label: 'Successful', cls: 'int', tip: 'Click to mark this lead as Successful (a deal or result you won). Click again to undo. It is separate from the reply tag, and it lets you filter and group your wins.' },
-    stopBtn: { label: 'Stop campaign', tip: 'Stops this campaign for this person only: no more emails from this campaign. Other campaigns, and the do-not-email list, are not affected.', confirm: 'Stop this campaign for this person? Other campaigns will keep emailing them. You can re-queue them later from the campaign.', done: 'Campaign stopped for this person' },
+    stopBtn: { label: 'Stop campaign', tip: 'Not interested, or done talking? Stops this campaign for this person only and tags their reply "Not interested". Other campaigns, and the do-not-email list, are not affected.', confirm: 'Stop this campaign for this person? Their latest reply is tagged "Not interested". Other campaigns will keep emailing them, and you can re-queue them later from the campaign.', done: 'Campaign stopped for this person' },
     successfulTab: 'Conversations you marked Successful.',
     kinds: { auto_reply: 'Automatic reply (out of office)', bounce: 'Delivery failure notice' },
     syncTip: 'Checks every connected mailbox for new replies right now. It also happens automatically in the background.',
@@ -135,7 +138,8 @@ SB.S = {
     plainNote: 'Replies are shown as plain text for safety.',
     showFormatted: 'View original formatting', hideFormatted: 'Hide original formatting', formattedTip: 'Shows the reply with its bold, lists and links. Scripts, images and forms are always removed.', sigTip: 'Signature added automatically by their phone or mail app. It is kept apart from what they actually wrote.', showQuoted: 'Show earlier messages',
     optNote: {
-      stop_campaign: 'They replied "stop campaign". Their sequence is stopped and they are on your do-not-email list. Replying is turned off.',
+      stop_campaign: 'They replied "stop campaign". Their sequence in this campaign is stopped. Other campaigns are not affected, and you can still reply.',
+      not_interested: 'They said they are not interested (or you stopped them for that reason). Their sequence in this campaign is stopped. Other campaigns are not affected, and you can still reply.',
       unsubscribe_link: 'They used the unsubscribe link. Their sequence is stopped and they are on your do-not-email list. Replying is turned off.',
       manual_stop: 'You stopped this campaign for this person. Nothing more will be sent from it. Other campaigns are not affected, and you can still reply.',
       bounce: 'Their address bounced. Their sequence is stopped. Replying is turned off.'
@@ -163,7 +167,8 @@ SB.S = {
     segTip: 'Each segment is one email in the sequence. People who replied, bounced or opted out drop out of the later segments.'
   },
   optout: {
-    stop_campaign: { label: 'Stopped: replied "stop campaign"', tip: 'This person replied "stop campaign". They were removed from the sequence and added to your do-not-email list, so they will never be emailed again.' },
+    stop_campaign: { label: 'Stopped: replied "stop campaign"', tip: 'This person replied "stop campaign". They were stopped in this campaign only: other campaigns and your do-not-email list are not affected.' },
+    not_interested: { label: 'Stopped: not interested', tip: 'This person is not interested. They were stopped in this campaign only: other campaigns and your do-not-email list are not affected.' },
     unsubscribe_link: { label: 'Unsubscribed', tip: 'This person clicked the unsubscribe link. They were removed from the sequence and added to your do-not-email list.' },
     manual_stop: { label: 'Stopped: you stopped this campaign', tip: 'You stopped this person in this campaign only. No more emails from this campaign. They are not on your do-not-email list and other campaigns are not affected.' },
     bounce: { label: 'Bounced', tip: 'The address does not exist or refused the email. It was removed from the sequence and will not be tried again.' }

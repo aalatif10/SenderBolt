@@ -43,13 +43,39 @@ group('migrations and schema');
 test('applies once, is idempotent, detects tampering', function () {
   return database.open(':memory:').then(function (db) {
     return migrate(db).then(function (a) {
-      assert.deepStrictEqual(a, ['001_init.sql', '002_campaign_settings.sql', '003_engine.sql', '004_projects.sql', '005_warmup.sql', '006_wizard_drafts.sql', '007_user_settings.sql', '008_scoping_tracking.sql', '009_studio_reports.sql', '010_active_days.sql', '011_v180.sql', '012_v190.sql', '013_outcome.sql', '014_health_dismissed.sql']);
+      assert.deepStrictEqual(a, ['001_init.sql', '002_campaign_settings.sql', '003_engine.sql', '004_projects.sql', '005_warmup.sql', '006_wizard_drafts.sql', '007_user_settings.sql', '008_scoping_tracking.sql', '009_studio_reports.sql', '010_active_days.sql', '011_v180.sql', '012_v190.sql', '013_outcome.sql', '014_health_dismissed.sql', '015_stopped_status.sql']);
       return migrate(db);
     }).then(function (b) {
       assert.deepStrictEqual(b, []);
       return db.run("UPDATE schema_migrations SET checksum = 'tampered'");
     }).then(function () { return migrate(db); }).then(function () { throw new Error('should reject'); }, function (e) {
       assert.ok(/modified after being applied/.test(e.message));
+    });
+  });
+});
+test('migration 015 keeps campaign people, messages and ids while adding the stopped status', function () {
+  var fs = require('fs'), os = require('os'), path = require('path'), dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sbmig-'));
+  var src = path.join(__dirname, '..', 'src', 'db', 'migrations');
+  fs.readdirSync(src).filter(function (f) { return f < '015'; }).forEach(function (f) { fs.copyFileSync(path.join(src, f), path.join(dir, f)); });
+  return database.open(':memory:').then(function (db) {
+    return migrate(db, dir).then(function () { return mkUser(db, 'a@x.com'); }).then(function (uid) {
+      return db.run("INSERT INTO folders (user_id, name, created_at) VALUES (?, 'F', 1)", [uid]).then(function (f) {
+        return db.run("INSERT INTO leads (user_id, folder_id, email, domain, created_at) VALUES (?,?,?,?,1)", [uid, f.lastID, 'p@co.com', 'co.com']).then(function (l) {
+          return db.run("INSERT INTO campaigns (user_id, name, status, created_at, updated_at) VALUES (?, 'C', 'active', 1, 1)", [uid]).then(function (c) {
+            return db.run("INSERT INTO campaign_leads (campaign_id, lead_id, status, status_note, current_step) VALUES (?,?,'completed','Stopped manually',1)", [c.lastID, l.lastID]).then(function (cl) {
+              return db.run("INSERT INTO messages (user_id, campaign_lead_id, direction, status, created_at) VALUES (?,?,'out','sent',1)", [uid, cl.lastID]);
+            });
+          });
+        });
+      });
+    }).then(function () { return migrate(db); }).then(function (applied) {
+      assert.deepStrictEqual(applied, ['015_stopped_status.sql']);
+      return Promise.all([db.get('SELECT status, current_step FROM campaign_leads'), db.get('SELECT campaign_lead_id AS id FROM messages'), db.get('PRAGMA foreign_keys'), db.all('PRAGMA foreign_key_check')]);
+    }).then(function (r) {
+      assert.strictEqual(r[0].status, 'stopped', 'manual stops become stopped'); assert.strictEqual(r[0].current_step, 1);
+      assert.ok(r[1].id !== null, 'the message keeps its link to the person (no ON DELETE SET NULL fired)');
+      assert.strictEqual(r[2].foreign_keys, 1, 'foreign keys are back on'); assert.strictEqual(r[3].length, 0);
+      return db.run("UPDATE campaign_leads SET status = 'nonsense'").then(function () { throw new Error('CHECK must still apply'); }, function (e) { assert.ok(/CHECK|constraint/i.test(e.message)); });
     });
   });
 });

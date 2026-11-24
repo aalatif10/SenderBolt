@@ -142,7 +142,7 @@
               { label: 'Got a follow-up', value: f.followed_up, of: f.contacted, cls: 'c-sent2', tip: 'People who were still in the sequence and received at least one follow-up.' },
               { label: 'Replied', value: f.replied, of: f.contacted, cls: 'c-reply', tip: 'People who wrote back (any reply).' },
               { label: 'Interested', value: f.interested, of: f.contacted, cls: 'c-int', tip: 'People whose reply you or SenderBolt tagged "Interested".' }]),
-              h('div', { class: 'funnel-foot small muted' }, h('span', null, fmt.num(f.bounced) + ' bounced'), h('span', null, fmt.num(f.opted_out) + ' opted out'), h('span', null, fmt.num(f.still_running) + ' still in sequence')))
+              h('div', { class: 'funnel-foot small muted' }, h('span', null, fmt.num(f.bounced) + ' bounced'), h('span', null, fmt.num(f.opted_out) + ' opted out'), h('span', null, fmt.num(f.stopped || 0) + ' stopped'), h('span', null, fmt.num(f.still_running) + ' still in sequence')))
               : h('p', { class: 'muted pad-t', text: 'No first emails went out in this period.' })),
           h('div', { class: 'card' }, h('div', { class: 'actions' }, h('h3', { text: 'Performance by email' }), ui.info(R.stepsTip)),
             d.steps.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'table compact-table' }, h('thead', null, h('tr', null, h('th', { text: 'Email' }), h('th', { text: 'Sent' }), h('th', { text: 'Opened' }), h('th', { text: 'Replies' }), h('th', { text: 'Reply rate' }))),

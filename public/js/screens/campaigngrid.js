@@ -18,7 +18,8 @@
   function currentState(c) {
     var ds = c.display_status;
     if (ds === 'active') {
-      if (c.next_send_at === null || c.next_send_at === undefined) return h('span', { class: 'muted', tip: 'Nobody is due right now, or the accounts for this campaign are paused.' }, 'Waiting for an active sender');
+      if (c.next_send_at === null || c.next_send_at === undefined) var nb = c.next_blocked && SB.S.nextBlock[c.next_blocked];
+      return h('span', { class: 'muted', tip: nb ? SB.S.nextBlockTip : 'Nobody is due right now, or the accounts for this campaign are paused.' }, nb || 'Waiting for an active sender');
       var follow = c.next_kind === 'follow_up';
       return h('span', { tip: fmt.full(c.next_send_at) }, h('b', { text: follow ? 'Next follow-up ' : 'Next email ' }), fmt.until(c.next_send_at));
     }
@@ -69,7 +70,7 @@
 
   function progressCell(c, mode) {
     if (mode === 'steps') return h('td', { class: 'c-steps' }, ui.stepBar(c.step_progress, { compact: true }));
-    var done = (c.stats.replied || 0) + (c.stats.completed || 0) + (c.stats.bounced || 0) + (c.stats.unsubscribed || 0);
+    var done = (c.stats.replied || 0) + (c.stats.completed || 0) + (c.stats.bounced || 0) + (c.stats.unsubscribed || 0) + (c.stats.stopped || 0);
     return h('td', { class: 'ct-prog', tip: fmt.num(done) + ' of ' + fmt.num(c.leads) + ' people finished. ' + SB.S.metric.progress }, ui.progress(c.progress_pct), h('div', { class: 'small faint', text: fmt.pct(c.progress_pct) }));
   }
 

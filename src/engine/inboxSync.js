@@ -1,7 +1,7 @@
 'use strict';
 // Reads each sender's mailbox (read-only) and turns what it finds into campaign events:
 //   reply            -> store it, classify sentiment, STOP the lead's sequence (if the campaign says so)
-//   reply containing "stop campaign" -> that person only: unsubscribed + do-not-email list
+//   reply containing "stop campaign" / classified not interested -> that person stopped in THAT campaign only (no global block)
 //   auto-reply (out of office) -> store it, do NOT stop; push the next email back 3 days
 //   hard bounce      -> lead 'bounced', address suppressed + marked invalid, sender health recomputed
 //   policy bounce    -> lead 'error' (address may be fine), hurts sender health
@@ -199,7 +199,7 @@ S.processMessage = function (sender, m) {
               if (cl.status !== 'active') return null;
               return tx.run("UPDATE campaign_leads SET next_send_at = ? WHERE id = ? AND status = 'active' AND next_send_at < ?", [t + OOO_DELAY_MS, cl.id, t + OOO_DELAY_MS]);
             }
-            return self._applyReply(tx, cl, stop, t, sender.reply_detection !== 0);
+            return self._applyReply(tx, cl, stop, t, sender.reply_detection !== 0, kind === 'email' && cls && cls.sentiment === 'not_interested');
           });
         }).then(function () {
           if (bounce && (bounce.kind === 'hard' || bounce.kind === 'policy')) return senderHealth.recompute(self.db, sender.id, t);
@@ -226,28 +226,21 @@ S._applyBounce = function (tx, cl, bounce, t) {
   return null;     // soft bounce: the original server keeps retrying; nothing to do
 };
 
-// stop = the reply contains the exact phrase "stop campaign" (see lib/sentiment.js isStopRequest).
-//  - normal reply: the lead's own sequence ends as 'replied' (when the campaign has stop_on_reply);
-//  - stop request: THIS person only: status 'unsubscribed' in every sequence aimed at their address, address added to the
-//    do-not-email list. Everybody else in the campaign keeps going.
-// A reply only ever ends THE REPLYING PERSON'S sequence (this campaign_lead row): every other person in the campaign keeps
-// receiving their emails. `detect` is the sender's "Replies detected" switch: when it is off, normal replies still land in the
-// Inbox but do not stop follow-ups. "stop campaign" requests are a legal opt-out, so they are honoured whatever the switch says.
-S._applyReply = function (tx, cl, stop, t, detect) {
-  if (!stop) {
-    if (detect !== false && cl.stop_on_reply === 1 && STOPPABLE.indexOf(cl.status) !== -1) {
-      return tx.run("UPDATE campaign_leads SET status = 'replied', next_send_at = NULL, status_note = NULL WHERE id = ? AND status IN ('active','pending','paused','completed')", [cl.id])
-        .then(function () { return state.completeIfDone(tx, cl.campaign_id, t); });
-    }
-    return Promise.resolve();
+// stop = the reply contains the exact phrase "stop campaign" (see lib/sentiment.js isStopRequest); notInterested = the reply was
+// classified "not interested".
+// Everything here is scoped to THIS campaign_leads row (this person in this campaign): other campaigns, other people and the
+// do-not-email list are never touched (the unsubscribe link and bounces are the global opt-outs).
+//  - "stop campaign" phrase: honoured whatever the sender's "Replies detected" switch says; the person is 'stopped' here.
+//  - "not interested" reply: 'stopped' here too (the same stopLead() the Inbox button uses), unless the sender's reply detection is off.
+//  - any other reply: the sequence ends as 'replied' when the campaign has stop_on_reply (and detection is on).
+S._applyReply = function (tx, cl, stop, t, detect, notInterested) {
+  if (stop) return state.stopLead(tx, cl.id, cl.campaign_id, 'stop_phrase', t);
+  if (detect !== false && notInterested) return state.stopLead(tx, cl.id, cl.campaign_id, 'not_interested', t);
+  if (detect !== false && cl.stop_on_reply === 1 && STOPPABLE.indexOf(cl.status) !== -1) {
+    return tx.run("UPDATE campaign_leads SET status = 'replied', next_send_at = NULL, status_note = NULL WHERE id = ? AND status IN ('active','pending','paused','completed')", [cl.id])
+      .then(function () { return state.completeIfDone(tx, cl.campaign_id, t); });
   }
-  var same = "lead_id IN (SELECT id FROM leads WHERE user_id = ? AND email = ?)";
-  return tx.run("INSERT OR IGNORE INTO suppression (user_id, email, reason, created_at) VALUES (?,?,'replied_stop',?)", [cl.user_id, cl.lead_email, t])
-    .then(function () { return tx.all("SELECT DISTINCT campaign_id FROM campaign_leads WHERE (id = ? OR status IN ('pending','active','paused')) AND " + same, [cl.id, cl.user_id, cl.lead_email]); })
-    .then(function (camps) {
-      return tx.run("UPDATE campaign_leads SET status = 'unsubscribed', next_send_at = NULL, status_note = 'Replied \"stop campaign\"' WHERE (id = ? OR status IN ('pending','active','paused')) AND " + same, [cl.id, cl.user_id, cl.lead_email])
-        .then(function () { return camps.reduce(function (q, c) { return q.then(function () { return state.completeIfDone(tx, c.campaign_id, t); }); }, Promise.resolve()); });
-    });
+  return Promise.resolve();
 };
 
 module.exports = { phaseOf: phaseOf, probeHint: probeHint, InboxSync: InboxSync, friendlyError: friendlyError, isTransient: isTransient, retryDelay: retryDelay, OOO_DELAY_MS: OOO_DELAY_MS };

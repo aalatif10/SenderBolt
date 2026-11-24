@@ -7,7 +7,7 @@
 // Metric definitions (shown as tooltips in the UI):
 //   emailed   leads that received at least one email (or whose address was rejected while sending)
 //   replied   leads that wrote back (real replies only; out-of-office and bounces excluded)
-//   bounced   leads whose address bounced / was rejected          unsubscribed  leads that opted out
+//   bounced   leads whose address bounced / was rejected          unsubscribed  leads that opted out    stopped  people stopped in that campaign only
 //   rates     are percentages of `emailed`
 //   opens     only for campaigns with track_opens (opens: null + opens_tracked: false otherwise); the UI must say 'not tracked', never show 0
 var AppError = require('../lib/errors').AppError;
@@ -101,36 +101,37 @@ function describeCampaign(main, L) {
   var leaves = leafIds(main, L.kids), s = null, m = emptyMetrics();
   leaves.forEach(function (c) {
     var cs = L.stats[c.id];
-    s = s ? s : { total: 0, sent: 0, pending: 0, active: 0, replied: 0, completed: 0, bounced: 0, unsubscribed: 0, paused: 0, error: 0, next_send_at: null };
+    s = s ? s : { total: 0, sent: 0, pending: 0, active: 0, replied: 0, completed: 0, bounced: 0, unsubscribed: 0, stopped: 0, paused: 0, error: 0, next_send_at: null, next_blocked: null };
     if (cs) {
-      Object.keys(s).forEach(function (k) { if (k !== 'next_send_at') s[k] += cs[k] || 0; });
+      Object.keys(s).forEach(function (k) { if (k !== 'next_send_at' && k !== 'next_blocked') s[k] += cs[k] || 0; });
       if (cs.next_send_at !== null && (s.next_send_at === null || cs.next_send_at < s.next_send_at)) s.next_send_at = cs.next_send_at;
+      if (cs.next_blocked && !s.next_blocked) s.next_blocked = cs.next_blocked;
     }
     if (L.metrics[c.id]) addMetrics(m, L.metrics[c.id]);
   });
-  s = s || { total: 0, sent: 0, pending: 0, active: 0, replied: 0, completed: 0, bounced: 0, unsubscribed: 0, paused: 0, error: 0, next_send_at: null };
-  var done = s.replied + s.completed + s.bounced + s.unsubscribed;
+  s = s || { total: 0, sent: 0, pending: 0, active: 0, replied: 0, completed: 0, bounced: 0, unsubscribed: 0, stopped: 0, paused: 0, error: 0, next_send_at: null };
+  var done = s.replied + s.completed + s.bounced + s.unsubscribed + s.stopped;
   var status = state.deriveStatus(main.status, L.kids[main.id] || []);
   return {
     id: main.id, name: main.name, status: status, track_opens: main.track_opens ? 1 : 0, created_at: main.created_at, batches: (L.kids[main.id] || []).length,
-    leads: s.total, sent: s.sent, progress_pct: s.total ? Math.round(done / s.total * 1000) / 10 : 0, next_send_at: status === 'active' ? s.next_send_at : null,
+    leads: s.total, sent: s.sent, progress_pct: s.total ? Math.round(done / s.total * 1000) / 10 : 0, next_send_at: status === 'active' ? s.next_send_at : null, next_blocked: (status === 'active' && s.next_send_at === null) ? (s.next_blocked || null) : null,
     stats: s, metrics: m,
     step_progress: stepProgress.describe(L.meta && L.meta[main.id], stepProgress.sum(leaves.map(function (c) { return L.prog && L.prog[c.id]; })))
   };
 }
 
 function rollUp(campaigns) {
-  var t = { leads: 0, sent: 0, emailed: 0, replied: 0, interested: 0, more_info: 0, not_interested: 0, neutral: 0, bounced: 0, unsubscribed: 0, active: 0, completed: 0, error: 0, done: 0 };
+  var t = { leads: 0, sent: 0, emailed: 0, replied: 0, interested: 0, more_info: 0, not_interested: 0, neutral: 0, bounced: 0, unsubscribed: 0, stopped: 0, active: 0, completed: 0, error: 0, done: 0 };
   var next = null, tracked = 0, opened = 0, trackedEmailed = 0;
   campaigns.forEach(function (c) {
     if (c.track_opens) { tracked++; opened += c.metrics.opened; trackedEmailed += c.metrics.emailed; }
-    t.leads += c.leads; t.sent += c.sent; t.bounced += c.stats.bounced; t.unsubscribed += c.stats.unsubscribed; t.active += c.stats.active; t.completed += c.stats.completed; t.error += c.stats.error;
-    t.done += c.stats.replied + c.stats.completed + c.stats.bounced + c.stats.unsubscribed;
+    t.leads += c.leads; t.sent += c.sent; t.bounced += c.stats.bounced; t.unsubscribed += c.stats.unsubscribed; t.stopped += c.stats.stopped || 0; t.active += c.stats.active; t.completed += c.stats.completed; t.error += c.stats.error;
+    t.done += c.stats.replied + c.stats.completed + c.stats.bounced + c.stats.unsubscribed + (c.stats.stopped || 0);
     ['emailed', 'replied', 'interested', 'more_info', 'not_interested', 'neutral'].forEach(function (k) { t[k] += c.metrics[k]; });
     if (c.next_send_at !== null && (next === null || c.next_send_at < next)) next = c.next_send_at;
   });
   return {
-    leads: t.leads, sent: t.sent, emailed: t.emailed, replied: t.replied, bounced: t.bounced, unsubscribed: t.unsubscribed, active: t.active, completed: t.completed, errors: t.error,
+    leads: t.leads, sent: t.sent, emailed: t.emailed, replied: t.replied, bounced: t.bounced, unsubscribed: t.unsubscribed, stopped: t.stopped, active: t.active, completed: t.completed, errors: t.error,
     sentiment: { interested: t.interested, more_info: t.more_info, not_interested: t.not_interested, neutral: t.neutral },
     reply_rate: pct(t.replied, t.emailed), bounce_rate: pct(t.bounced, t.emailed), unsubscribe_rate: pct(t.unsubscribed, t.emailed),
     opens: tracked ? opened : null, opens_tracked: tracked > 0, open_rate: tracked ? pct(opened, trackedEmailed) : null, progress_pct: t.leads ? Math.round(t.done / t.leads * 1000) / 10 : 0, next_send_at: next
@@ -331,11 +332,11 @@ function buildRows(D, now, keep) {
 function aggregateRows(project, rows) {
   rows = rows.filter(function (c) { return !c.archived; });
   if (!rows.length) return null;
-  var a = { scheduled: 0, sent: 0, leads: 0, metrics: { emailed: 0, opened: 0, replied: 0, interested: 0, successful: 0 }, stats: { replied: 0, completed: 0, bounced: 0, unsubscribed: 0 }, step_progress: [], next_send_at: null, next_kind: null, start_at: null, track_opens: 0, campaign_count: rows.length };
+  var a = { scheduled: 0, sent: 0, leads: 0, metrics: { emailed: 0, opened: 0, replied: 0, interested: 0, successful: 0 }, stats: { replied: 0, completed: 0, bounced: 0, unsubscribed: 0, stopped: 0 }, step_progress: [], next_send_at: null, next_kind: null, start_at: null, track_opens: 0, campaign_count: rows.length };
   rows.forEach(function (c) {
     a.scheduled += c.scheduled; a.sent += c.sent; a.leads += c.leads; if (c.track_opens) a.track_opens = 1;
     ['emailed', 'opened', 'replied', 'interested', 'successful'].forEach(function (k) { a.metrics[k] += (c.metrics && c.metrics[k]) || 0; });
-    ['replied', 'completed', 'bounced', 'unsubscribed'].forEach(function (k) { a.stats[k] += (c.stats && c.stats[k]) || 0; });
+    ['replied', 'completed', 'bounced', 'unsubscribed', 'stopped'].forEach(function (k) { a.stats[k] += (c.stats && c.stats[k]) || 0; });
     (c.step_progress || []).forEach(function (st, k) {
       var o = a.step_progress[k] || (a.step_progress[k] = { step: k, subject: '', delay_days: st.delay_days, sent: 0, capacity: 0, pct: 0 });
       o.sent += st.sent; o.capacity += st.capacity;
@@ -344,7 +345,7 @@ function aggregateRows(project, rows) {
     if (c.display_status === 'planned' && c.start_at && (a.start_at === null || c.start_at < a.start_at)) a.start_at = c.start_at;
   });
   a.step_progress.forEach(function (o) { o.pct = o.capacity ? Math.round(o.sent / o.capacity * 1000) / 10 : 0; });
-  var done = a.stats.replied + a.stats.completed + a.stats.bounced + a.stats.unsubscribed;
+  var done = a.stats.replied + a.stats.completed + a.stats.bounced + a.stats.unsubscribed + a.stats.stopped;
   a.progress_pct = a.leads ? Math.round(done / a.leads * 1000) / 10 : 0;
   var anyActive = rows.some(function (c) { return c.display_status === 'active'; });
   a.display_status = project.status === 'active' && !anyActive && rows.some(function (c) { return c.display_status === 'planned'; }) ? 'planned' : project.status;

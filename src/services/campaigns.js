@@ -17,6 +17,7 @@ var v = require('../lib/validate');
 var AppError = require('../lib/errors').AppError;
 var audit = require('./audit');
 var nextSend = require('../lib/nextSend');
+var nextEmail = require('./nextEmail');
 var state = require('./campaignState');
 var settingsLib = require('./settings');
 var stepProgress = require('./stepProgress');
@@ -24,8 +25,9 @@ var stepProgress = require('./stepProgress');
 var MAX_LEADS = 50000, MAX_PARTS = 500, MAX_STEPS = 6, MAX_SENDERS = 20;
 var DEFAULT_LEAD_STATUSES = ['valid', 'unverified', 'risky', 'catch_all'];
 var LEAD_STATUSES = ['unverified', 'valid', 'invalid', 'catch_all', 'risky'];
-var CL_STATUSES = ['pending', 'active', 'replied', 'completed', 'bounced', 'unsubscribed', 'paused', 'error'];
-var DONE_STATUSES = ['replied', 'completed', 'bounced', 'unsubscribed'];
+// 'stopped' = stopped in this campaign only (manually, "not interested" reply or "stop campaign" phrase); it is finished work but never 'completed'.
+var CL_STATUSES = ['pending', 'active', 'replied', 'completed', 'bounced', 'unsubscribed', 'paused', 'error', 'stopped'];
+var DONE_STATUSES = ['replied', 'completed', 'bounced', 'unsubscribed', 'stopped'];
 var FILTERS = { all: null, active: ['active'], paused: ['paused'], completed: ['completed'], draft: ['draft', 'preparing'], error: ['error'] };
 var SAMPLE_LEAD = { first_name: 'Alex', last_name: 'Morgan', company: 'Acme Domains', email: 'alex@acme-domains.com', domain: 'acme-domains.com' };
 
@@ -300,16 +302,18 @@ C._own = function (userId, id) {
 };
 
 function emptyStats() {
-  var s = { total: 0, sent: 0, done: 0, progress_pct: 0, next_send_at: null };
+  var s = { total: 0, sent: 0, done: 0, progress_pct: 0, next_send_at: null, next_blocked: null };
   CL_STATUSES.forEach(function (k) { s[k] = 0; });
   return s;
 }
 function addStats(a, b) {
   CL_STATUSES.concat(['total', 'sent']).forEach(function (k) { a[k] += b[k]; });
   if (b.next_send_at !== null && (a.next_send_at === null || b.next_send_at < a.next_send_at)) a.next_send_at = b.next_send_at;
+  if (b.next_blocked && !a.next_blocked) a.next_blocked = b.next_blocked;
   return a;
 }
 function finishStats(s) {
+  if (s.next_send_at !== null) s.next_blocked = null;   // a usable time exists: not blocked
   s.done = DONE_STATUSES.reduce(function (n, k) { return n + s[k]; }, 0);
   s.progress_pct = s.total ? Math.round(s.done / s.total * 1000) / 10 : 0;
   return s;
@@ -326,15 +330,18 @@ C._statsByCampaignG = function (userId, onlyIds, guard) {
   var filter = onlyIds ? ' AND cl.campaign_id IN (' + v.placeholders(onlyIds.length) + ')' : '';
   var params = onlyIds ? [userId].concat(onlyIds) : [userId];
   var sums = CL_STATUSES.map(function (k) { return "COALESCE(SUM(CASE WHEN cl.status = '" + k + "' THEN 1 ELSE 0 END), 0) AS " + k; }).join(', ');
-  return this.db.all('SELECT cl.campaign_id AS cid, COUNT(*) AS total, ' + sums + ', MIN(CASE WHEN cl.status = \'active\' AND c.status = \'active\' AND COALESCE(sd.status, \'active\') = \'active\' THEN MAX(cl.next_send_at, COALESCE(sd.next_send_at, 0)) END) AS next_send_at, ' +
-    'c.window_start_hour AS window_start_hour, c.window_end_hour AS window_end_hour, c.utc_offset_min AS utc_offset_min, c.weekdays_only AS weekdays_only, c.active_days AS active_days, c.start_at AS start_at ' +
-    'FROM campaign_leads cl JOIN campaigns c ON c.id = cl.campaign_id LEFT JOIN senders sd ON sd.id = cl.sender_id WHERE c.user_id = ?' + filter + ' GROUP BY cl.campaign_id', params).then(function (rows) {
+  return this.db.all('SELECT cl.campaign_id AS cid, COUNT(*) AS total, ' + sums + ' ' +
+    'FROM campaign_leads cl JOIN campaigns c ON c.id = cl.campaign_id WHERE c.user_id = ?' + filter + ' GROUP BY cl.campaign_id', params).then(function (rows) {
     var now = self.now();
+    // The next-email time comes from the shared calculator (same numbers as the Senders screen): earliest valid time among the owner senders.
+    return nextEmail.compute(self.db, userId, now, { guard: guard, campaignIds: onlyIds || null }).then(function (ne) { return { rows: rows, ne: ne }; });
+  }).then(function (x) {
+    var rows = x.rows, ne = x.ne;
     rows.forEach(function (r) {
       var s = emptyStats();
       CL_STATUSES.forEach(function (k) { s[k] = Number(r[k]); });
-      // The time an email is DUE is not when it goes out: apply the campaign's sending hours, days and start date, so the countdown is real.
-      s.total = Number(r.total); s.next_send_at = r.next_send_at === null ? null : nextSend.effective(r, Number(r.next_send_at), now, guard);
+      s.total = Number(r.total); s.next_send_at = ne.byCampaign[r.cid] === undefined ? null : ne.byCampaign[r.cid];
+      s.next_blocked = ne.campaignBlock[r.cid] || null;   // 'paused' | 'health' | 'tracking' when waiting people exist but no owner sender can send
       out[r.cid] = s;
     });
     return self.db.all("SELECT cl.campaign_id AS cid, COUNT(*) AS n FROM messages m JOIN campaign_leads cl ON cl.id = m.campaign_lead_id WHERE m.user_id = ? AND m.direction = 'out' AND m.status = 'sent'" + filter + ' GROUP BY cl.campaign_id', params);
@@ -483,7 +490,7 @@ C.listLeads = function (userId, id, q) {
 // 'unsubscribe_link', 'bounce', or null. Derived from the lead status plus the note / suppression reason the engine wrote.
 function optOutKind(it) {
   if (it.status === 'bounced') return 'bounce';
-  if (it.status === 'completed' && it.status_note === 'Stopped manually') return 'manual_stop';
+  if (it.status === 'stopped') return state.stopKind(it.status_note);
   if (it.status !== 'unsubscribed') return null;
   if (it.suppression_reason === 'replied_stop' || /stop campaign/i.test(it.status_note || '')) return 'stop_campaign';
   return 'unsubscribe_link';

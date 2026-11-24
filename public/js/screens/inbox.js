@@ -23,7 +23,7 @@
     var campMs = SB.controls.multiSelect({ label: 'Campaigns', tip: 'Show replies from these campaigns only.', options: [], selected: [], emptyText: 'No campaigns yet.', onApply: function (v) { state.campaigns = v; reset(); } });
     var acctMs = SB.controls.multiSelect({ label: 'Email accounts', tip: 'Show replies received on these sending accounts only.', options: [], selected: [], emptyText: 'No sending accounts yet.', onApply: function (v) { state.senders = v; reset(); } });
     var teamMs = SB.controls.multiSelect({ label: 'Team members', tip: 'SenderBolt currently has one user, so every conversation is yours. Teammates will appear here when sharing is added.', options: [{ value: 'me', label: 'You', sub: 'Owner' }], selected: [], onApply: function () { reset(); } });
-    var statusMs = SB.controls.multiSelect({ label: 'Status', tip: 'Filter by the reply tag (Interested, More info, Not interested, Neutral), or by outcome: Successful = conversations you marked Successful in the thread. Not successful = closed without a win because the person opted out or the address bounced.',
+    var statusMs = SB.controls.multiSelect({ label: 'Status', tip: 'Filter by the reply tag (Interested, More info, Not interested, Neutral), or by outcome: Successful = conversations you marked Successful in the thread. Not successful = closed without a win because the person opted out, the address bounced or the campaign was stopped for them.',
       options: [{ value: 'successful', label: 'Successful' }, { value: 'not_successful', label: 'Not successful' }, { value: 'interested', label: I.sentiment.interested.label }, { value: 'more_info', label: I.sentiment.more_info.label },
         { value: 'not_interested', label: I.sentiment.not_interested.label }, { value: 'neutral', label: I.sentiment.neutral.label }],
       selected: [], onApply: function (v) { state.statuses = v; reset(); } });
@@ -137,12 +137,12 @@
           send.disabled = false; err.textContent = SB.api.friendly(e); err.classList.remove('hidden');
         });
       });
-      var stopBtn = ['pending', 'active', 'paused', 'error'].indexOf(c.status) !== -1 ? h('button', { type: 'button', class: 'btn btn-sm ib-stop', tip: I.stopBtn.tip, on: { click: function () {
+      var stopBtn = ['pending', 'active', 'paused', 'error', 'replied', 'completed'].indexOf(c.status) !== -1 ? h('button', { type: 'button', class: 'btn btn-sm ib-stop', tip: I.stopBtn.tip, on: { click: function () {
         ui.confirm({ title: I.stopBtn.label, message: I.stopBtn.confirm, confirmLabel: I.stopBtn.label, danger: true, onConfirm: function () {
           return SB.api.post('/api/inbox/threads/' + c.id + '/stop', {}).then(function () { ui.toast(I.stopBtn.done); return Promise.all([openThread(c.id, true), loadList()]); });
         } });
       } } }, SB.icon('ban'), I.stopBtn.label) : null;
-      var tags = lastIn ? h('div', { class: 'ib-tags' }, h('span', { class: 'small muted' }, 'Tag: ', ui.info(I.sentimentTip)), ORDER.map(function (k) {
+      var tags = lastIn ? h('div', { class: 'ib-tags' }, h('span', { class: 'small muted' }, 'Tag: ', ui.info(I.sentimentTip)), ORDER.filter(function (k) { return k !== 'not_interested'; }).map(function (k) {
         return h('button', { type: 'button', class: 'chip ib-chip chip-' + I.sentiment[k].cls + (lastIn.sentiment === k ? ' on' : ''), tip: I.sentiment[k].tip, on: { click: function () {
           SB.api.post('/api/inbox/messages/' + lastIn.id + '/sentiment', { sentiment: k }).then(function () { return Promise.all([openThread(c.id, true), loadList()]); }, function (e) { ui.toast(SB.api.friendly(e), true); });
         } } }, I.sentiment[k].label);

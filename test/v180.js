@@ -131,7 +131,7 @@ h.test('reply detection off: a normal reply does not stop follow-ups, a "stop ca
         .then(function () { return c.db.get('SELECT status FROM campaign_leads WHERE id = ?', [rows[0].id]); })
         .then(function (r) { assert.strictEqual(r.status, 'active', 'normal reply ignored while detection is off'); return c.db.transaction(function (tx) { return c.sync._applyReply(tx, rows[0], true, c.clock.t, false); }); })
         .then(function () { return Promise.all([c.db.get('SELECT status FROM campaign_leads WHERE id = ?', [rows[0].id]), c.db.get('SELECT status FROM campaign_leads WHERE id = ?', [rows[1].id]), c.db.get('SELECT COUNT(*) AS n FROM suppression')]); })
-        .then(function (r) { assert.strictEqual(r[0].status, 'unsubscribed', 'legal opt-out always honoured'); assert.strictEqual(r[1].status, 'active'); assert.strictEqual(r[2].n, 1); });
+        .then(function (r) { assert.strictEqual(r[0].status, 'stopped', 'an explicit stop request is always honoured, in this campaign only'); assert.strictEqual(r[1].status, 'active'); assert.strictEqual(r[2].n, 0, 'no global do-not-email entry'); });
     });
   });
 });

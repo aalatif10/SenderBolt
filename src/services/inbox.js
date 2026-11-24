@@ -19,10 +19,11 @@ var images = require('./images');
 var replyParse = require('../lib/replyParse');
 
 // 'stop_campaign' | 'unsubscribe_link' | 'bounce' | null  (same rule the Studio uses for its badges)
-var MANUAL_STOP = 'Stopped manually';
+// Why a person is out of a sequence, for the badge: 'bounce' | 'manual_stop' | 'not_interested' | 'stop_campaign' | 'unsubscribe_link' | null.
+// 'stopped' is campaign-scoped (see campaignState.stopLead); 'unsubscribed' is the global opt-out (unsubscribe link, older "stop campaign" replies).
 function optOutKind(status, note, reason) {
   if (status === 'bounced') return 'bounce';
-  if (status === 'completed' && note === MANUAL_STOP) return 'manual_stop';
+  if (status === 'stopped') return state.stopKind(note);
   if (status !== 'unsubscribed') return null;
   return reason === 'replied_stop' || /stop campaign/i.test(note || '') ? 'stop_campaign' : 'unsubscribe_link';
 }
@@ -91,12 +92,12 @@ I._list = function (userId, q) {
   // Status filter (several values combine with OR):
   //   interested | more_info | not_interested | neutral : the tag of the latest detected reply (automatic or set by hand; an untagged reply is neutral)
   //   successful     : conversations YOU marked Successful in the thread (a deal or outcome that was won), whatever the reply tag is
-  //   not_successful : closed without a win because the person opted out or the address bounced (not marked Successful).
+  //   not_successful : closed without a win because the person opted out, was stopped in the campaign or the address bounced (not marked Successful).
   //                    "Said no" is the Not interested tag, so the two do not overlap.
   // Campaign-state values (in sequence, paused, stopped) are not tags and are rejected.
   if (q.status !== undefined && q.status !== '') {
     var STATUS_SQL = { interested: "m.sentiment = 'interested'", more_info: "m.sentiment = 'more_info'", not_interested: "m.sentiment = 'not_interested'", neutral: "(m.sentiment = 'neutral' OR m.sentiment IS NULL)",
-      successful: "cl.outcome = 'successful'", not_successful: "(cl.outcome IS NULL AND cl.status IN ('unsubscribed','bounced'))" };
+      successful: "cl.outcome = 'successful'", not_successful: "(cl.outcome IS NULL AND cl.status IN ('unsubscribed','bounced','stopped'))" };
     var conds = String(q.status).split(',').map(function (k) {
       var c1 = Object.prototype.hasOwnProperty.call(STATUS_SQL, k.trim()) ? STATUS_SQL[k.trim()] : null;
       if (!c1) throw new AppError('validation', 'Unknown status filter', 400);
@@ -196,20 +197,22 @@ I.setOutcome = function (userId, clId, outcome, ip) {
     .then(function () { return { ok: true, outcome: outcome }; });
 };
 
-// Manual "Stop campaign": ends the sequence for this one person in this one campaign (the thread's campaign_leads row).
-// Same effect as the automatic stop on that row (no more steps, nothing queued), but deliberately NOT global: the address is
-// not put on the do-not-email list and the person's rows in other campaigns are never touched.
+// Manual "Stop campaign" (Inbox thread): ends this person's sequence in this thread's campaign only, through the same
+// campaignState.stopLead() that reply detection uses. The person's latest reply is also tagged "Not interested" (unless the owner
+// already tagged it by hand), so the reply tags, the filters and the project numbers tell the same story. No do-not-email entry,
+// no effect on other campaigns, and the owner can still write to the person.
 I.stopLead = function (userId, clId, ip) {
   var self = this, t = this.now();
   return this._conversation(userId, clId).then(function (conv) {
-    if (['pending', 'active', 'paused', 'error'].indexOf(conv.status) === -1) {
+    if (conv.status === 'stopped') return { ok: true, changed: false, status: 'stopped', opt_out: optOutKind(conv.status, conv.status_note, null) };
+    if (['pending', 'active', 'paused', 'error', 'replied', 'completed'].indexOf(conv.status) === -1) {
       return { ok: true, changed: false, status: conv.status, opt_out: optOutKind(conv.status, conv.status_note, null) };
     }
     return self.db.transaction(function (tx) {
-      return tx.run("UPDATE campaign_leads SET status = 'completed', next_send_at = NULL, status_note = ? WHERE id = ? AND status IN ('pending','active','paused','error')", [MANUAL_STOP, clId])
-        .then(function () { return state.completeIfDone(tx, conv.campaign_id, t); })
+      return state.stopLead(tx, clId, conv.campaign_id, 'manual', t)
+        .then(function () { return tx.run("UPDATE messages SET sentiment = 'not_interested' WHERE id = (SELECT MAX(id) FROM messages WHERE campaign_lead_id = ? AND user_id = ? AND direction = 'in' AND kind = 'email') AND sentiment_manual = 0", [clId, userId]); })
         .then(function () { return audit.log(tx, { userId: userId, action: 'inbox.stop', entity: 'campaign_lead', entityId: clId, ip: ip, meta: { campaign_id: conv.campaign_id } }, self.now); });
-    }).then(function () { return { ok: true, changed: true, status: 'completed', opt_out: 'manual_stop' }; });
+    }).then(function () { return { ok: true, changed: true, status: 'stopped', opt_out: 'manual_stop' }; });
   });
 };
 

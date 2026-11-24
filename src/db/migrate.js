@@ -38,15 +38,22 @@ function migrate(db, dir) {
       } else { pending.push(m); }
     });
     return pending.reduce(function (p, m) {
-      return p.then(function () {
+      // A file that starts with "-- sb:fk-off" rebuilds a table: foreign keys must be OFF while it runs (the pragma is ignored
+      // inside a transaction, so it is switched before it), and they are verified and switched back on afterwards.
+      var fkOff = /^\s*--\s*sb:fk-off/.test(m.sql);
+      return p.then(function () { return fkOff ? db.raw.exec('PRAGMA foreign_keys = OFF;') : null; }).then(function () {
         return db.transaction(function (tx) {
           // tx has no exec; split-free execution goes through raw inside the lock
           return db.raw.exec(m.sql).then(function () {
             return tx.run('INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?,?,?,?)',
               [m.version, m.name, m.checksum, Date.now()]);
+          }).then(function () {
+            return fkOff ? tx.all('PRAGMA foreign_key_check').then(function (bad) { if (bad.length) throw new Error('Migration ' + m.name + ' left ' + bad.length + ' broken foreign key(s)'); }) : null;
           });
         });
-      }).then(function () { return m.name; });
+      }).then(function () { return fkOff ? db.raw.exec('PRAGMA foreign_keys = ON;') : null; },
+        function (e) { return (fkOff ? db.raw.exec('PRAGMA foreign_keys = ON;') : Promise.resolve()).then(function () { throw e; }); })
+        .then(function () { return m.name; });
     }, Promise.resolve()).then(function () { return pending.map(function (m) { return m.name; }); });
   });
 }

@@ -207,27 +207,17 @@ function riskOf(row, v, nowMs) {
   return { level: ['low', 'moderate', 'high', 'critical'][level], factors: factors };
 }
 
-// When will each sender's next email REALLY go out? Due time + sender pause + sending hours/days/start date of the campaign,
-// and not before tomorrow (UTC) when the sender used up today's allowance. null = nothing waiting or the sender is not sending.
+// When will each sender's next email REALLY go out? Computed by services/nextEmail.js, the same source the campaigns use.
+// null = nothing waiting, or the sender cannot send right now (then next_email_block says why: paused | health | tracking).
 function addNextEmail(db, userId, rows, nowMs) {
-  var ids = rows.filter(function (r) { return r.status === 'active'; }).map(function (r) { return r.id; });
-  if (!ids.length) return Promise.resolve(rows);
-  return settingsLib.loadGuard(db, userId).then(function (guard) { return addNextEmailG(db, userId, rows, nowMs, ids, guard); });
-}
-function addNextEmailG(db, userId, rows, nowMs, ids, guard) {
-  return db.all('SELECT cl.sender_id AS sid, c.window_start_hour, c.window_end_hour, c.utc_offset_min, c.weekdays_only, c.active_days, c.start_at, ' +
-    'MIN(MAX(cl.next_send_at, COALESCE(s.next_send_at, 0))) AS due FROM campaign_leads cl JOIN campaigns c ON c.id = cl.campaign_id JOIN senders s ON s.id = cl.sender_id ' +
-    "WHERE s.user_id = ? AND cl.status = 'active' AND c.status = 'active' AND cl.removed_at IS NULL GROUP BY cl.sender_id, c.id", [userId]).then(function (groups) {
-    var best = {}, midnight = Date.UTC(new Date(nowMs).getUTCFullYear(), new Date(nowMs).getUTCMonth(), new Date(nowMs).getUTCDate() + 1);
-    var byId = {}; rows.forEach(function (r) { byId[r.id] = r; });
-    groups.forEach(function (g) {
-      var r = byId[g.sid]; if (!r || g.due === null) return;
-      var due = Number(g.due);
-      if (r.remaining_today <= 0) due = Math.max(due, midnight);
-      var t = nextSend.effective(g, due, nowMs, guard);
-      if (t !== null && (best[g.sid] === undefined || t < best[g.sid])) best[g.sid] = t;
+  var nextEmail = require('./nextEmail');       // loaded here: nextEmail itself needs capacityToday from this file
+  rows.forEach(function (r) { r.next_email_at = null; r.next_email_block = null; });
+  if (!rows.some(function (r) { return r.status === 'active'; })) return Promise.resolve(rows);
+  return settingsLib.loadGuard(db, userId).then(function (guard) { return nextEmail.compute(db, userId, nowMs, { guard: guard }); }).then(function (res) {
+    rows.forEach(function (r) {
+      if (res.bySender[r.id] !== undefined) r.next_email_at = res.bySender[r.id];
+      else if (res.senderBlock[r.id]) r.next_email_block = res.senderBlock[r.id];
     });
-    rows.forEach(function (r) { r.next_email_at = best[r.id] === undefined ? null : best[r.id]; });
     return rows;
   });
 }

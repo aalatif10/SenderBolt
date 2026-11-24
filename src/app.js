@@ -18,6 +18,7 @@ var SenderBackup = require('./services/senderBackup').SenderBackup;
 var DraftsService = require('./services/drafts').DraftsService;
 var ImagesService = require('./services/images').ImagesService;
 var ReportsService = require('./services/reports').ReportsService;
+var AlertsService = require('./services/alerts').AlertsService;
 var InboxService = require('./services/inbox').InboxService;
 var UnsubscribeService = require('./services/unsubscribe').UnsubscribeService;
 var SenderTest = require('./services/senderTest').SenderTest;
@@ -48,6 +49,7 @@ function createApp(config) {
       var mailbox = config.mailbox || mailboxLib.createLive();
       var engine = new SendEngine(db, { key: config.masterKey, mailer: mailer, now: config.now, unsubSecret: config.unsubSecret, publicOrigin: config.publicOrigin,
         requireReplyTracking: true, log: log });
+      require('./lib/senderGate').setRequired(true);   // the Senders / Campaigns countdowns follow the same reply-tracking rule as the engine
       var inboxSync = new InboxSync(db, { key: config.masterKey, mailbox: mailbox, now: config.now, log: log });
       var scheduler = new Scheduler(db, engine, inboxSync, { mode: mode, log: log, tickMs: config.tickMs, syncMs: config.syncMs });
       var deps = {
@@ -68,6 +70,7 @@ function createApp(config) {
       deps.images = new ImagesService(db, { now: config.now });
       deps.reports = new ReportsService(db, { now: config.now });
       deps.projects = new ProjectsService(db, { campaigns: deps.campaigns, now: config.now });
+      deps.alerts = new AlertsService(db, { senders: deps.senders, projects: deps.projects, settings: deps.settings, now: config.now });
       deps.engineStatus = function (userId) {
         var t = (config.now || Date.now)();
         return db.all('SELECT id, email, status, health_score, next_send_at, last_error, imap_host, imap_last_uid, last_sync_at, sync_error, sync_transient, reply_detection, connection_error FROM senders WHERE user_id = ? ORDER BY id', [userId]).then(function (rows) {

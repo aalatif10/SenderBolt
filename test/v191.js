@@ -12,6 +12,8 @@ var CampaignsService = require('../src/services/campaigns').CampaignsService;
 var SettingsService = require('../src/services/settings').SettingsService;
 var SenderBackup = require('../src/services/senderBackup').SenderBackup;
 var SendEngine = require('../src/engine/sendEngine').SendEngine;
+var AlertsService = require('../src/services/alerts').AlertsService;
+var ProjectsService = require('../src/services/projects').ProjectsService;
 
 var HOUR = 3600000, DAY = 86400000;
 var TUE_10 = Date.UTC(2026, 10, 10, 10, 0, 0);
@@ -155,6 +157,106 @@ h.test('restore reports a broken account without stopping the others; tampered o
       var f2 = JSON.parse(JSON.stringify(r.file)); f2.N = 1048576;
       return Promise.all([h.expectReject(c.backup.preview(c.a, f, 'backup-pass-123'), 'validation'), h.expectReject(c.backup.preview(c.a, f2, 'backup-pass-123'), 'validation'),
         h.expectReject(c.backup.preview(c.a, '{"hello":1}', 'backup-pass-123'), 'validation'), h.expectReject(c.backup.preview(c.a, null, 'backup-pass-123'), 'validation')]);
+    });
+  });
+});
+
+h.group('campaign next email = earliest valid sender time (single source of truth)');
+// Reply tracking counts as armed and fresh, so the senders are not blocked by the tracking gate in these tests.
+function armTracking(c) { return c.db.run('UPDATE senders SET imap_last_uid = 1, last_sync_at = ?, sync_error = NULL', [TUE_10]); }
+function twoSenders(c) {
+  return c.senders.create(c.a, { label: 'S2', email: 's2@gmail.com', provider: 'gmail', password: 'abcdefghijklmnop' }).then(function (s2) { c.sid2 = s2.id; return armTracking(c); }).then(function () { return launch(c, 4, [c.sid, c.sid2]); });
+}
+function senderMap(c) { return c.senders.list(c.a).then(function (rows) { var m = {}; rows.forEach(function (r) { m[r.id] = r; }); return m; }); }
+h.test('campaign next email equals the earliest next email of its owner senders', function () {
+  return setup().then(function (c) {
+    return twoSenders(c).then(function () { return Promise.all([c.camps.get(c.a, c.camp.id), senderMap(c)]); }).then(function (r) {
+      var st = r[0].stats, m = r[1], times = [m[c.sid].next_email_at, m[c.sid2].next_email_at].filter(Boolean);
+      assert.ok(times.length === 2, 'both owners have waiting people');
+      assert.strictEqual(st.next_send_at, Math.min.apply(null, times));
+      assert.strictEqual(st.next_blocked, null);
+    });
+  });
+});
+h.test('a paused sender is excluded; if every owner is blocked the campaign reports why instead of a countdown', function () {
+  return setup().then(function (c) {
+    return twoSenders(c).then(function () { return c.senders.setStatus(c.a, c.sid, 'paused'); }).then(function () { return Promise.all([c.camps.get(c.a, c.camp.id), senderMap(c)]); }).then(function (r) {
+      assert.strictEqual(r[1][c.sid].next_email_at, null);
+      assert.strictEqual(r[1][c.sid].next_email_block, 'paused');
+      assert.strictEqual(r[0].stats.next_send_at, r[1][c.sid2].next_email_at, 'only the active owner counts');
+      return c.senders.setStatus(c.a, c.sid2, 'paused');
+    }).then(function () { return c.camps.get(c.a, c.camp.id); }).then(function (r) {
+      assert.strictEqual(r.stats.next_send_at, null);
+      assert.strictEqual(r.stats.next_blocked, 'paused');
+    });
+  });
+});
+h.test('an owner with no capacity left today is not shown before the next UTC midnight (campaign and sender agree)', function () {
+  return setup().then(function (c) {
+    return armTracking(c).then(function () { return launch(c, 3, [c.sid]); }).then(function () {
+      return c.db.run('UPDATE senders SET sent_today = daily_limit, sent_today_date = ? WHERE id = ?', [new Date(TUE_10).toISOString().slice(0, 10), c.sid]);
+    }).then(function () { return Promise.all([c.camps.get(c.a, c.camp.id), senderMap(c)]); }).then(function (r) {
+      var midnight = Date.UTC(2026, 10, 11);
+      assert.ok(r[1][c.sid].next_email_at >= midnight);
+      assert.strictEqual(r[0].stats.next_send_at, r[1][c.sid].next_email_at);
+    });
+  });
+});
+
+h.test('a sender whose reply tracking is not ready is reported as blocked, not given a countdown', function () {
+  var gate = require('../src/lib/senderGate');
+  return setup().then(function (c) {
+    return launch(c, 3, [c.sid]).then(function () { gate.setRequired(true); return Promise.all([c.camps.get(c.a, c.camp.id), senderMap(c)]); }).then(function (r) {
+      gate.setRequired(false);
+      assert.strictEqual(r[1][c.sid].next_email_at, null);
+      assert.strictEqual(r[1][c.sid].next_email_block, 'tracking');
+      assert.strictEqual(r[0].stats.next_send_at, null);
+      assert.strictEqual(r[0].stats.next_blocked, 'tracking');
+    }, function (e) { gate.setRequired(false); throw e; });
+  });
+});
+
+h.group('Home campaign health: every problem comes from one server list');
+function alertsOf(c) {
+  var svc = new AlertsService(c.db, { senders: c.senders, projects: new ProjectsService(c.db, { campaigns: c.camps, now: function () { return c.clock.t; } }), settings: c.settings, now: function () { return c.clock.t; } });
+  return svc.list(c.a);
+}
+function keys(r) { return r.items.map(function (x) { return x.key; }); }
+h.test('alerts cover sender problems, stalled and failed people, with counts that follow the real state', function () {
+  return setup().then(function (c) {
+    return twoSenders(c).then(function () { return alertsOf(c); }).then(function (r0) {
+      assert.deepStrictEqual(r0.items.filter(function (x) { return x.level === 'critical'; }), [], 'a healthy setup has no critical alert');
+      return c.db.run("UPDATE senders SET last_error = 'SMTP auth failed' WHERE id = ?", [c.sid]).then(function () { return c.db.run("UPDATE senders SET connection_error = 'timeout', health_score = 20 WHERE id = ?", [c.sid2]); })
+        .then(function () { return c.db.run("UPDATE campaign_leads SET status = 'error', status_note = 'x', next_send_at = NULL WHERE id = (SELECT MIN(id) FROM campaign_leads WHERE campaign_id = ?)", [c.camp.id]); })
+        .then(function () { return alertsOf(c); });
+    }).then(function (r) {
+      var k = keys(r);
+      assert.ok(k.indexOf('s:' + c.sid + ':err') !== -1, 'sender error');
+      assert.ok(k.indexOf('s:' + c.sid2 + ':floor') !== -1, 'below the protection threshold');
+      assert.ok(k.indexOf('s:' + c.sid2 + ':conn') !== -1, 'connection problem');
+      assert.ok(k.indexOf('c:' + c.camp.id + ':people') !== -1, 'people that failed');
+      assert.strictEqual(r.counts.total, r.items.length);
+      assert.strictEqual(r.counts.critical + r.counts.warning, r.counts.total);
+      assert.strictEqual(r.counts.unreviewed, r.items.length, 'nothing reviewed yet');
+      return c.settings.setHealthDismissed(c.a, ['s:' + c.sid + ':err']).then(function () { return c.settings.setHealthSeen(c.a, [k[0]]); }).then(function () { return alertsOf(c); }).then(function (r2) {
+        assert.strictEqual(keys(r2).indexOf('s:' + c.sid + ':err'), -1, 'dismissed alert is hidden');
+        assert.strictEqual(r2.counts.dismissed, 1);
+        assert.ok(r2.all_keys.indexOf('s:' + c.sid + ':err') !== -1, 'but still listed as existing so the dismissal is kept');
+        assert.strictEqual(r2.counts.unreviewed, r2.items.length - (keys(r2).indexOf(k[0]) === -1 ? 0 : 1));
+        return c.db.run('UPDATE senders SET health_score = 100, connection_error = NULL WHERE id = ?', [c.sid2]);
+      }).then(function () { return alertsOf(c); }).then(function (r3) {
+        assert.strictEqual(keys(r3).indexOf('s:' + c.sid2 + ':floor'), -1, 'resolved problems disappear and the counts follow');
+        assert.strictEqual(keys(r3).indexOf('s:' + c.sid2 + ':conn'), -1);
+      });
+    });
+  });
+});
+h.test('alerts show a campaign whose owner senders are all paused, and every alert (no cut at six)', function () {
+  return setup().then(function (c) {
+    return twoSenders(c).then(function () { return c.senders.setStatus(c.a, c.sid, 'paused'); }).then(function () { return c.senders.setStatus(c.a, c.sid2, 'paused'); }).then(function () { return alertsOf(c); }).then(function (r) {
+      var k = keys(r);
+      assert.ok(k.indexOf('s:' + c.sid + ':down') !== -1 && k.indexOf('s:' + c.sid2 + ':down') !== -1);
+      assert.ok(k.indexOf('c:' + c.camp.id + ':stalled') !== -1, 'people waiting on paused owners are reported');
     });
   });
 });
