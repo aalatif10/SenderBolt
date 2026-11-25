@@ -123,9 +123,9 @@ h.test('quoted text does not decide the sentiment; "?" means more_info', functio
   assert.strictEqual(sentiment.classify('Ok').sentiment, 'neutral');
   assert.deepStrictEqual(sentiment.classify('Please remove me from your list'), { sentiment: 'neutral' });
 });
-h.test('opt-out phrase is exactly "stop campaign" (any case, subject or new text); single words and quoted footer never count', function () {
-  var yes = [['', 'stop campaign'], ['', 'STOP CAMPAIGN please'], ['Re: Stop  Campaign', 'ok'], ['', 'Hello,\nStop\u00a0campaign.\nThanks'], ['', '(stop campaign)']];
-  var no = [['', 'stop'], ['', 'unsubscribe'], ['', 'Stop emailing me.'], ['', 'remove me from your list'], ['', 'please stop the campaign'], ['', 'stop campaigns now'], ['', 'nonstop campaign'],
+h.test('stop phrases are "stop campaign" and "unsubscribe" (any case, subject or new text); plain "stop", quoted text and our own footer never count', function () {
+  var yes = [['', 'stop campaign'], ['', 'STOP CAMPAIGN please'], ['Re: Stop  Campaign', 'ok'], ['', 'Hello,\nStop\u00a0campaign.\nThanks'], ['', '(stop campaign)'], ['', 'unsubscribe'], ['Unsubscribe me', 'ok'], ['', 'Please UNSUBSCRIBE me.']];
+  var no = [['', 'stop'], ['', 'unsubscribed users are fine'], ['', 'ok\n> unsubscribe'], ['', 'Or <unsubscribe> (all my emails), or reply with the words stop campaign to stop this email series. If you would rather not receive these emails'], ['', 'Stop emailing me.'], ['', 'remove me from your list'], ['', 'please stop the campaign'], ['', 'stop campaigns now'], ['', 'nonstop campaign'],
     ['', 'ok thanks\n\nOn Tue, Sam wrote:\n> reply with the words stop campaign'], ['', 'thanks\n> stop campaign'],
     ['', 'Thanks!\nIf you would rather not receive these emails, reply with the words stop campaign and I will not contact you again.'], ['Re: Question', 'Not interested']];
   yes.forEach(function (c) { assert.strictEqual(sentiment.isStopRequest(c[0], c[1]), true, 'should stop: ' + JSON.stringify(c)); });
@@ -147,7 +147,7 @@ h.test('"stop campaign" stops ONLY that person in THIS campaign (no do-not-email
       var mine = c.sent.filter(function (x) { return x.to === 'p1@co1.com'; })[0];
       incoming(c, { from: 'p1@co1.com', inReplyTo: mine.messageId, text: 'STOP CAMPAIGN' }); return sync(c);
     }).then(function () { return Promise.all([c.db.get("SELECT reason FROM suppression WHERE email = 'p1@co1.com'"), clOf(c, 'p1@co1.com'), clOf(c, 'p0@co0.com'), c.db.get("SELECT sentiment FROM messages WHERE from_addr = 'p1@co1.com'")]); }).then(function (r) {
-      assert.strictEqual(r[0], undefined, 'no global do-not-email entry'); assert.strictEqual(r[1].status, 'stopped'); assert.strictEqual(r[1].status_note, 'Replied "stop campaign"'); assert.strictEqual(r[1].next_send_at, null);
+      assert.strictEqual(r[0], undefined, 'no global do-not-email entry'); assert.strictEqual(r[1].status, 'stopped'); assert.strictEqual(r[1].status_note, 'Asked to stop'); assert.strictEqual(r[1].next_send_at, null);
       assert.strictEqual(r[2].status, 'replied', 'the other person is untouched'); assert.strictEqual(r[3].sentiment, 'not_interested');
     });
   });
@@ -404,7 +404,9 @@ h.test('manual Stop campaign tags the latest reply Not interested and works from
       assert.strictEqual(r.changed, true); return Promise.all([clOf(c, 'p0@co0.com'), c.db.get("SELECT sentiment FROM messages WHERE direction = 'in'"), c.inbox.stopLead(c.a, c.clId)]);
     }).then(function (r) {
       assert.strictEqual(r[0].status, 'stopped'); assert.strictEqual(r[1].sentiment, 'not_interested'); assert.strictEqual(r[2].changed, false);
-    });
+      return c.inbox.list(c.a, { status: 'stopped' });
+    }).then(function (l) { assert.strictEqual(l.items.length, 1, 'the Stop campaign filter finds the stopped conversation'); return c.inbox.list(c.a, { status: 'neutral' }); })
+      .then(function (l) { assert.strictEqual(l.items.length, 0); });
   });
 });
 

@@ -25,6 +25,9 @@ var LEVELS = {
   high: { pauseBelow: 70, streakLimit: 3 }
 };
 var LEVEL_NAMES = ['low', 'medium', 'high'];
+// An account paused by the health protection is switched back on automatically once its score is this many points ABOVE its pause line
+// (a margin, so one more bounce does not pause it again at once and inflate the Forced pauses counter).
+var RESUME_MARGIN = 10;
 var FORCE_MS = 72 * 3600000;      // a "force continue" override lasts 72 hours, then protection applies again
 
 function level(sender) { return LEVELS[sender && sender.protection_level] || LEVELS.medium; }
@@ -49,5 +52,5 @@ function healPoints(day) {
 function clampHeal(heal, base) { return Math.max(0, Math.min(Number(heal) || 0, HEAL.cap - (Number(base) || 0))); }
 function effective(base, heal) { return Math.max(0, Math.min(HEAL.cap, (Number(base) || 0) + clampHeal(heal, base))); }
 
-module.exports = { HEAL: HEAL, healPoints: healPoints, clampHeal: clampHeal, effective: effective, computeHealth: computeHealth, AUTO_PAUSE_BELOW: AUTO_PAUSE_BELOW, MIN_SAMPLE: MIN_SAMPLE, LEVELS: LEVELS, LEVEL_NAMES: LEVEL_NAMES, FORCE_MS: FORCE_MS,
+module.exports = { HEAL: HEAL, healPoints: healPoints, clampHeal: clampHeal, effective: effective, computeHealth: computeHealth, AUTO_PAUSE_BELOW: AUTO_PAUSE_BELOW, MIN_SAMPLE: MIN_SAMPLE, LEVELS: LEVELS, LEVEL_NAMES: LEVEL_NAMES, FORCE_MS: FORCE_MS, RESUME_MARGIN: RESUME_MARGIN,
   floorFor: floorFor, streakLimitFor: streakLimitFor, isForced: isForced, isBelowFloor: isBelowFloor };

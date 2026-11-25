@@ -54,10 +54,12 @@ function stopQueued(tx, userId, addr, reason, note, t) {
 // detection ("not interested" replies) and by the "stop campaign" phrase, so the three can never drift apart.
 // It only touches the given campaign_leads row: no do-not-email entry, no other campaign, no other person. The row gets status
 // 'stopped' (its own state, never 'completed') and the reason in status_note, which the UI turns into a badge.
-var STOP_NOTES = { manual: 'Stopped manually', not_interested: 'Not interested', stop_phrase: 'Replied "stop campaign"' };
+var STOP_NOTES = { manual: 'Stopped manually', not_interested: 'Not interested', stop_phrase: 'Asked to stop' };
 var STOPPABLE_FROM = ['pending', 'active', 'paused', 'error', 'replied', 'completed'];
 // Badge kind of a stopped row, from its note: 'not_interested' | 'stop_campaign' | 'manual_stop'.
-function stopKind(note) { return note === STOP_NOTES.not_interested ? 'not_interested' : note === STOP_NOTES.stop_phrase ? 'stop_campaign' : 'manual_stop'; }
+function stopKind(note) { return note === STOP_NOTES.not_interested ? 'not_interested' : (note === STOP_NOTES.stop_phrase || /stop campaign/i.test(note || '')) ? 'stop_campaign' : 'manual_stop'; }
+// Where a stop came from: 'you' (the Stop campaign button) or 'request' (automatic, from the person's reply). Used by the People tab breakdown.
+function stopSource(note) { return note === STOP_NOTES.manual ? 'you' : 'request'; }
 // Returns true when the row was changed. tx may be a Database or a transaction.
 function stopLead(tx, clId, campaignId, reason, t) {
   var note = STOP_NOTES[reason];
@@ -69,4 +71,4 @@ function stopLead(tx, clId, campaignId, reason, t) {
   });
 }
 
-module.exports = { deriveStatus: deriveStatus, syncMain: syncMain, completeIfDone: completeIfDone, stopQueued: stopQueued, stopLead: stopLead, stopKind: stopKind, STOP_NOTES: STOP_NOTES };
+module.exports = { deriveStatus: deriveStatus, syncMain: syncMain, completeIfDone: completeIfDone, stopQueued: stopQueued, stopLead: stopLead, stopKind: stopKind, stopSource: stopSource, STOP_NOTES: STOP_NOTES };

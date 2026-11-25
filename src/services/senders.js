@@ -211,12 +211,12 @@ function riskOf(row, v, nowMs) {
 // null = nothing waiting, or the sender cannot send right now (then next_email_block says why: paused | health | tracking).
 function addNextEmail(db, userId, rows, nowMs) {
   var nextEmail = require('./nextEmail');       // loaded here: nextEmail itself needs capacityToday from this file
-  rows.forEach(function (r) { r.next_email_at = null; r.next_email_block = null; });
-  if (!rows.some(function (r) { return r.status === 'active'; })) return Promise.resolve(rows);
+  rows.forEach(function (r) { r.next_email_at = null; r.next_email_block = null; r.next_email_projected_at = null; });
+  if (!rows.length) return Promise.resolve(rows);
   return settingsLib.loadGuard(db, userId).then(function (guard) { return nextEmail.compute(db, userId, nowMs, { guard: guard }); }).then(function (res) {
     rows.forEach(function (r) {
       if (res.bySender[r.id] !== undefined) r.next_email_at = res.bySender[r.id];
-      else if (res.senderBlock[r.id]) r.next_email_block = res.senderBlock[r.id];
+      else if (res.senderBlock[r.id]) { r.next_email_block = res.senderBlock[r.id]; r.next_email_projected_at = res.projBySender[r.id] === undefined ? null : res.projBySender[r.id]; }
     });
     return rows;
   });
@@ -254,7 +254,7 @@ Senders.prototype.update = function (userId, id, input, ip) {
     if (!sets.length) return null;
     sets.push('updated_at = ?'); params.push(self.now());
     // Forcing a sender that was paused (for example automatically because of its health) also resumes it.
-    if (v.force_until && existing.status === 'paused') { sets.push("status = 'active'"); sets.push('last_error = NULL'); sets.push('next_send_at = NULL'); }
+    if (v.force_until && existing.status === 'paused') { sets.push("status = 'active'"); sets.push('last_error = NULL'); sets.push('next_send_at = NULL'); sets.push('health_paused = 0'); }
     params.push(id, userId);
     return self.db.run('UPDATE senders SET ' + sets.join(', ') + ' WHERE id = ? AND user_id = ?', params).then(function () {
       var meta = Object.assign({}, v); if (parsed.password) meta.password = true;
@@ -267,7 +267,9 @@ Senders.prototype.setStatus = function (userId, id, status, ip) {
   var self = this;
   if (['active', 'paused', 'disabled'].indexOf(status) === -1) return Promise.reject(new AppError('validation', 'Invalid status', 400, { status: 'Invalid status' }));
   return this._find(userId, id).then(function () {
-    return self.db.run('UPDATE senders SET status = ?, updated_at = ? WHERE id = ? AND user_id = ?', [status, self.now(), id, userId]);
+    // A status chosen by hand replaces an automatic health pause: the flag is cleared (so it is never lifted automatically) and an old
+    // automatic warning goes away when the account is switched back on.
+    return self.db.run('UPDATE senders SET status = ?, health_paused = 0, last_error = CASE WHEN ? = \'active\' THEN NULL ELSE last_error END, updated_at = ? WHERE id = ? AND user_id = ?', [status, status, self.now(), id, userId]);
   }).then(function () { return audit.log(self.db, { userId: userId, action: 'sender.status', entity: 'sender', entityId: id, ip: ip, meta: { status: status } }, self.now); })
     .then(function () { return self.get(userId, id); });
 };

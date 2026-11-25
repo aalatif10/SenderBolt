@@ -17,12 +17,12 @@ function stripQuoted(text) {
   return s.split('\n').filter(function (l) { return !/^\s*>/.test(l); }).join('\n').trim();
 }
 
-// The ONLY opt-out phrase: "stop campaign" (any case, anywhere in the subject or in the NEW text of the reply).
-// Single words like "stop", "unsubscribe" or "remove" never opt anybody out; they are too easy to write by accident
-// ("don't stop now", "how do I unsubscribe from X?"). The phrase must be those two whole words next to each other.
-var STOP_PHRASE = /(^|[^a-z0-9])stop[\s\u00a0]+campaign(?![a-z0-9])/i;
+// Stop requests (any case, anywhere in the subject or in the NEW text of the reply): the two whole words "stop campaign",
+// or the whole word "unsubscribe". They stop the person in THAT campaign only (never a global opt-out). Plain "stop" or "remove"
+// do not count; they are too easy to write by accident ("don't stop now"). "Not interested" is handled by classify().
+var STOP_PHRASE = /(^|[^a-z0-9])(stop[\s\u00a0]+campaign|unsubscribe)(?![a-z0-9])/i;
 // Lines of OUR OWN footer contain the phrase too; if a reply client quotes them without ">" they must not count.
-var FOOTER_LINE = /(rather not receive|stop receiving|stop these) (these )?emails/i;
+var FOOTER_LINE = /(rather not receive|stop receiving|stop these) (these )?emails|unsubscribe\s*\(all my emails\)/i;
 
 function isStopRequest(subject, rawText) {
   if (STOP_PHRASE.test(String(subject == null ? '' : subject))) return true;

@@ -26,10 +26,12 @@
     if (s.status === 'active') {
       if (s.connection_error) return 'Connection problem. Retrying automatically.';
       if (s.next_email_at) return 'Next email ' + fmt.until(s.next_email_at);
+      if (s.next_email_block && SB.S.nextHold[s.next_email_block] && s.next_email_projected_at) return 'Next email ' + fmt.until(s.next_email_projected_at) + ' (' + SB.S.nextHold[s.next_email_block] + ')';
       if (s.next_email_block && SB.S.nextBlock[s.next_email_block]) return SB.S.nextBlock[s.next_email_block];
       if (s.last_error) return 'Last problem: ' + s.last_error;
       return 'No emails scheduled';
     }
+    if (s.next_email_block && SB.S.nextHold[s.next_email_block] && s.next_email_projected_at) return 'Next email ' + fmt.until(s.next_email_projected_at) + ' (' + SB.S.nextHold[s.next_email_block] + ')';
     return s.last_error ? 'Last problem: ' + s.last_error : ' ';
   }
   var RISK = { low: ['good', 'Low risk'], moderate: ['warn', 'Moderate risk'], high: ['bad', 'High risk'], critical: ['bad', 'Critical risk'] };

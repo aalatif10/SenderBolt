@@ -101,11 +101,12 @@ function describeCampaign(main, L) {
   var leaves = leafIds(main, L.kids), s = null, m = emptyMetrics();
   leaves.forEach(function (c) {
     var cs = L.stats[c.id];
-    s = s ? s : { total: 0, sent: 0, pending: 0, active: 0, replied: 0, completed: 0, bounced: 0, unsubscribed: 0, stopped: 0, paused: 0, error: 0, next_send_at: null, next_blocked: null };
+    s = s ? s : { total: 0, sent: 0, pending: 0, active: 0, replied: 0, completed: 0, bounced: 0, unsubscribed: 0, stopped: 0, paused: 0, error: 0, next_send_at: null, next_blocked: null, next_projected_at: null };
     if (cs) {
-      Object.keys(s).forEach(function (k) { if (k !== 'next_send_at' && k !== 'next_blocked') s[k] += cs[k] || 0; });
+      Object.keys(s).forEach(function (k) { if (k !== 'next_send_at' && k !== 'next_blocked' && k !== 'next_projected_at') s[k] += cs[k] || 0; });
       if (cs.next_send_at !== null && (s.next_send_at === null || cs.next_send_at < s.next_send_at)) s.next_send_at = cs.next_send_at;
       if (cs.next_blocked && !s.next_blocked) s.next_blocked = cs.next_blocked;
+      if (cs.next_projected_at !== null && cs.next_projected_at !== undefined && (s.next_projected_at === null || cs.next_projected_at < s.next_projected_at)) s.next_projected_at = cs.next_projected_at;
     }
     if (L.metrics[c.id]) addMetrics(m, L.metrics[c.id]);
   });
@@ -114,7 +115,7 @@ function describeCampaign(main, L) {
   var status = state.deriveStatus(main.status, L.kids[main.id] || []);
   return {
     id: main.id, name: main.name, status: status, track_opens: main.track_opens ? 1 : 0, created_at: main.created_at, batches: (L.kids[main.id] || []).length,
-    leads: s.total, sent: s.sent, progress_pct: s.total ? Math.round(done / s.total * 1000) / 10 : 0, next_send_at: status === 'active' ? s.next_send_at : null, next_blocked: (status === 'active' && s.next_send_at === null) ? (s.next_blocked || null) : null,
+    leads: s.total, sent: s.sent, progress_pct: s.total ? Math.round(done / s.total * 1000) / 10 : 0, next_send_at: status === 'active' ? s.next_send_at : null, next_blocked: (status === 'active' && s.next_send_at === null) ? (s.next_blocked || null) : null, next_projected_at: (status === 'active' && s.next_send_at === null) ? (s.next_projected_at === undefined ? null : s.next_projected_at) : null,
     stats: s, metrics: m,
     step_progress: stepProgress.describe(L.meta && L.meta[main.id], stepProgress.sum(leaves.map(function (c) { return L.prog && L.prog[c.id]; })))
   };

@@ -3,6 +3,7 @@
 // the threshold is paused automatically (protects the Gmail account's reputation).
 var health = require('../lib/health');
 var throttle = require('../lib/throttle');
+var audit = require('./audit');
 
 var WINDOW_MS = 30 * 86400000;
 var RECENT_MS = 7 * 86400000;      // window for the warm-up slow-down
@@ -43,8 +44,20 @@ function recompute(db, senderId, now) {
     }).then(function (lv) {
       // The pause threshold depends on the sender's protection level; a "force continue" override skips the pause.
       var probe = { health_score: score, protection_level: lv && lv.protection_level, force_until: lv && lv.force_until };
-      if (!health.isBelowFloor(probe, now)) return score;
-      return db.run("UPDATE senders SET status = 'paused', last_error = ?, updated_at = ? WHERE id = ? AND status = 'active'",
+      if (!health.isBelowFloor(probe, now)) {
+        // Recovered: an account the health protection paused is switched back on once it is clearly above its line, and the stale
+        // warning is cleared (Needs attention, Home alerts). A pause the owner made by hand is never lifted (health_paused = 0).
+        if (score < Math.min(100, health.floorFor(probe) + health.RESUME_MARGIN)) return score;
+        return db.run("UPDATE senders SET status = 'active', last_error = NULL, health_paused = 0, next_send_at = NULL, updated_at = ? WHERE id = ? AND status = 'paused' AND health_paused = 1", [now, senderId])
+          .then(function (r) {
+            if (!(r && r.changes > 0)) return score;
+            return db.get('SELECT user_id FROM senders WHERE id = ?', [senderId]).then(function (u) {
+              return u ? audit.log(db, { userId: u.user_id, action: 'sender.auto_resume', entity: 'sender', entityId: senderId, meta: { health_score: score } }, function () { return now; }) : null;
+            }).then(function () { return score; });
+          });
+      }
+      // Lifetime counter: +1 each time the protection pauses the account (only on the active -> paused change, so it counts pauses, not checks).
+      return db.run("UPDATE senders SET status = 'paused', health_paused = 1, forced_pauses = forced_pauses + 1, last_error = ?, updated_at = ? WHERE id = ? AND status = 'active'",
         ['Auto-paused: health score fell to ' + score + ' (too many bounces)', now, senderId]).then(function () { return score; });
     });
   });

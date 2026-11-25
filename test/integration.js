@@ -43,7 +43,7 @@ group('migrations and schema');
 test('applies once, is idempotent, detects tampering', function () {
   return database.open(':memory:').then(function (db) {
     return migrate(db).then(function (a) {
-      assert.deepStrictEqual(a, ['001_init.sql', '002_campaign_settings.sql', '003_engine.sql', '004_projects.sql', '005_warmup.sql', '006_wizard_drafts.sql', '007_user_settings.sql', '008_scoping_tracking.sql', '009_studio_reports.sql', '010_active_days.sql', '011_v180.sql', '012_v190.sql', '013_outcome.sql', '014_health_dismissed.sql', '015_stopped_status.sql']);
+      assert.deepStrictEqual(a, ['001_init.sql', '002_campaign_settings.sql', '003_engine.sql', '004_projects.sql', '005_warmup.sql', '006_wizard_drafts.sql', '007_user_settings.sql', '008_scoping_tracking.sql', '009_studio_reports.sql', '010_active_days.sql', '011_v180.sql', '012_v190.sql', '013_outcome.sql', '014_health_dismissed.sql', '015_stopped_status.sql', '016_forced_pauses.sql']);
       return migrate(db);
     }).then(function (b) {
       assert.deepStrictEqual(b, []);
@@ -69,7 +69,7 @@ test('migration 015 keeps campaign people, messages and ids while adding the sto
         });
       });
     }).then(function () { return migrate(db); }).then(function (applied) {
-      assert.deepStrictEqual(applied, ['015_stopped_status.sql']);
+      assert.deepStrictEqual(applied, ['015_stopped_status.sql', '016_forced_pauses.sql']);
       return Promise.all([db.get('SELECT status, current_step FROM campaign_leads'), db.get('SELECT campaign_lead_id AS id FROM messages'), db.get('PRAGMA foreign_keys'), db.all('PRAGMA foreign_key_check')]);
     }).then(function (r) {
       assert.strictEqual(r[0].status, 'stopped', 'manual stops become stopped'); assert.strictEqual(r[0].current_step, 1);

@@ -12,6 +12,7 @@ var CampaignsService = require('../src/services/campaigns').CampaignsService;
 var SettingsService = require('../src/services/settings').SettingsService;
 var SenderBackup = require('../src/services/senderBackup').SenderBackup;
 var SendEngine = require('../src/engine/sendEngine').SendEngine;
+var senderHealth = require('../src/services/senderHealth');
 var AlertsService = require('../src/services/alerts').AlertsService;
 var ProjectsService = require('../src/services/projects').ProjectsService;
 
@@ -258,6 +259,96 @@ h.test('alerts show a campaign whose owner senders are all paused, and every ale
       assert.ok(k.indexOf('s:' + c.sid + ':down') !== -1 && k.indexOf('s:' + c.sid2 + ':down') !== -1);
       assert.ok(k.indexOf('c:' + c.camp.id + ':stalled') !== -1, 'people waiting on paused owners are reported');
     });
+  });
+});
+
+h.group('next email: overdue people, downtime, anchoring, People breakdown');
+var state = require('../src/services/campaignState');
+h.test('after downtime an overdue person goes out at the next valid window (not after midnight UTC) and the follow-up is timed from the real send', function () {
+  return setup().then(function (c) {
+    return armTracking(c).then(function () { return launch(c, 1, [c.sid]); }).then(function () { return c.engine.tick(); }).then(function () {
+      return c.db.get('SELECT last_sent_at, next_send_at FROM campaign_leads LIMIT 1');
+    }).then(function (cl) {
+      assert.strictEqual(cl.next_send_at, cl.last_sent_at + 3 * DAY, 'follow-up is anchored to the real send time of the previous email');
+      c.clock.t = cl.last_sent_at + 9 * DAY + 2 * HOUR;          // the system was down for days: the follow-up is long overdue (a weekday, window open)
+      return armTracking(c).then(function () { return c.camps.get(c.a, c.camp.id); }).then(function (r) {
+        assert.ok(r.stats.next_send_at - c.clock.t < HOUR, 'shown as due now / next window, not pushed to midnight');
+        return c.engine.tick();
+      }).then(function () { return c.db.get('SELECT status FROM campaign_leads LIMIT 1'); }).then(function (row) { assert.strictEqual(row.status, 'completed'); });
+    });
+  });
+});
+h.test('a paused owner still gets an exact projected countdown with the reason, on the campaign and on each person', function () {
+  return setup().then(function (c) {
+    return armTracking(c).then(function () { return launch(c, 2, [c.sid]); }).then(function () { return c.senders.setStatus(c.a, c.sid, 'paused'); }).then(function () { return Promise.all([c.camps.get(c.a, c.camp.id), c.camps.listLeads(c.a, c.camp.id, {}), senderMap(c)]); }).then(function (r) {
+      assert.strictEqual(r[0].stats.next_send_at, null);
+      assert.strictEqual(r[0].stats.next_blocked, 'paused');
+      assert.ok(r[0].stats.next_projected_at >= c.clock.t, 'exact time it would go out once the sender is active again');
+      r[1].items.forEach(function (p) { assert.strictEqual(p.next_at, null); assert.strictEqual(p.next_blocked, 'paused'); assert.ok(p.next_projected_at >= c.clock.t); });
+      assert.ok(r[2][c.sid].next_email_projected_at >= c.clock.t);
+    });
+  });
+});
+h.test('People tab: Stop campaign breakdown (on request vs by you) with counts and filter', function () {
+  return setup().then(function (c) {
+    return armTracking(c).then(function () { return launch(c, 3, [c.sid]); }).then(function () { return c.db.all('SELECT id FROM campaign_leads ORDER BY id'); }).then(function (rows) {
+      return state.stopLead(c.db, rows[0].id, c.camp.id, 'manual', c.clock.t).then(function () { return state.stopLead(c.db, rows[1].id, c.camp.id, 'not_interested', c.clock.t); });
+    }).then(function () { return Promise.all([c.camps.listLeads(c.a, c.camp.id, { status: 'stopped' }), c.camps.listLeads(c.a, c.camp.id, { status: 'stopped', stop_source: 'you' }), c.camps.listLeads(c.a, c.camp.id, { status: 'stopped', stop_source: 'request' }), h.expectReject(c.camps.listLeads(c.a, c.camp.id, { status: 'active', stop_source: 'you' }), 'validation')]); }).then(function (r) {
+      assert.strictEqual(r[0].counts.stopped, 2); assert.strictEqual(r[0].counts.stop_you, 1); assert.strictEqual(r[0].counts.stop_request, 1);
+      assert.strictEqual(r[1].items.length, 1); assert.strictEqual(r[1].items[0].opt_out, 'manual_stop');
+      assert.strictEqual(r[2].items.length, 1); assert.strictEqual(r[2].items[0].opt_out, 'not_interested');
+      assert.strictEqual(r[0].counts.completed || 0, 0, 'stopped people are never counted as completed');
+    });
+  });
+});
+
+h.group('account recovery and the lifetime Forced pauses counter');
+function badHistory(c) {
+  var p = Promise.resolve(), i, t = c.clock.t - HOUR;
+  for (i = 0; i < 30; i++) p = p.then(function () { return c.db.run("INSERT INTO messages (user_id, sender_id, direction, status, kind, step_no, sent_at, created_at) VALUES (?,?,'out','sent','email',0,?,?)", [c.a, c.sid, t, t]); });
+  for (i = 0; i < 5; i++) p = p.then(function () { return c.db.run("INSERT INTO messages (user_id, sender_id, direction, status, kind, error_class, created_at) VALUES (?,?,'in','received','bounce','hard',?)", [c.a, c.sid, t]); });
+  return p;
+}
+h.test('each automatic health pause adds 1 to Forced pauses (once per pause); a recovered account resumes and its stale warning disappears', function () {
+  return setup().then(function (c) {
+    return badHistory(c).then(function () { return senderHealth.recompute(c.db, c.sid, c.clock.t); }).then(function () { return senderHealth.recompute(c.db, c.sid, c.clock.t); }).then(function () { return c.senders.get(c.a, c.sid); }).then(function (s) {
+      assert.strictEqual(s.status, 'paused'); assert.strictEqual(s.forced_pauses, 1, 'a second check of the same pause does not count again'); assert.ok(/Auto-paused/.test(s.last_error));
+      return alertsOf(c);
+    }).then(function (r) {
+      assert.ok(keys(r).indexOf('s:' + c.sid + ':down') !== -1);
+      c.clock.t += 31 * DAY;                                                // the bad results leave the 30-day window: health is back to 100
+      return senderHealth.recompute(c.db, c.sid, c.clock.t);
+    }).then(function () { return c.senders.get(c.a, c.sid); }).then(function (s) {
+      assert.strictEqual(s.status, 'active', 'recovered: switched back on'); assert.strictEqual(s.last_error, null, 'stale warning cleared'); assert.strictEqual(s.forced_pauses, 1, 'the lifetime counter is never reduced');
+      return Promise.all([alertsOf(c), c.db.get("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'sender.auto_resume'")]);
+    }).then(function (r) {
+      assert.deepStrictEqual(keys(r[0]).filter(function (k) { return k.indexOf('s:' + c.sid + ':') === 0; }), [], 'no outdated account alert is left');
+      assert.strictEqual(r[1].n, 1);
+    });
+  });
+});
+h.test('a pause you made by hand is never lifted automatically and never counted as a forced pause', function () {
+  return setup().then(function (c) {
+    return c.senders.setStatus(c.a, c.sid, 'paused').then(function () { return senderHealth.recompute(c.db, c.sid, c.clock.t); }).then(function () { return c.senders.get(c.a, c.sid); }).then(function (s) {
+      assert.strictEqual(s.status, 'paused'); assert.strictEqual(s.forced_pauses, 0);
+    });
+  });
+});
+h.test('a dismissed alert that goes away and comes back shows again as new; queue stalls and unassigned people are reported', function () {
+  return setup().then(function (c) {
+    return armTracking(c).then(function () { return launch(c, 2, [c.sid]); }).then(function () { return c.db.run("UPDATE senders SET last_error = 'SMTP down' WHERE id = ?", [c.sid]); }).then(function () { return c.settings.setHealthDismissed(c.a, ['s:' + c.sid + ':err']); })
+      .then(function () { return alertsOf(c); }).then(function (r) {
+        assert.strictEqual(keys(r).indexOf('s:' + c.sid + ':err'), -1, 'dismissed');
+        return c.db.run('UPDATE senders SET last_error = NULL WHERE id = ?', [c.sid]);
+      }).then(function () { return alertsOf(c); }).then(function () { return c.db.run("UPDATE senders SET last_error = 'SMTP down again' WHERE id = ?", [c.sid]); })
+      .then(function () { return alertsOf(c); }).then(function (r) {
+        var it = r.items.filter(function (x) { return x.key === 's:' + c.sid + ':err'; })[0];
+        assert.ok(it && it.is_new, 'the returning problem is visible and new');
+        c.clock.t += 2 * HOUR; return alertsOf(c);                              // nobody ticked the engine: the emails are 2h late while a sender could send
+      }).then(function (r) {
+        assert.ok(keys(r).indexOf('c:' + c.camp.id + ':overdue') !== -1, 'queue stall');
+        return c.db.run("UPDATE campaign_leads SET sender_id = NULL WHERE id = (SELECT MIN(id) FROM campaign_leads)");
+      }).then(function () { return alertsOf(c); }).then(function (r) { assert.ok(keys(r).indexOf('c:' + c.camp.id + ':unassigned') !== -1, 'people without a sending account'); });
   });
 });
 

@@ -70,7 +70,8 @@ function createApp(config) {
       deps.images = new ImagesService(db, { now: config.now });
       deps.reports = new ReportsService(db, { now: config.now });
       deps.projects = new ProjectsService(db, { campaigns: deps.campaigns, now: config.now });
-      deps.alerts = new AlertsService(db, { senders: deps.senders, projects: deps.projects, settings: deps.settings, now: config.now });
+      deps.alerts = new AlertsService(db, { senders: deps.senders, projects: deps.projects, settings: deps.settings, now: config.now,
+        engineInfo: function () { return { mode: mode, last_tick_at: engine.lastTickAt }; } });
       deps.engineStatus = function (userId) {
         var t = (config.now || Date.now)();
         return db.all('SELECT id, email, status, health_score, next_send_at, last_error, imap_host, imap_last_uid, last_sync_at, sync_error, sync_transient, reply_detection, connection_error FROM senders WHERE user_id = ? ORDER BY id', [userId]).then(function (rows) {

@@ -228,7 +228,7 @@ h.test('Status filter matches the reply tags; successful/not_successful keep the
       function n(status) { return inbox.list(c.a, { status: status }).then(function (r) { return r.total; }); }
       return Promise.all([n('interested'), n('more_info'), n('not_interested'), n('neutral'), n('successful'), n('not_successful'), n('interested,more_info'), n('')]).then(function (r) {
         assert.deepStrictEqual(r, [1, 1, 1, 2, 0, 1, 2, 5], 'nothing is Successful until you mark it; Not successful = opted out / bounced only');
-        return Promise.all(['active', 'paused', 'stopped', 'x;drop'].map(function (bad) { return h.expectReject(inbox.list(c.a, { status: bad })); }));
+        return Promise.all(['active', 'paused', 'completed', 'x;drop'].map(function (bad) { return h.expectReject(inbox.list(c.a, { status: bad })); }));
       }).then(function () { return inbox.setOutcome(c.a, c.cls[0].id, 'successful'); }).then(function () {
         return Promise.all([n('successful'), n('interested'), inbox.list(c.a, { sentiment: 'successful' }), inbox.list(c.a, {})]);
       }).then(function (r) {

@@ -302,7 +302,7 @@ C._own = function (userId, id) {
 };
 
 function emptyStats() {
-  var s = { total: 0, sent: 0, done: 0, progress_pct: 0, next_send_at: null, next_blocked: null };
+  var s = { total: 0, sent: 0, done: 0, progress_pct: 0, next_send_at: null, next_blocked: null, next_projected_at: null };
   CL_STATUSES.forEach(function (k) { s[k] = 0; });
   return s;
 }
@@ -310,10 +310,11 @@ function addStats(a, b) {
   CL_STATUSES.concat(['total', 'sent']).forEach(function (k) { a[k] += b[k]; });
   if (b.next_send_at !== null && (a.next_send_at === null || b.next_send_at < a.next_send_at)) a.next_send_at = b.next_send_at;
   if (b.next_blocked && !a.next_blocked) a.next_blocked = b.next_blocked;
+  if (b.next_projected_at !== null && (a.next_projected_at === null || b.next_projected_at < a.next_projected_at)) a.next_projected_at = b.next_projected_at;
   return a;
 }
 function finishStats(s) {
-  if (s.next_send_at !== null) s.next_blocked = null;   // a usable time exists: not blocked
+  if (s.next_send_at !== null) { s.next_blocked = null; s.next_projected_at = null; }   // a usable time exists: not blocked
   s.done = DONE_STATUSES.reduce(function (n, k) { return n + s[k]; }, 0);
   s.progress_pct = s.total ? Math.round(s.done / s.total * 1000) / 10 : 0;
   return s;
@@ -341,6 +342,7 @@ C._statsByCampaignG = function (userId, onlyIds, guard) {
       var s = emptyStats();
       CL_STATUSES.forEach(function (k) { s[k] = Number(r[k]); });
       s.total = Number(r.total); s.next_send_at = ne.byCampaign[r.cid] === undefined ? null : ne.byCampaign[r.cid];
+      s.next_projected_at = ne.campaignBlock[r.cid] && ne.projByCampaign[r.cid] !== undefined ? ne.projByCampaign[r.cid] : null;   // when it would go out if the block cleared now
       s.next_blocked = ne.campaignBlock[r.cid] || null;   // 'paused' | 'health' | 'tracking' when waiting people exist but no owner sender can send
       out[r.cid] = s;
     });
@@ -457,6 +459,10 @@ C.listLeads = function (userId, id, q) {
       if (CL_STATUSES.indexOf(q.status) === -1) throw bad('status', 'Invalid status');
       where += ' AND cl.status = ?'; params.push(q.status);
     }
+    if (q.stop_source !== undefined && q.stop_source !== '') {
+      if (q.status !== 'stopped' || (q.stop_source !== 'request' && q.stop_source !== 'you')) throw bad('stop_source', 'Invalid stop filter');
+      where += q.stop_source === 'you' ? ' AND cl.status_note = ?' : ' AND (cl.status_note IS NULL OR cl.status_note <> ?)'; params.push(state.STOP_NOTES.manual);
+    }
     if (q.risk === 'risky') where += " AND l.verify_status IN ('risky','catch_all')";
     else if (q.risk && q.risk !== 'all') throw bad('risk', 'Invalid filter');
     var page = Math.max(1, parseInt(q.page, 10) || 1), size = Math.min(200, Math.max(1, parseInt(q.pageSize, 10) || 50));
@@ -470,17 +476,31 @@ C.listLeads = function (userId, id, q) {
     return Promise.all([
       self.db.get('SELECT COUNT(*) AS c FROM campaign_leads cl JOIN leads l ON l.id = cl.lead_id WHERE ' + where, params),
       self.db.all('SELECT cl.status AS st, COUNT(*) AS n FROM campaign_leads cl WHERE ' + base + ' GROUP BY cl.status', baseParams),
-      self.db.get("SELECT COUNT(*) AS n FROM campaign_leads cl JOIN leads l ON l.id = cl.lead_id WHERE " + base + " AND l.verify_status IN ('risky','catch_all')", baseParams)
+      self.db.get("SELECT COUNT(*) AS n FROM campaign_leads cl JOIN leads l ON l.id = cl.lead_id WHERE " + base + " AND l.verify_status IN ('risky','catch_all')", baseParams),
+      self.db.all("SELECT CASE WHEN cl.status_note = ? THEN 'you' ELSE 'request' END AS src, COUNT(*) AS n FROM campaign_leads cl WHERE " + base + " AND cl.status = 'stopped' GROUP BY src", [state.STOP_NOTES.manual].concat(baseParams))
     ]).then(function (r) {
       var tot = r[0], counts = { all: 0, risky: Number(r[2].n) || 0 };
       r[1].forEach(function (x) { counts[x.st] = Number(x.n); counts.all += Number(x.n); });
-      return self.db.all('SELECT cl.id, cl.campaign_id, cl.status, cl.current_step, cl.next_send_at, cl.last_sent_at, cl.status_note, (SELECT COALESCE(SUM(m.open_count), 0) FROM messages m WHERE m.campaign_lead_id = cl.id AND m.direction = \'out\') AS opens, (SELECT MAX(m.last_opened_at) FROM messages m WHERE m.campaign_lead_id = cl.id AND m.direction = \'out\') AS last_opened_at, l.email, l.first_name, l.last_name, l.company, l.verify_status, s.email AS sender_email, sp.reason AS suppression_reason, ' +
+      counts.stop_request = 0; counts.stop_you = 0;   // breakdown of 'stopped': automatic (reply) vs manual (you)
+      r[3].forEach(function (x) { counts[x.src === 'you' ? 'stop_you' : 'stop_request'] = Number(x.n); });
+      return self.db.all('SELECT cl.id, cl.campaign_id, cl.status, cl.sender_id, cl.current_step, cl.next_send_at, cl.last_sent_at, cl.status_note, (SELECT COALESCE(SUM(m.open_count), 0) FROM messages m WHERE m.campaign_lead_id = cl.id AND m.direction = \'out\') AS opens, (SELECT MAX(m.last_opened_at) FROM messages m WHERE m.campaign_lead_id = cl.id AND m.direction = \'out\') AS last_opened_at, l.email, l.first_name, l.last_name, l.company, l.verify_status, s.email AS sender_email, sp.reason AS suppression_reason, ' +
         '(SELECT MAX(r.received_at) FROM messages r WHERE r.campaign_lead_id = cl.id AND r.direction = \'in\' AND r.kind = \'email\') AS replied_at ' +
         join + 'LEFT JOIN suppression sp ON sp.user_id = ? AND sp.email = l.email WHERE ' + where +
         ' ORDER BY ' + order + ' LIMIT ? OFFSET ?', [userId].concat(params, [size, (page - 1) * size]))
         .then(function (items) {
           items.forEach(function (it) { it.opt_out = optOutKind(it); });
-          return { items: items, total: tot.c, page: page, pageSize: size, counts: counts };
+          // Real next email per waiting person (same calculator as the campaign and sender screens): their own due time, their owner's
+          // throttle / capacity, the campaign window and the guardrail. next_blocked says why an owner cannot send; next_projected_at is when it would.
+          return settingsLib.loadGuard(self.db, userId).then(function (guard) { return nextEmail.compute(self.db, userId, self.now(), { guard: guard, campaignIds: ids }).then(function (ne) {
+            var now = self.now();
+            items.forEach(function (it) {
+              it.next_at = null; it.next_blocked = null; it.next_projected_at = null;
+              if (it.status !== 'active' || it.next_send_at === null || !it.sender_id) return;
+              var pt = nextEmail.personTime(ne.groups[it.sender_id + ':' + it.campaign_id], it.next_send_at, now, guard);
+              it.next_at = pt.at; it.next_blocked = pt.block; it.next_projected_at = pt.projected;
+            });
+            return { items: items, total: tot.c, page: page, pageSize: size, counts: counts };
+          }); });
         });
     });
   });

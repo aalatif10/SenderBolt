@@ -248,7 +248,7 @@
     }
 
     // ---------------- People ----------------
-    var pst = { status: 'all', page: 1, size: 50, sel: {}, sort: '', dir: 'asc', counts: null, recount: false };
+    var pst = { status: 'all', page: 1, size: 50, sel: {}, sort: '', dir: 'asc', counts: null, recount: false, stopSource: '' };
     var PEOPLE_REMOVE = 'They leave this list. Emails already sent, replies and the campaign\u2019s statistics are kept, so your history is never rewritten. Bounced addresses stay on your do-not-email list.';
     function selIds() { return Object.keys(pst.sel).map(Number); }
     function bulk(action, label) {
@@ -317,11 +317,18 @@
       var table = h('div', null, h('div', { class: 'skeleton' })), barBox = h('div');
       // Counts come from the list itself (people you removed are not counted); before the first answer, the campaign totals are used.
       var cnt = pst.counts || { all: camp.stats.total, risky: 0 };
-      var chips = SB.lists.chips([['all', 'All'], ['active', 'In sequence'], ['paused', 'Paused'], ['replied', 'Replied'], ['stopped', 'Stopped'], ['unsubscribed', 'Opted out'], ['bounced', 'Bounced'], ['risky', 'Risky'], ['error', 'Problem'], ['completed', 'Finished'], ['pending', 'Waiting']].map(function (c) {
+      var chips = SB.lists.chips([['all', 'All'], ['active', 'In sequence'], ['paused', 'Paused'], ['replied', 'Replied'], ['stopped', 'Stop campaign'], ['unsubscribed', 'Opted out'], ['bounced', 'Bounced'], ['risky', 'Risky'], ['error', 'Problem'], ['completed', 'Finished'], ['pending', 'Waiting']].map(function (c) {
         return { key: c[0], label: c[1], n: cnt[c[0]] !== undefined ? cnt[c[0]] : (pst.counts ? 0 : (camp.stats[c[0]] || 0)),
-          tip: c[0] === 'stopped' ? 'People stopped in this campaign only: by you, a "not interested" reply or "stop campaign". Other campaigns are not affected.' : c[0] === 'unsubscribed' ? 'People who used the unsubscribe link (or older "stop campaign" replies): they are on your do-not-email list.' : c[0] === 'risky' ? 'Addresses the email checker flagged as risky or catch-all: they may bounce. Select them to review or remove.' : c[0] === 'bounced' ? 'The address does not exist or rejected the email. Select and remove them to clean the list; their history is kept.' : undefined };
-      }).filter(function (c) { return c.key === 'all' || c.n > 0 || c.key === pst.status; }), pst.status, function (k) { pst.status = k; pst.page = 1; pst.sel = {}; paintPeople(); });
-      SB.mount(body, h('div', null, chips, barBox, h('div', { class: 'pad-t' }), table));
+          tip: c[0] === 'stopped' ? SB.S.stopTips.all : c[0] === 'unsubscribed' ? 'People who used the unsubscribe link (or older "stop campaign" replies): they are on your do-not-email list.' : c[0] === 'risky' ? 'Addresses the email checker flagged as risky or catch-all: they may bounce. Select them to review or remove.' : c[0] === 'bounced' ? 'The address does not exist or rejected the email. Select and remove them to clean the list; their history is kept.' : undefined };
+      }).filter(function (c) { return c.key === 'all' || c.n > 0 || c.key === pst.status; }), pst.status, function (k) { pst.status = k; pst.stopSource = ''; pst.page = 1; pst.sel = {}; paintPeople(); });
+      // Stop campaign breakdown: automatic stops (the person asked) vs stops you made with the button.
+      var stopRow = null;
+      if (pst.status === 'stopped' && pst.counts) {
+        var sc = pst.counts;
+        stopRow = SB.lists.chips([{ key: '', label: 'All stops', n: (sc.stopped || 0), tip: SB.S.stopTips.all }, { key: 'request', label: 'Stop on request', n: sc.stop_request || 0, tip: SB.S.stopTips.request }, { key: 'you', label: 'Stop by you', n: sc.stop_you || 0, tip: SB.S.stopTips.you }],
+          pst.stopSource, function (k) { pst.stopSource = k; pst.page = 1; pst.sel = {}; paintPeople(); });
+      }
+      SB.mount(body, h('div', null, chips, stopRow, barBox, h('div', { class: 'pad-t' }), table));
       function paintBar() {
         var n = selIds().length;
         SB.mount(barBox, h('div', null, SB.lists.selectionBar(n, 'person', [
@@ -333,7 +340,7 @@
           pst.counts && n < (pst.status === 'all' ? pst.counts.all : pst.status === 'risky' ? pst.counts.risky : pst.counts[pst.status] || 0) ? selectAllMatching : null, 'Select all ' + fmt.num(pst.status === 'all' ? (pst.counts || {}).all : pst.status === 'risky' ? (pst.counts || {}).risky : (pst.counts || {})[pst.status] || 0))));
       }
       paintBar();
-      var q = (pst.status === 'risky' ? 'status=all&risk=risky' : 'status=' + encodeURIComponent(pst.status)) + '&page=' + pst.page + '&pageSize=' + pst.size + (pst.sort ? '&sort=' + pst.sort + '&dir=' + pst.dir : '');
+      var q = (pst.status === 'risky' ? 'status=all&risk=risky' : 'status=' + encodeURIComponent(pst.status) + (pst.status === 'stopped' && pst.stopSource ? '&stop_source=' + pst.stopSource : '')) + '&page=' + pst.page + '&pageSize=' + pst.size + (pst.sort ? '&sort=' + pst.sort + '&dir=' + pst.dir : '');
       SB.api.get('/api/campaigns/' + id + '/leads?' + q).then(function (r) {
         if (dead || tab !== 'people') return;
         if (r.counts && JSON.stringify(r.counts) !== JSON.stringify(pst.counts)) { pst.counts = r.counts; if (!pst.recount) { pst.recount = true; return paintPeople(); } }
@@ -345,7 +352,7 @@
         all.checked = r.items.every(function (m) { return pst.sel[m.id]; });
         all.addEventListener('change', function () { r.items.forEach(function (m) { if (all.checked) pst.sel[m.id] = true; else delete pst.sel[m.id]; }); paintPeople(); });
         SB.mount(table, h('div', { class: 'card flush' }, h('div', { class: 'table-wrap' }, h('table', { class: 'table leads-table' },
-          h('thead', null, h('tr', null, h('th', { class: 'c-check' }, all), sh('Person', 'email'), sh('Status', 'status'), sh('Progress', 'step', { info: ui.info('How many emails of the sequence this person has received.') }), sh('Last email', 'last_sent', { defaultDir: 'desc' }), camp.settings.track_opens ? sh('Opened', 'opens', { defaultDir: 'desc', info: ui.info('How many times this person opened your emails, and when they last did. Counts are estimates.') }) : null, sh('Reply', 'replied', { defaultDir: 'desc' }), sh('Sender', 'sender'))),
+          h('thead', null, h('tr', null, h('th', { class: 'c-check' }, all), sh('Person', 'email'), sh('Status', 'status'), sh('Progress', 'step', { info: ui.info('How many emails of the sequence this person has received.') }), sh('Last email', 'last_sent', { defaultDir: 'desc' }), sh('Next email', 'next_send', { info: ui.info('When this person\u2019s next email can really go out: their wait after the last email, their sender\u2019s limits, and the sending days and hours. It is counted from the time of their last real email.') }), camp.settings.track_opens ? sh('Opened', 'opens', { defaultDir: 'desc', info: ui.info('How many times this person opened your emails, and when they last did. Counts are estimates.') }) : null, sh('Reply', 'replied', { defaultDir: 'desc' }), sh('Sender', 'sender'))),
           h('tbody', null, r.items.map(function (m) {
             var st = LEAD_STATUS[m.status] || LEAD_STATUS.pending;
             var cb = h('input', { type: 'checkbox', 'aria-label': 'Select ' + m.email }); cb.checked = !!pst.sel[m.id];
@@ -359,6 +366,11 @@
                 m.status_note && !m.opt_out ? h('div', { class: 'small faint', text: m.status_note }) : null),
               h('td', { class: 'nowrap', text: Math.min(m.current_step, total) + ' of ' + total }),
               h('td', { class: 'nowrap', tip: fmt.full(m.last_sent_at), text: m.last_sent_at ? fmt.ago(m.last_sent_at) : '—' }),
+              (function () {
+                var at = m.next_at || m.next_projected_at;
+                if (!at) return h('td', { class: 'nowrap faint', text: '\u2014' });
+                return h('td', { class: 'nowrap', tip: (m.next_blocked ? SB.S.nextHoldTip + ' ' : '') + fmt.full(at) }, fmt.until(at), m.next_blocked && SB.S.nextHold[m.next_blocked] ? h('div', { class: 'small faint', text: SB.S.nextHold[m.next_blocked] }) : null);
+              })(),
               camp.settings.track_opens ? h('td', { class: 'nowrap', tip: m.last_opened_at ? 'Last opened ' + fmt.full(m.last_opened_at) : 'Not opened yet' }, m.opens ? h('span', null, h('b', { text: m.opens + '×' }), h('span', { class: 'small faint', text: ' ' + fmt.ago(m.last_opened_at) })) : h('span', { class: 'faint', text: '—' })) : null,
               h('td', { class: 'nowrap', text: m.replied_at ? fmt.ago(m.replied_at) : '—' }),
               h('td', { class: 'small' }, m.sender_email ? ui.email(m.sender_email) : '\u2014'));
@@ -377,7 +389,7 @@
       SB.mount(box, h('div', { class: 'skeleton' }));
       function paint(hi) {
         var l = hi.lead, st = LEAD_STATUS[l.status] || LEAD_STATUS.pending;
-        var opt = l.status === 'bounced' ? 'bounce' : l.status === 'stopped' ? (l.status_note === 'Not interested' ? 'not_interested' : /stop campaign/i.test(l.status_note || '') ? 'stop_campaign' : 'manual_stop') : (l.status === 'unsubscribed' ? (/stop campaign/i.test(l.status_note || '') ? 'stop_campaign' : null) : null);
+        var opt = l.status === 'bounced' ? 'bounce' : l.status === 'stopped' ? (l.status_note === 'Not interested' ? 'not_interested' : l.status_note === 'Stopped manually' ? 'manual_stop' : 'stop_campaign') : (l.status === 'unsubscribed' ? (/stop campaign/i.test(l.status_note || '') ? 'stop_campaign' : null) : null);
         var f = { first_name: h('input', { class: 'input', maxlength: 200, value: l.first_name || '', 'aria-label': 'First name' }), last_name: h('input', { class: 'input', maxlength: 200, value: l.last_name || '', 'aria-label': 'Last name' }),
           company: h('input', { class: 'input', maxlength: 200, value: l.company || '', 'aria-label': 'Company' }) };
         var customRows = h('div', { class: 'cf-rows' }), err = h('div', { class: 'form-error hidden', role: 'alert' });

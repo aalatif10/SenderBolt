@@ -96,7 +96,7 @@ I._list = function (userId, q) {
   //                    "Said no" is the Not interested tag, so the two do not overlap.
   // Campaign-state values (in sequence, paused, stopped) are not tags and are rejected.
   if (q.status !== undefined && q.status !== '') {
-    var STATUS_SQL = { interested: "m.sentiment = 'interested'", more_info: "m.sentiment = 'more_info'", not_interested: "m.sentiment = 'not_interested'", neutral: "(m.sentiment = 'neutral' OR m.sentiment IS NULL)",
+    var STATUS_SQL = { interested: "m.sentiment = 'interested'", more_info: "m.sentiment = 'more_info'", not_interested: "m.sentiment = 'not_interested'", neutral: "(m.sentiment = 'neutral' OR m.sentiment IS NULL)", stopped: "cl.status = 'stopped'",
       successful: "cl.outcome = 'successful'", not_successful: "(cl.outcome IS NULL AND cl.status IN ('unsubscribed','bounced','stopped'))" };
     var conds = String(q.status).split(',').map(function (k) {
       var c1 = Object.prototype.hasOwnProperty.call(STATUS_SQL, k.trim()) ? STATUS_SQL[k.trim()] : null;

@@ -55,7 +55,7 @@ function readPrefs(raw) {
   try { return cleanPrefs(o && typeof o === 'object' ? o : {}); } catch (e) { return Object.assign({}, PREF_DEFAULTS); }
 }
 
-var SEEN_KEY = /^[pcs]:[0-9]{1,12}:[a-z_]{1,20}$/;
+var SEEN_KEY = /^[pcse]:[0-9]{1,12}:[a-z_]{1,20}$/;
 function readSeen(raw) {
   var a = null;
   try { a = raw ? JSON.parse(raw) : null; } catch (e) { a = null; }
