@@ -19,6 +19,11 @@ var senderHealth = require('../services/senderHealth');
 
 var DAY = 86400000;
 var OOO_DELAY_MS = 3 * DAY;
+// Part of the UPDATE after a SUCCESSFUL inbox check: logging in to the mailbox works, so an old connection problem (wrong password, network
+// down) on the account is outdated. It clears the stale warning and lets the engine retry at once; if sending is still broken the next
+// failed send raises it again. (last_error is cleared only when it is that same connection message.)
+var CONN_CLEAR = "last_error = CASE WHEN last_error = connection_error THEN NULL ELSE last_error END, " +
+  "next_send_at = CASE WHEN connection_error IS NOT NULL THEN NULL ELSE next_send_at END, connection_error = NULL, connection_error_at = NULL";
 var STOPPABLE = ['active', 'pending', 'paused', 'completed'];
 
 var NET = { ETIMEDOUT: 1, ECONNRESET: 1, ECONNREFUSED: 1, ENOTFOUND: 1, EAI_AGAIN: 1, EPIPE: 1, EHOSTUNREACH: 1, ENETUNREACH: 1, ESOCKET: 1, ECONNECTION: 1 };
@@ -94,14 +99,14 @@ S.syncSender = function (s) {
     var creds = self._creds(s);
     if (s.imap_last_uid === null || s.imap_last_uid === undefined) {
       return self.mailbox.baseline(creds).then(function (b) {
-        return self.db.run('UPDATE senders SET imap_uidvalidity = ?, imap_last_uid = ?, last_sync_at = ?, sync_error = NULL, sync_transient = 0, sync_failures = 0, sync_retry_at = NULL WHERE id = ?', [b.uidValidity, b.lastUid, self.now(), s.id])
+        return self.db.run('UPDATE senders SET imap_uidvalidity = ?, imap_last_uid = ?, last_sync_at = ?, sync_error = NULL, sync_transient = 0, sync_failures = 0, sync_retry_at = NULL, ' + CONN_CLEAR + ' WHERE id = ?', [b.uidValidity, b.lastUid, self.now(), s.id])
           .then(function () { return { armed: true }; });
       });
     }
     return self.mailbox.fetchSince(creds, { uidValidity: s.imap_uidvalidity, lastUid: s.imap_last_uid }).then(function (res) {
       if (res.reset) {            // mailbox was rebuilt on the server: start again from its current end
         self.log('mailbox of sender ' + s.id + ' was reset (UIDVALIDITY changed)');
-        return self.db.run('UPDATE senders SET imap_uidvalidity = ?, imap_last_uid = ?, last_sync_at = ?, sync_error = NULL, sync_transient = 0, sync_failures = 0, sync_retry_at = NULL WHERE id = ?', [res.uidValidity, res.lastUid, self.now(), s.id])
+        return self.db.run('UPDATE senders SET imap_uidvalidity = ?, imap_last_uid = ?, last_sync_at = ?, sync_error = NULL, sync_transient = 0, sync_failures = 0, sync_retry_at = NULL, ' + CONN_CLEAR + ' WHERE id = ?', [res.uidValidity, res.lastUid, self.now(), s.id])
           .then(function () { return { reset: true }; });
       }
       var counts = { reply: 0, bounce: 0, auto_reply: 0, ignored: 0, duplicate: 0 };
@@ -110,7 +115,7 @@ S.syncSender = function (s) {
           return self.processMessage(s, m).then(function (outcome) { counts[outcome] = (counts[outcome] || 0) + 1; });
         }).then(function () { return self.db.run('UPDATE senders SET imap_last_uid = ? WHERE id = ? AND imap_last_uid < ?', [m.uid, s.id, m.uid]); });
       }, Promise.resolve()).then(function () {
-        return self.db.run('UPDATE senders SET imap_last_uid = CASE WHEN imap_last_uid < ? THEN ? ELSE imap_last_uid END, last_sync_at = ?, sync_error = NULL, sync_transient = 0, sync_failures = 0, sync_retry_at = NULL WHERE id = ?', [res.lastUid, res.lastUid, self.now(), s.id]);
+        return self.db.run('UPDATE senders SET imap_last_uid = CASE WHEN imap_last_uid < ? THEN ? ELSE imap_last_uid END, last_sync_at = ?, sync_error = NULL, sync_transient = 0, sync_failures = 0, sync_retry_at = NULL, ' + CONN_CLEAR + ' WHERE id = ?', [res.lastUid, res.lastUid, self.now(), s.id]);
       }).then(function () { return counts; });
     });
   }).catch(function (e) {

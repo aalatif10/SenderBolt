@@ -47,7 +47,9 @@ function recompute(db, senderId, now) {
       if (!health.isBelowFloor(probe, now)) {
         // Recovered: an account the health protection paused is switched back on once it is clearly above its line, and the stale
         // warning is cleared (Needs attention, Home alerts). A pause the owner made by hand is never lifted (health_paused = 0).
-        if (score < Math.min(100, health.floorFor(probe) + health.RESUME_MARGIN)) return score;
+        // An ACTIVE, healthy account must not keep an old automatic-pause note (for example after the owner switched it on by hand).
+        var tidy = db.run("UPDATE senders SET last_error = NULL WHERE id = ? AND status = 'active' AND last_error LIKE 'Auto-paused:%'", [senderId]);
+        if (score < Math.min(100, health.floorFor(probe) + health.RESUME_MARGIN)) return tidy.then(function () { return score; });
         return db.run("UPDATE senders SET status = 'active', last_error = NULL, health_paused = 0, next_send_at = NULL, updated_at = ? WHERE id = ? AND status = 'paused' AND health_paused = 1", [now, senderId])
           .then(function (r) {
             if (!(r && r.changes > 0)) return score;

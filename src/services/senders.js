@@ -255,6 +255,11 @@ Senders.prototype.update = function (userId, id, input, ip) {
     sets.push('updated_at = ?'); params.push(self.now());
     // Forcing a sender that was paused (for example automatically because of its health) also resumes it.
     if (v.force_until && existing.status === 'paused') { sets.push("status = 'active'"); sets.push('last_error = NULL'); sets.push('next_send_at = NULL'); sets.push('health_paused = 0'); }
+    // New password or server settings invalidate an old connection problem: clear it (and allow an immediate retry); it comes back by itself if still broken.
+    if (parsed.password || ['username', 'smtp_host', 'smtp_port', 'smtp_secure', 'imap_host', 'imap_port'].some(function (c) { return cols.indexOf(c) !== -1; })) {
+      sets.push('last_error = CASE WHEN last_error = connection_error THEN NULL ELSE last_error END'); sets.push('next_send_at = CASE WHEN connection_error IS NOT NULL THEN NULL ELSE next_send_at END');
+      sets.push('connection_error = NULL'); sets.push('connection_error_at = NULL');
+    }
     params.push(id, userId);
     return self.db.run('UPDATE senders SET ' + sets.join(', ') + ' WHERE id = ? AND user_id = ?', params).then(function () {
       var meta = Object.assign({}, v); if (parsed.password) meta.password = true;

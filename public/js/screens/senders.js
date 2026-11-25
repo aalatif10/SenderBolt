@@ -52,7 +52,8 @@
     var lowHealth = s.status === 'active' && s.health_score < (s.health_floor || 50) && !isForced(s), healthNote = /health score/i.test(s.last_error || '');
     if (lowHealth) out.push({ code: 'health', text: 'Health score ' + s.health_score + ' is below the protection threshold (' + (s.health_floor || 50) + ').' + (healthNote ? ' It was paused automatically for too many bounces.' : '') });
     if (s.status === 'active' && s.connection_error) out.push({ code: 'connection', text: 'Connection problem: ' + s.connection_error + ' The account keeps its place and SenderBolt retries automatically. Check the App Password in Settings, or run Test connection.' });
-    else if (s.status === 'active' && s.last_error && !(lowHealth && healthNote)) out.push({ code: 'error', text: 'Last problem: ' + s.last_error });
+    // An old automatic-pause note is outdated once health is fine again: never show it as a problem.
+    else if (s.status === 'active' && s.last_error && !(lowHealth && healthNote) && !(healthNote && /Auto-paused/.test(s.last_error))) out.push({ code: 'error', text: 'Last problem: ' + s.last_error });
     if (s.status === 'active' && rt === 'error' && !s.connection_error) out.push({ code: 'imap', text: 'The inbox cannot be read, so replies and bounces are not being detected.' });
     return out;
   }

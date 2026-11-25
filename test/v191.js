@@ -351,5 +351,16 @@ h.test('a dismissed alert that goes away and comes back shows again as new; queu
       }).then(function () { return alertsOf(c); }).then(function (r) { assert.ok(keys(r).indexOf('c:' + c.camp.id + ':unassigned') !== -1, 'people without a sending account'); });
   });
 });
+h.test('changing the password or server clears an old connection problem; an old auto-pause note on a healthy active account is tidied', function () {
+  return setup().then(function (c) {
+    return c.db.run("UPDATE senders SET connection_error = 'Login failed', connection_error_at = 1, last_error = 'Login failed' WHERE id = ?", [c.sid])
+      .then(function () { return c.senders.update(c.a, c.sid, { password: 'zyxwvutsrqponmlk' }); }).then(function () { return c.senders.get(c.a, c.sid); }).then(function (s) {
+        assert.strictEqual(s.connection_error, null); assert.strictEqual(s.last_error, null);
+        return c.db.run("UPDATE senders SET last_error = 'Auto-paused: health score fell to 10 (too many bounces)' WHERE id = ?", [c.sid]);
+      }).then(function () { return senderHealth.recompute(c.db, c.sid, c.clock.t); }).then(function () { return c.senders.get(c.a, c.sid); }).then(function (s) {
+        assert.strictEqual(s.status, 'active'); assert.strictEqual(s.last_error, null);
+      });
+  });
+});
 
 h.run();

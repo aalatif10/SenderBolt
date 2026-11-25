@@ -410,4 +410,15 @@ h.test('manual Stop campaign tags the latest reply Not interested and works from
   });
 });
 
+h.group('stale connection problems clear themselves');
+h.test('a successful inbox check clears an old connection problem (and the matching last problem) so "Needs attention" goes away', function () {
+  return setup().then(function (c) {
+    return armed(c).then(function () {
+      return c.db.run("UPDATE senders SET connection_error = 'Login failed', connection_error_at = ?, last_error = 'Login failed', next_send_at = ? WHERE id = ?", [c.clock.t, c.clock.t + HOUR, c.sid]);
+    }).then(function () { return sync(c); }).then(function () { return senderRow(c); }).then(function (s) {
+      assert.strictEqual(s.connection_error, null); assert.strictEqual(s.last_error, null); assert.strictEqual(s.next_send_at, null, 'retry allowed at once');
+    });
+  });
+});
+
 h.run();
