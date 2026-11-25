@@ -18,8 +18,10 @@
   function currentState(c) {
     var ds = c.display_status;
     if (ds === 'active') {
-      if (c.next_send_at === null || c.next_send_at === undefined) var nb = c.next_blocked && SB.S.nextBlock[c.next_blocked];
-      return h('span', { class: 'muted', tip: nb ? SB.S.nextBlockTip : 'Nobody is due right now, or the accounts for this campaign are paused.' }, nb || 'Waiting for an active sender');
+      if (c.next_send_at === null || c.next_send_at === undefined) {
+        var nb = c.next_blocked && SB.S.nextBlock[c.next_blocked];
+        return h('span', { class: 'muted', tip: nb ? SB.S.nextBlockTip : 'Nobody is due right now, or the accounts for this campaign are paused.' }, nb || 'Waiting for an active sender');
+      }
       var follow = c.next_kind === 'follow_up';
       return h('span', { tip: fmt.full(c.next_send_at) }, h('b', { text: follow ? 'Next follow-up ' : 'Next email ' }), fmt.until(c.next_send_at));
     }
