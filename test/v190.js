@@ -30,8 +30,9 @@ function setup() {
 }
 
 h.group('health healing (pure)');
-h.test('a calm day earns 1, clean sends and replies earn more, a severe day earns nothing, daily cap 10', function () {
-  assert.strictEqual(health.healPoints({ severe: 0, sent: 0, replies: 0 }), 1);
+h.test('a day with no emails sent earns 5, a calm sending day earns 1, clean sends and replies earn more, a severe day earns nothing, daily cap 10', function () {
+  assert.strictEqual(health.healPoints({ severe: 0, sent: 0, replies: 0 }), 5, 'idle day: +5');
+  assert.strictEqual(health.healPoints({ severe: 1, sent: 0, replies: 0 }), 0, 'a severe event still earns nothing');
   assert.strictEqual(health.healPoints({ severe: 0, sent: 9, replies: 0 }), 1, 'fewer than 10 clean emails earn nothing extra');
   assert.strictEqual(health.healPoints({ severe: 0, sent: 10, replies: 0 }), 2, '+1 for every 10 clean emails');
   assert.strictEqual(health.healPoints({ severe: 0, sent: 50, replies: 1 }), 7);
@@ -64,8 +65,8 @@ h.test('score recovers gradually day by day, never above 100, and a new bounce c
       .then(function (s) { assert.strictEqual(s.health_score, 52); assert.strictEqual(s.health_heal, 0); assert.strictEqual(s.health_heal_day, '2026-11-09'); return senderHealth.healDaily(c.db, sid, t0 + 3 * DAY); })
       .then(function () { return c.db.get('SELECT health_score, health_heal FROM senders WHERE id = ?', [sid]); })
       .then(function (s) {
-        // 3 completed days (Nov 10, 11, 12). Nov 10 had the 8 bounces + 100 sends -> severe (0 points); Nov 11 and 12 are calm: +1 each.
-        assert.strictEqual(s.health_heal, 2); assert.strictEqual(s.health_score, 54);
+        // 3 completed days (Nov 10, 11, 12). Nov 10 had the 8 bounces + 100 sends -> severe (0 points); Nov 11 and 12 sent nothing: +5 each.
+        assert.strictEqual(s.health_heal, 10); assert.strictEqual(s.health_score, 62);
         return seedBounces(c, 1, t0 + 3 * DAY + HOUR);
       }).then(function () { return senderHealth.recompute(c.db, sid, t0 + 3 * DAY + 2 * HOUR); })
       .then(function () { return c.db.get('SELECT health_heal FROM senders WHERE id = ?', [sid]); })

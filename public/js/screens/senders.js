@@ -381,6 +381,7 @@
       h('div', { class: 'small muted', text: s.health_score >= 100 ? 'Fully healed.' : 'If every day stays clean it can be back at 100 in about ' + s.heal_full_in_days + ' day' + (s.heal_full_in_days === 1 ? '' : 's') + '. Next healing day is credited ' + fmt.until(s.heal_next_at) + '.' }),
       h('ul', { class: 'risk-list' },
         h('li', { text: '+' + r.calm + ' for each calm day with no serious problem' }),
+        h('li', { text: '+' + r.idle + ' for a day with no emails sent at all (for example while paused), instead of the points above' }),
         h('li', { text: '+1 for every ' + r.clean_per + ' clean emails sent' }),
         h('li', { text: '+' + r.reply + ' when a real reply arrives' }),
         h('li', { text: 'At most +' + r.day_max + ' a day, never above 100. A serious problem pauses healing that day.' })));
@@ -470,7 +471,8 @@
     var codes = list.map(function (x) { return x.code; });
     // A health (force) pause has no normal Resume here: only the Force start override below can lift it.
     if (s.status === 'paused' && !forcePaused(s)) act('Resume sending', function () { return setStatus(s, 'active', 'Resumed', onDone).then(function () { close(); }); }, 'btn-primary');
-    if (codes.indexOf('health') !== -1 || (s.status === 'paused' && s.health_score < (s.health_floor || 50))) act(s.status === 'paused' ? 'Force start' : 'Force continue', function () {
+    // A force-paused account always offers Force start (the only way to lift a health pause), even when its score has already climbed back a little.
+    if (codes.indexOf('health') !== -1 || forcePaused(s) || (s.status === 'paused' && s.health_score < (s.health_floor || 50))) act(s.status === 'paused' ? 'Force start' : 'Force continue', function () {
       return SB.api.patch('/api/senders/' + s.id, { force_continue: true }).then(function () { ui.toast('Force continue is on for 72 hours'); onDone(); close(); }, function (e) { ui.toast(SB.api.friendly(e), true); });
     });
     act('Test connection', function () { close(); return SB.api.post('/api/senders/' + s.id + '/test', {}).then(function (r) { showTest(s, r); onDone(); }, function (e) { ui.toast(SB.api.friendly(e), true); }); });

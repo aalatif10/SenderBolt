@@ -42,9 +42,11 @@ function isBelowFloor(sender, now) { return !isForced(sender, now) && Number(sen
 // +1 when at least one real reply came in. At most 10 per day (the sends part is limited by that same daily cap),
 // so a badly hurt account needs days, never minutes.
 // Any severe event that day (hard/policy bounce, refused recipient) earns nothing.
-var HEAL = { calm: 1, cleanPer: 10, cleanMax: 10, reply: 1, dayMax: 10, cap: 100 };
+// A day with NO emails sent (account paused, down or idle) earns a flat `idle` points: resting is how a hurt account recovers.
+var HEAL = { calm: 1, cleanPer: 10, cleanMax: 10, reply: 1, idle: 5, dayMax: 10, cap: 100 };
 function healPoints(day) {
   if (!day || Number(day.severe) > 0) return 0;
+  if (!(Number(day.sent) > 0)) return HEAL.idle;      // 0 emails sent that day: +5
   var pts = HEAL.calm + Math.min(HEAL.cleanMax, Math.floor((Number(day.sent) || 0) / HEAL.cleanPer)) + (Number(day.replies) > 0 ? HEAL.reply : 0);
   return Math.min(HEAL.dayMax, pts);
 }

@@ -182,7 +182,7 @@ function withToday(row, nowMs) {
   // Health healing: the score is the 30-day result (base) plus earned points; both are shown so the owner can see why it moves.
   out.health_base = row.health_base === null || row.health_base === undefined ? row.health_score : row.health_base;
   out.health_heal = health.clampHeal(row.health_heal, out.health_base);
-  out.heal_rules = { calm: health.HEAL.calm, clean_per: health.HEAL.cleanPer, clean_max: health.HEAL.cleanMax, reply: health.HEAL.reply, day_max: health.HEAL.dayMax };
+  out.heal_rules = { calm: health.HEAL.calm, clean_per: health.HEAL.cleanPer, clean_max: health.HEAL.cleanMax, reply: health.HEAL.reply, idle: health.HEAL.idle, day_max: health.HEAL.dayMax };
   out.connection_error = row.connection_error || null;
   out.next_email_at = null;
   // Healing outlook: the soonest day the score can be full again if every day stays clean (best case, 4 points a day), and when the next day is credited.

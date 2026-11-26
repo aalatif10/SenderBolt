@@ -69,7 +69,7 @@ Set `SENDERBOLT_PUBLIC_ORIGIN=https://your-domain` to get one-click unsubscribe 
 **Sending accounts (v1.9)**
 - Accounts under Force continue count as active. Cards show the real time of the next email (days/hours/minutes) computed from the campaign's days, hours and time zone; the same time is used on campaigns and projects.
 - Login or network problems never pause an account: it stays active, shows a connection alert and is retried automatically (15 min after a wrong password, 5 min after a network error). Inbox time-outs are retried with back-off (1, 2, 4, then 5 minutes) and do not stop sending.
-- **Health healing**: a damaged score recovers gradually (+1 per calm day, +1 per 10 clean emails, +1 per reply, at most +10 a day, never above 100; a serious problem pauses healing that day).
+- **Health healing**: a damaged score recovers gradually (**+5 for a day with no emails sent at all**, for example while paused; otherwise +1 per calm day, +1 per 10 clean emails, +1 per reply, at most +10 a day, never above 100; a serious problem pauses healing that day).
 - **Settings** (button on a card) groups everything for one account: Connection & credentials, Daily limit & warm-up, Sending pace, Protection & risk (with a plain risk summary and Force continue), Health healing, Identity & signature, Advanced.
 
 **Projects, campaigns and drill-down**
