@@ -371,5 +371,16 @@ h.test('a force-paused (health) account cannot be resumed normally; Force contin
       }).then(function (s) { assert.strictEqual(s.sender ? s.sender.status : s.status, 'paused'); return c.senders.setStatus(c.a, c.sid, 'active'); }).then(function (s) { assert.strictEqual(s.status, 'active'); });
   });
 });
+h.test('turning Force continue off while health is still low makes the account Force paused again (and counts it)', function () {
+  return setup().then(function (c) {
+    return badHistory(c).then(function () { return senderHealth.recompute(c.db, c.sid, c.clock.t); }).then(function () { return c.senders.update(c.a, c.sid, { force_continue: true }); })
+      .then(function () { return c.senders.get(c.a, c.sid); }).then(function (s) {
+        assert.strictEqual(s.status, 'active'); assert.strictEqual(s.force_active, true); assert.ok(s.health_score < s.health_floor, 'health is still below the threshold while forced');
+        return c.senders.update(c.a, c.sid, { force_continue: false });
+      }).then(function () { return c.senders.get(c.a, c.sid); }).then(function (s) {
+        assert.strictEqual(s.force_active, false); assert.strictEqual(s.status, 'paused'); assert.strictEqual(s.health_paused, 1); assert.strictEqual(s.forced_pauses, 2);
+      });
+  });
+});
 
 h.run();

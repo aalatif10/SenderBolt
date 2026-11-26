@@ -22,7 +22,7 @@
   // "Force paused" = paused by the health protection (not by the owner). It can only be lifted with the Force override, never with a plain Resume.
   // health_paused is the exact marker; the note check covers accounts paused before that marker existed.
   function forcePaused(s) { return s.status === 'paused' && (s.health_paused === 1 || /^Auto-paused/.test(s.last_error || '')); }
-  var FORCE_ONLY_TIP = 'Paused automatically because its health fell too low. It cannot be resumed normally: use Force start in Needs attention, or wait until its health recovers and it resumes by itself.';
+  var FORCE_ONLY_TIP = 'Paused automatically because its health fell too low. It cannot be resumed normally: use Force continue in Needs attention, or wait until its health recovers and it resumes by itself.';
   // An account counts as active when it is switched on and either healthy enough OR running under Force continue.
   function isActiveNow(s) { return s.status === 'active' && (isForced(s) || s.health_score >= (s.health_floor || 50)); }
   // Real time of the next email from this account (computed on the server from schedule, sending hours, days and timezone).
@@ -44,9 +44,10 @@
     if (s.status === 'disabled') return { key: 'draft', label: 'Disabled', tip: 'This account is switched off and will never be used.' };
     if (forcePaused(s)) return { key: 'halted', label: 'Force paused', tip: 'Paused automatically: ' + (s.last_error || 'health below the protection threshold') + ' ' + FORCE_ONLY_TIP };
     if (s.status === 'paused') return { key: 'halted', label: 'Paused', tip: s.last_error ? 'Paused automatically: ' + s.last_error : 'Nothing is sent from this account until you resume it.' };
+    // Force continue is the badge while the override is on, even when the score is still low (the Needs attention button stays too).
+    if (isForced(s)) return { key: 'active', label: 'Force continue', tip: 'Force continue is on until ' + fmt.dateTime(s.force_until) + ': automatic health pauses are skipped for this account' + (s.health_score < (s.health_floor || 50) ? ', although its health score (' + s.health_score + ') is still below the protection threshold (' + (s.health_floor || 50) + '). Turn it off in Needs attention at any time.' : '.') };
     if (s.health_score < (s.health_floor || 50) && !isForced(s)) return { key: 'error', label: 'Needs attention', tip: 'The health score (' + s.health_score + ') is below this account\u2019s protection threshold (' + (s.health_floor || 50) + '), so it is not used until it recovers. You can override this with Force continue in its settings.' };
     if (s.warmup_enabled && s.limit_today < s.daily_limit) return { key: 'active', label: s.warmup_slowed ? 'Warming up (slowed)' : 'Warming up', tip: 'Warm-up day ' + s.warmup_day + ' of about ' + s.warmup_reaches_day + '. Today: up to ' + s.limit_today + ' emails, growing each day the account is really used.' + (s.warmup_slowed ? ' Growth is slowed because of recent bounces.' : '') };
-    if (isForced(s)) return { key: 'active', label: 'Active (forced)', tip: 'Force continue is on until ' + fmt.dateTime(s.force_until) + ': automatic health pauses are skipped for this account.' };
     return { key: 'active', label: 'Active', tip: 'Ready to send.' };
   }
   // Does this account need the owner? Returns a list of plain-language problems (empty = all good).
@@ -54,8 +55,8 @@
     var out = [];
     if (s.status === 'paused') out.push({ code: 'paused', text: s.last_error ? 'Paused: ' + s.last_error : 'Paused: nothing is sent from this account until you resume it.' });
     // One item per ROOT CAUSE: an old "Auto-paused: health score fell…" note describes the same issue as a low health score, and a failing inbox is one issue however many places report it.
-    var lowHealth = s.status === 'active' && s.health_score < (s.health_floor || 50) && !isForced(s), healthNote = /health score/i.test(s.last_error || '');
-    if (lowHealth) out.push({ code: 'health', text: 'Health score ' + s.health_score + ' is below the protection threshold (' + (s.health_floor || 50) + ').' + (healthNote ? ' It was paused automatically for too many bounces.' : '') });
+    var lowHealth = s.status === 'active' && s.health_score < (s.health_floor || 50), healthNote = /health score/i.test(s.last_error || '');
+    if (lowHealth) out.push({ code: 'health', text: 'Health score ' + s.health_score + ' is below the protection threshold (' + (s.health_floor || 50) + ').' + (isForced(s) ? ' Force continue is on, so it keeps sending anyway; turn it off below to let the protection apply again.' : (healthNote ? ' It was paused automatically for too many bounces.' : '')) });
     if (s.status === 'active' && s.connection_error) out.push({ code: 'connection', text: 'Connection problem: ' + s.connection_error + ' The account keeps its place and SenderBolt retries automatically. Check the App Password in Settings, or run Test connection.' });
     // An old automatic-pause note is outdated once health is fine again: never show it as a problem.
     else if (s.status === 'active' && s.last_error && !(lowHealth && healthNote) && !(healthNote && /Auto-paused/.test(s.last_error))) out.push({ code: 'error', text: 'Last problem: ' + s.last_error });
@@ -265,7 +266,7 @@
       forceBox.classList.toggle('on', on);
       forceTxt.textContent = on ? 'Force continue is ON until ' + fmt.dateTime(until) + '. Automatic health and failure pauses are skipped for this account. Wrong passwords and provider limits still stop it.' :
         'Use this for a large or experimental campaign when the automatic safety pause would interrupt it. It lasts 72 hours, then protection applies again. Use with care: a damaged account can be blocked by Google.';
-      forceBtn.textContent = on ? 'Turn off Force continue' : (s.status === 'paused' ? 'Force start' : 'Force continue');
+      forceBtn.textContent = on ? 'Turn off Force continue' : 'Force continue';
       forceBtn.onclick = function () {
         function go() {
           forceBtn.disabled = true;
@@ -273,7 +274,7 @@
             function (e) { ui.toast(SB.api.friendly(e), true); forceBtn.disabled = false; });
         }
         if (on) return go();
-        ui.confirm({ title: (s.status === 'paused' ? 'Force start' : 'Force continue') + ' ' + s.email + '?', message: 'Automatic pauses for low health or repeated failures will be skipped for 72 hours. Only do this if you accept the risk to this account\u2019s reputation.', confirmLabel: s.status === 'paused' ? 'Force start' : 'Force continue', danger: true, onConfirm: go });
+        ui.confirm({ title: 'Force continue ' + s.email + '?', message: 'Automatic pauses for low health or repeated failures will be skipped for 72 hours. Only do this if you accept the risk to this account\u2019s reputation.', confirmLabel: 'Force continue', danger: true, onConfirm: go });
       };
     }
     forceBox.appendChild(h('div', { class: 'small muted' }, forceTxt)); forceBox.appendChild(h('div', null, forceBtn));
@@ -299,7 +300,7 @@
       var paused = s.status !== 'active';
       while (toggle.firstChild) toggle.removeChild(toggle.firstChild);
       toggle.appendChild(SB.icon(paused ? 'play' : 'pause')); toggle.appendChild(document.createTextNode(paused ? 'Resume sending' : 'Pause sending'));
-      toggle.disabled = forcePaused(s); toggle.title = forcePaused(s) ? FORCE_ONLY_TIP : '';   // a health pause is lifted only by Force start
+      toggle.disabled = forcePaused(s); toggle.title = forcePaused(s) ? FORCE_ONLY_TIP : '';   // a health pause is lifted only by Force continue
     }
     paintToggle();
     toggle.addEventListener('click', function () {
@@ -469,10 +470,14 @@
     var acts = h('div', { class: 'actions pad-t' });
     function act(label, fn, kind) { var b = h('button', { class: 'btn btn-sm' + (kind ? ' ' + kind : ''), type: 'button' }, label); b.addEventListener('click', function () { b.disabled = true; Promise.resolve(fn()).then(function () { b.disabled = false; }); }); acts.appendChild(b); }
     var codes = list.map(function (x) { return x.code; });
-    // A health (force) pause has no normal Resume here: only the Force start override below can lift it.
+    // A health (force) pause has no normal Resume here: only the Force continue override below can lift it.
     if (s.status === 'paused' && !forcePaused(s)) act('Resume sending', function () { return setStatus(s, 'active', 'Resumed', onDone).then(function () { close(); }); }, 'btn-primary');
-    // A force-paused account always offers Force start (the only way to lift a health pause), even when its score has already climbed back a little.
-    if (codes.indexOf('health') !== -1 || forcePaused(s) || (s.status === 'paused' && s.health_score < (s.health_floor || 50))) act(s.status === 'paused' ? 'Force start' : 'Force continue', function () {
+    // A force-paused account always offers Force continue (the only way to lift a health pause), even when its score has already climbed back a little.
+    if (isForced(s)) act('Turn off Force continue', function () {
+      // Back to normal protection: an account whose health is still low is force paused again right away.
+      return SB.api.patch('/api/senders/' + s.id, { force_continue: false }).then(function () { ui.toast('Force continue turned off'); onDone(); close(); }, function (e) { ui.toast(SB.api.friendly(e), true); });
+    }, 'btn-primary');
+    else if (codes.indexOf('health') !== -1 || forcePaused(s) || (s.status === 'paused' && s.health_score < (s.health_floor || 50))) act('Force continue', function () {
       return SB.api.patch('/api/senders/' + s.id, { force_continue: true }).then(function () { ui.toast('Force continue is on for 72 hours'); onDone(); close(); }, function (e) { ui.toast(SB.api.friendly(e), true); });
     });
     act('Test connection', function () { close(); return SB.api.post('/api/senders/' + s.id + '/test', {}).then(function (r) { showTest(s, r); onDone(); }, function (e) { ui.toast(SB.api.friendly(e), true); }); });

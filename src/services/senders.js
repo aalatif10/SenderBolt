@@ -264,6 +264,10 @@ Senders.prototype.update = function (userId, id, input, ip) {
     return self.db.run('UPDATE senders SET ' + sets.join(', ') + ' WHERE id = ? AND user_id = ?', params).then(function () {
       var meta = Object.assign({}, v); if (parsed.password) meta.password = true;
       return audit.log(self.db, { userId: userId, action: 'sender.update', entity: 'sender', entityId: id, ip: ip, meta: meta }, self.now);
+    }).then(function () {
+      // Force continue switched OFF: apply the health protection again at once, so an account that is still unhealthy becomes Force paused
+      // (and counted) now instead of staying "active" but silently blocked until the next hourly check.
+      if (Object.prototype.hasOwnProperty.call(input, 'force_continue') && !input.force_continue) return require('./senderHealth').recompute(self.db, id, self.now());
     });
   }).then(function () { return self.get(userId, id); });
 };
@@ -274,7 +278,7 @@ Senders.prototype.setStatus = function (userId, id, status, ip) {
   return this._find(userId, id).then(function (cur) {
     // An account paused by the health protection can only be lifted by the Force override (or by recovering), never by a plain resume.
     if (status === 'active' && cur.status === 'paused' && (cur.health_paused === 1 || /^Auto-paused/.test(cur.last_error || ''))) {
-      throw new AppError('conflict', 'This account was paused automatically because its health is too low. Use Force start in Needs attention to override it.', 409);
+      throw new AppError('conflict', 'This account was paused automatically because its health is too low. Use Force continue in Needs attention to override it.', 409);
     }
     // A status chosen by hand replaces an automatic health pause: the flag is cleared (so it is never lifted automatically) and an old
     // automatic warning goes away when the account is switched back on.
