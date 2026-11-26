@@ -362,5 +362,14 @@ h.test('changing the password or server clears an old connection problem; an old
       });
   });
 });
+h.test('a force-paused (health) account cannot be resumed normally; Force continue lifts it; a hand pause still resumes', function () {
+  return setup().then(function (c) {
+    return badHistory(c).then(function () { return senderHealth.recompute(c.db, c.sid, c.clock.t); }).then(function () { return h.expectReject(c.senders.setStatus(c.a, c.sid, 'active'), 'conflict'); })
+      .then(function () { return c.senders.update(c.a, c.sid, { force_continue: true }); }).then(function () { return c.senders.get(c.a, c.sid); }).then(function (s) {
+        assert.strictEqual(s.status, 'active'); assert.strictEqual(s.health_paused, 0);
+        return c.senders.setStatus(c.a, c.sid, 'paused');
+      }).then(function (s) { assert.strictEqual(s.sender ? s.sender.status : s.status, 'paused'); return c.senders.setStatus(c.a, c.sid, 'active'); }).then(function (s) { assert.strictEqual(s.status, 'active'); });
+  });
+});
 
 h.run();

@@ -64,7 +64,7 @@ AlertsService.prototype.list = function (userId) {
       // Sending accounts.
       senders.forEach(function (s) {
         var name = s.label || s.email, id = s.id;
-        if (s.status !== 'active') add('s:' + id + ':down', 'critical', name + ': ' + s.status, s.last_error || 'This account is not sending right now.', '#/senders', 'Open');
+        if (s.status !== 'active') add('s:' + id + ':down', 'critical', name + ': ' + (s.status === 'paused' && (s.health_paused === 1 || /^Auto-paused/.test(s.last_error || '')) ? 'force paused' : s.status), s.last_error || 'This account is not sending right now.', '#/senders', 'Open');
         else {
           if (s.last_error) add('s:' + id + ':err', 'warning', name + ': reporting an error', s.last_error, '#/senders', 'Open');
           if (!s.force_active && s.health_score < s.health_floor) add('s:' + id + ':floor', 'critical', name + ': health ' + s.health_score + ' is below its protection threshold (' + s.health_floor + ')', 'Sending is blocked until the score recovers or you use Force continue.', '#/senders', 'Open');

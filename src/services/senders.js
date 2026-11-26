@@ -256,7 +256,7 @@ Senders.prototype.update = function (userId, id, input, ip) {
     // Forcing a sender that was paused (for example automatically because of its health) also resumes it.
     if (v.force_until && existing.status === 'paused') { sets.push("status = 'active'"); sets.push('last_error = NULL'); sets.push('next_send_at = NULL'); sets.push('health_paused = 0'); }
     // New password or server settings invalidate an old connection problem: clear it (and allow an immediate retry); it comes back by itself if still broken.
-    if (parsed.password || ['username', 'smtp_host', 'smtp_port', 'smtp_secure', 'imap_host', 'imap_port'].some(function (c) { return cols.indexOf(c) !== -1; })) {
+    if (parsed.password || ['username', 'smtp_host', 'smtp_port', 'smtp_secure', 'imap_host', 'imap_port'].some(function (c) { return cols.indexOf(c) !== -1 && v[c] !== existing[c]; })) {   // only a REAL change counts (validation fills defaults)
       sets.push('last_error = CASE WHEN last_error = connection_error THEN NULL ELSE last_error END'); sets.push('next_send_at = CASE WHEN connection_error IS NOT NULL THEN NULL ELSE next_send_at END');
       sets.push('connection_error = NULL'); sets.push('connection_error_at = NULL');
     }
@@ -271,7 +271,11 @@ Senders.prototype.update = function (userId, id, input, ip) {
 Senders.prototype.setStatus = function (userId, id, status, ip) {
   var self = this;
   if (['active', 'paused', 'disabled'].indexOf(status) === -1) return Promise.reject(new AppError('validation', 'Invalid status', 400, { status: 'Invalid status' }));
-  return this._find(userId, id).then(function () {
+  return this._find(userId, id).then(function (cur) {
+    // An account paused by the health protection can only be lifted by the Force override (or by recovering), never by a plain resume.
+    if (status === 'active' && cur.status === 'paused' && (cur.health_paused === 1 || /^Auto-paused/.test(cur.last_error || ''))) {
+      throw new AppError('conflict', 'This account was paused automatically because its health is too low. Use Force start in Needs attention to override it.', 409);
+    }
     // A status chosen by hand replaces an automatic health pause: the flag is cleared (so it is never lifted automatically) and an old
     // automatic warning goes away when the account is switched back on.
     return self.db.run('UPDATE senders SET status = ?, health_paused = 0, last_error = CASE WHEN ? = \'active\' THEN NULL ELSE last_error END, updated_at = ? WHERE id = ? AND user_id = ?', [status, status, self.now(), id, userId]);

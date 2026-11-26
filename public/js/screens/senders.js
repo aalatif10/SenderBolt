@@ -19,6 +19,10 @@
     high: { label: 'High', below: 70, tip: 'Strictest: pauses early, below health 70 or after 3 failed sends in a row. Best for your most valuable accounts.' }
   };
   function isForced(s) { return !!s.force_active; }
+  // "Force paused" = paused by the health protection (not by the owner). It can only be lifted with the Force override, never with a plain Resume.
+  // health_paused is the exact marker; the note check covers accounts paused before that marker existed.
+  function forcePaused(s) { return s.status === 'paused' && (s.health_paused === 1 || /^Auto-paused/.test(s.last_error || '')); }
+  var FORCE_ONLY_TIP = 'Paused automatically because its health fell too low. It cannot be resumed normally: use Force start in Needs attention, or wait until its health recovers and it resumes by itself.';
   // An account counts as active when it is switched on and either healthy enough OR running under Force continue.
   function isActiveNow(s) { return s.status === 'active' && (isForced(s) || s.health_score >= (s.health_floor || 50)); }
   // Real time of the next email from this account (computed on the server from schedule, sending hours, days and timezone).
@@ -38,6 +42,7 @@
 
   function state(s) {
     if (s.status === 'disabled') return { key: 'draft', label: 'Disabled', tip: 'This account is switched off and will never be used.' };
+    if (forcePaused(s)) return { key: 'halted', label: 'Force paused', tip: 'Paused automatically: ' + (s.last_error || 'health below the protection threshold') + ' ' + FORCE_ONLY_TIP };
     if (s.status === 'paused') return { key: 'halted', label: 'Paused', tip: s.last_error ? 'Paused automatically: ' + s.last_error : 'Nothing is sent from this account until you resume it.' };
     if (s.health_score < (s.health_floor || 50) && !isForced(s)) return { key: 'error', label: 'Needs attention', tip: 'The health score (' + s.health_score + ') is below this account\u2019s protection threshold (' + (s.health_floor || 50) + '), so it is not used until it recovers. You can override this with Force continue in its settings.' };
     if (s.warmup_enabled && s.limit_today < s.daily_limit) return { key: 'active', label: s.warmup_slowed ? 'Warming up (slowed)' : 'Warming up', tip: 'Warm-up day ' + s.warmup_day + ' of about ' + s.warmup_reaches_day + '. Today: up to ' + s.limit_today + ' emails, growing each day the account is really used.' + (s.warmup_slowed ? ' Growth is slowed because of recent bounces.' : '') };
@@ -294,6 +299,7 @@
       var paused = s.status !== 'active';
       while (toggle.firstChild) toggle.removeChild(toggle.firstChild);
       toggle.appendChild(SB.icon(paused ? 'play' : 'pause')); toggle.appendChild(document.createTextNode(paused ? 'Resume sending' : 'Pause sending'));
+      toggle.disabled = forcePaused(s); toggle.title = forcePaused(s) ? FORCE_ONLY_TIP : '';   // a health pause is lifted only by Force start
     }
     paintToggle();
     toggle.addEventListener('click', function () {
@@ -302,7 +308,7 @@
       SB.api.post('/api/senders/' + s.id + '/status', { status: wasPaused ? 'active' : 'paused' }).then(function () {
         ui.toast(wasPaused ? 'Resumed' : 'Paused'); onDone();
         return reloadSender();
-      }, function (e) { ui.toast(SB.api.friendly(e), true); }).then(function () { toggle.disabled = false; });
+      }, function (e) { ui.toast(SB.api.friendly(e), true); }).then(function () { toggle.disabled = forcePaused(s); });
     });
     var del = h('button', { class: 'btn btn-danger', type: 'button' }, 'Remove sender');
     del.addEventListener('click', function () {
@@ -462,7 +468,8 @@
     var acts = h('div', { class: 'actions pad-t' });
     function act(label, fn, kind) { var b = h('button', { class: 'btn btn-sm' + (kind ? ' ' + kind : ''), type: 'button' }, label); b.addEventListener('click', function () { b.disabled = true; Promise.resolve(fn()).then(function () { b.disabled = false; }); }); acts.appendChild(b); }
     var codes = list.map(function (x) { return x.code; });
-    if (s.status === 'paused') act('Resume sending', function () { return setStatus(s, 'active', 'Resumed', onDone).then(function () { close(); }); }, 'btn-primary');
+    // A health (force) pause has no normal Resume here: only the Force start override below can lift it.
+    if (s.status === 'paused' && !forcePaused(s)) act('Resume sending', function () { return setStatus(s, 'active', 'Resumed', onDone).then(function () { close(); }); }, 'btn-primary');
     if (codes.indexOf('health') !== -1 || (s.status === 'paused' && s.health_score < (s.health_floor || 50))) act(s.status === 'paused' ? 'Force start' : 'Force continue', function () {
       return SB.api.patch('/api/senders/' + s.id, { force_continue: true }).then(function () { ui.toast('Force continue is on for 72 hours'); onDone(); close(); }, function (e) { ui.toast(SB.api.friendly(e), true); });
     });
@@ -487,7 +494,9 @@
       pb.addEventListener('click', function () { pb.disabled = true; setStatus(s, 'paused', 'Paused ' + s.email, onDone).then(function () { pb.disabled = false; }); });
       quick.push(pb);
     } else if (s.status === 'paused') {
-      var rb = h('button', { class: 'btn btn-sm btn-primary', type: 'button', tip: 'Start sending from this account again.' }, SB.icon('play'), 'Resume');
+      var fp = forcePaused(s);
+      var rb = h('button', { class: 'btn btn-sm btn-primary', type: 'button', tip: fp ? FORCE_ONLY_TIP : 'Start sending from this account again.' }, SB.icon('play'), 'Resume');
+      if (fp) rb.disabled = true;
       rb.addEventListener('click', function () { rb.disabled = true; setStatus(s, 'active', 'Resumed ' + s.email, onDone).then(function () { rb.disabled = false; }); });
       quick.push(rb);
     }
